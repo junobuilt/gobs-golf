@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 0 — Account & environment setup |
+| **Current phase** | Phase 1 — Database schema + seed data (waiting on Dad's answers) |
 | **Next milestone** | Working scaffold deployed to Vercel |
 | **Target prototype date** | Weekend of 2026-04-25/26 |
 | **Blocked on** | Dad's answers to requirements questions (sent) |
@@ -20,8 +20,8 @@
 
 | Phase | What ships | Rough effort | Status |
 |---|---|---|---|
-| 0 | Accounts created, tools installed, empty Next.js deployed to a real Vercel URL | 1.5–2 hrs | 🟡 In progress |
-| 1 | Database schema defined in Supabase, seeded with player names + course info | 30–45 min | ⚪ Not started |
+| 0 | Accounts created, tools installed, empty Next.js deployed to a real Vercel URL | 1.5–2 hrs | ✅ Done |
+| 1 | Database schema defined in Supabase, seeded with player names + course info | 30–45 min | 🟡 Blocked — waiting on Dad |
 | 2 | Core app: player picker, scorecard entry, save round, view my rounds | 4–6 hrs | ⚪ Not started |
 | 3 | Deploy, test on real phone, fix mobile quirks, share URL with dad | 1.5–3 hrs | ⚪ Not started |
 | **4+** | **Post-MVP** — SWAT scoring, leaderboard, trends, historical import | TBD | ⚪ Parked |
