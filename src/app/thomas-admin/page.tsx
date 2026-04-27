@@ -40,8 +40,14 @@ export default function AdminDashboard() {
 
   const assignToTeam = (player: any, teamNum: number) => {
     const newTeams = { ...teams };
-    Object.keys(newTeams).forEach(n => newTeams[parseInt(n)] = newTeams[parseInt(n)].filter(p => p.id !== player.id));
-    if (teamNum !== 0) newTeams[teamNum] = [...newTeams[teamNum], player];
+    // Remove player from ALL teams first to ensure they are only in one place
+    Object.keys(newTeams).forEach(n => {
+      newTeams[parseInt(n)] = newTeams[parseInt(n)].filter(p => p.id !== player.id);
+    });
+    // Add to the chosen team
+    if (teamNum !== 0) {
+      newTeams[teamNum] = [...newTeams[teamNum], player];
+    }
     setTeams(newTeams);
   };
 
@@ -73,61 +79,76 @@ export default function AdminDashboard() {
   const unassigned = roster.filter(r => !Object.values(teams).flat().find(tp => tp.id === r.id));
 
   return (
-    <div className="p-6 max-w-7xl mx-auto bg-slate-50 min-h-screen text-slate-900 font-sans">
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-8 bg-blue-900 p-6 rounded-xl shadow-lg text-white">
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif', backgroundColor: '#f8fafc', minHeight: '100vh', color: '#1e293b' }}>
+      
+      {/* HEADER SECTION */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', backgroundColor: '#1e3a8a', padding: '24px', borderRadius: '12px', color: 'white', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}>
         <div>
-          <h1 className="text-2xl font-black tracking-tight uppercase">GOBs LEAGUE MANAGER <span className="text-blue-300 text-sm ml-2 font-normal">V2 PRO</span></h1>
-          <div className="flex items-center gap-2 mt-1 text-blue-100">
-             <span>Playing on:</span>
-             <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="bg-blue-800 border-none rounded px-2 py-1 text-white font-bold cursor-pointer"/>
+          <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 900 }}>GOBs LEAGUE MANAGER <span style={{ color: '#93c5fd', fontSize: '14px', marginLeft: '8px' }}>V2.1 PRO</span></h1>
+          <div style={{ marginTop: '8px', fontSize: '14px' }}>
+             Playing on: <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{ background: '#1e40af', border: 'none', color: 'white', fontWeight: 'bold', padding: '4px 8px', borderRadius: '4px' }}/>
           </div>
         </div>
-        <button onClick={saveRound} className="bg-green-500 hover:bg-green-400 text-white px-8 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95">FINALIZE & SAVE ROUND</button>
+        <button onClick={saveRound} style={{ backgroundColor: '#22c55e', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>FINALIZE & SAVE ROUND</button>
       </div>
 
-      <div className="grid grid-cols-12 gap-6">
-        {/* STEP 1: MASTER ROSTER */}
-        <div className="col-span-3 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="font-bold text-slate-400 uppercase text-[10px] tracking-widest mb-4">1. Today's Roster</h2>
-          <div className="space-y-1 overflow-y-auto max-h-[70vh] pr-2">
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '24px' }}>
+        
+        {/* COLUMN 1: PLAYER SELECTION */}
+        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)' }}>
+          <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px' }}>1. Check-In Players</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '70vh', overflowY: 'auto' }}>
             {players.map(p => (
-              <button key={p.id} onClick={() => toggleInRoster(p)} className={`w-full text-left px-3 py-2 rounded-md text-sm transition-all ${roster.find(r => r.id === p.id) ? 'bg-blue-600 text-white font-bold' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+              <button 
+                key={p.id} 
+                onClick={() => toggleInRoster(p)} 
+                style={{ 
+                  textAlign: 'left', 
+                  padding: '8px 12px', 
+                  borderRadius: '6px', 
+                  fontSize: '14px', 
+                  border: '1px solid #f1f5f9',
+                  cursor: 'pointer',
+                  backgroundColor: roster.find(r => r.id === p.id) ? '#2563eb' : '#f8fafc',
+                  color: roster.find(r => r.id === p.id) ? 'white' : '#64748b',
+                  fontWeight: roster.find(r => r.id === p.id) ? 'bold' : 'normal'
+                }}
+              >
                 {p.full_name}
               </button>
             ))}
           </div>
         </div>
 
-        {/* STEP 2: DRAFTING AREA */}
-        <div className="col-span-9">
-          <h2 className="font-bold text-slate-400 uppercase text-[10px] tracking-widest mb-4">2. Assign to Teams</h2>
+        {/* COLUMN 2: TEAM DRAFTING */}
+        <div>
+          <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px' }}>2. Assign to Teams</h2>
           
-          {/* THE POOL */}
-          <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-sm mb-6 flex flex-wrap gap-2 items-center min-h-[60px]">
-            <span className="text-[10px] font-black text-blue-500 mr-2 uppercase">Bench:</span>
-            {unassigned.length === 0 && <span className="text-slate-300 italic text-sm">Select players on the left to "check them in"...</span>}
+          {/* THE BENCH */}
+          <div style={{ backgroundColor: 'white', padding: '16px', borderRadius: '12px', border: '1px solid #bfdbfe', marginBottom: '24px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', minHeight: '60px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 'black', color: '#3b82f6', marginRight: '8px', textTransform: 'uppercase' }}>Bench Pool:</span>
+            {unassigned.length === 0 && <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: '14px' }}>Click players on the left to add them to the bench...</span>}
             {unassigned.map(p => (
-              <span key={p.id} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold border border-blue-100">
+              <span key={p.id} style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', padding: '4px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: 'bold', border: '1px solid #dbeafe' }}>
                 {p.full_name}
               </span>
             ))}
           </div>
 
-          {/* TEAM GRID */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* THE GRID OF TEAMS */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
             {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
-              <div key={num} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-                <div className="bg-slate-800 p-2 text-white text-[10px] font-black flex justify-between uppercase">
-                  <span>Team {num}</span>
-                  <span className={teams[num].length > 4 ? 'text-red-400' : 'text-slate-400'}>{teams[num].length} Players</span>
+              <div key={num} style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ backgroundColor: '#1e293b', padding: '8px 12px', color: 'white', fontSize: '10px', fontWeight: 'black', display: 'flex', justifyContent: 'space-between', textTransform: 'uppercase' }}>
+                  <span>Team #{num}</span>
+                  <span style={{ color: teams[num].length > 4 ? '#f87171' : '#94a3b8' }}>{teams[num].length} Players</span>
                 </div>
-                <div className="p-3 min-h-[160px] flex-grow flex flex-col justify-between">
-                  <div className="space-y-2">
+                <div style={{ padding: '12px', minHeight: '150px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {teams[num].map(p => (
-                      <div key={p.id} className="flex justify-between items-center bg-slate-50 p-2 rounded border border-slate-100 text-sm font-medium">
+                      <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', padding: '8px', borderRadius: '6px', fontSize: '13px', border: '1px solid #f1f5f9' }}>
                         {p.full_name}
-                        <button onClick={() => assignToTeam(p, 0)} className="text-slate-300 hover:text-red-500 font-bold ml-2">×</button>
+                        <button onClick={() => assignToTeam(p, 0)} style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>×</button>
                       </div>
                     ))}
                   </div>
@@ -135,7 +156,7 @@ export default function AdminDashboard() {
                   <select 
                     value="" 
                     onChange={e => assignToTeam(unassigned.find(u => u.id === parseInt(e.target.value)), num)}
-                    className="w-full mt-4 p-2 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-600 font-bold outline-none hover:border-blue-400"
+                    style={{ width: '100%', marginTop: '16px', padding: '8px', fontSize: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', cursor: 'pointer' }}
                   >
                     <option value="" disabled>+ Add from Bench</option>
                     {unassigned.map(u => {
@@ -152,6 +173,7 @@ export default function AdminDashboard() {
             ))}
           </div>
         </div>
+
       </div>
     </div>
   );
