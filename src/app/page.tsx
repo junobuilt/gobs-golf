@@ -8,7 +8,8 @@ type RecentRound = {
   id: number;
   played_on: string;
   is_complete: boolean;
-  player_count: number;
+  player_count: number; 
+  player_names: string;
 };
 
 export default function HomePage() {
@@ -35,16 +36,22 @@ export default function HomePage() {
       if (rounds && rounds.length > 0) {
         const roundsWithCounts = await Promise.all(
           rounds.map(async (round) => {
-            const { count } = await supabase
+            const { data: rps } = await supabase
               .from("round_players")
-              .select("*", { count: "exact", head: true })
+              .select("players ( display_name, full_name )")
               .eq("round_id", round.id);
-            return { ...round, player_count: count || 0 };
+            const names = rps
+              ? rps.map((rp: any) => rp.players?.display_name || rp.players?.full_name || "?").join(", ")
+              : "";
+            return {
+              ...round,
+              player_count: rps?.length || 0,
+              player_names: names,
+            };
           })
         );
         setRecentRounds(roundsWithCounts);
       }
-
       setLoading(false);
     }
     load();
@@ -145,24 +152,24 @@ export default function HomePage() {
         }}>
           {recentRounds.map((round) => (
             <Link
-              key={round.id}
-              href={`/round/${round.id}/scorecard`}
-              className="player-row"
-            >
-              <div>
-                <div className="player-name">{formatDate(round.played_on)}</div>
-                <div className="player-meta">
-                  {round.player_count} player{round.player_count !== 1 ? "s" : ""}
-                </div>
+            key={round.id}
+            href={`/round/${round.id}/scorecard`}
+            className="player-row"
+          >
+            <div>
+              <div className="player-name">{formatDate(round.played_on)}</div>
+              <div className="player-meta">
+                {round.player_names || `${round.player_count} players`}
               </div>
-              <div>
-                {round.is_complete ? (
-                  <span className="badge badge-par">Complete</span>
-                ) : (
-                  <span className="badge badge-birdie">In Progress</span>
-                )}
-              </div>
-            </Link>
+            </div>
+            <div>
+              {round.is_complete ? (
+                <span className="badge badge-par">Complete</span>
+              ) : (
+                <span className="badge badge-birdie">In Progress</span>
+              )}
+            </div>
+          </Link>
           ))}
         </div>
       )}
