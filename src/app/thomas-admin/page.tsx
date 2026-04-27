@@ -83,7 +83,7 @@ export default function AdminDashboard() {
     <div className="p-6 max-w-7xl mx-auto bg-gray-50 min-h-screen text-slate-900 font-sans">
       <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <div>
-          <h1 className="text-2xl font-black text-blue-900">GOBs LEAGUE MANAGER</h1>
+          <h1 className="text-2xl font-black text-blue-900">GOBs Manager v2</h1>
           <p className="text-slate-500 text-sm">Drafting for: <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="font-bold text-blue-600 border-none bg-transparent outline-none cursor-pointer"/></p>
         </div>
         <button onClick={saveRound} className="bg-blue-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-blue-700 shadow-md active:scale-95 transition-all">FINALIZE & SAVE ROUND</button>
