@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 
@@ -58,6 +58,13 @@ export default function ScorecardPage() {
     load();
   }, [roundId]);
 
+  // HELPER TO CALCULATE TOTALS SAFELY FOR TYPESCRIPT
+  const calculateTotal = (rpId: number): number => {
+    const playerScores = scores[rpId];
+    if (!playerScores) return 0;
+    return Object.values(playerScores).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0) as number;
+  };
+
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores((prev: any) => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
@@ -79,19 +86,27 @@ export default function ScorecardPage() {
   // SUMMARY VIEW
   if (showSummary) {
     return (
-      <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', paddingBottom: '120px' }}>
-        <h2 style={{ textAlign: 'center', marginBottom: '24px' }}>Round Review</h2>
-        {roundPlayers.map(rp => (
-           <div key={rp.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee' }}>
-              <span style={{ fontWeight: 'bold' }}>{rp.display_name}</span>
-              <span style={{ fontWeight: 800 }}>Total: {Object.values(scores[rp.id] || {}).reduce((a: any, b: any) => a + b, 0)}</span>
-           </div>
-        ))}
-        <div style={{ marginTop: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <button onClick={finishRound} disabled={saving} style={{ padding: '20px', background: '#fbbf24', color: '#78350f', border: 'none', borderRadius: '12px', fontWeight: '900', fontSize: '1.2rem' }}>
+      <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', paddingBottom: '160px' }}>
+        <h2 style={{ textAlign: 'center', marginBottom: '10px' }}>Round Review</h2>
+        <p style={{ textAlign: 'center', fontSize: '0.8rem', opacity: 0.6, marginBottom: '24px' }}>{playedOn}</p>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {roundPlayers.map(rp => (
+             <div key={rp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #eee' }}>
+                <span style={{ fontWeight: 'bold' }}>{rp.display_name}</span>
+                <div style={{ textAlign: 'right' }}>
+                   <div style={{ fontWeight: '900', fontSize: '1.2rem', color: '#166534' }}>{calculateTotal(rp.id)}</div>
+                   <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>GROSS TOTAL</div>
+                </div>
+             </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: '32px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <button onClick={finishRound} disabled={saving} style={{ padding: '20px', background: '#fbbf24', color: '#78350f', border: 'none', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
             {saving ? "SAVING..." : "CONFIRM & FINALIZE ROUND"}
           </button>
-          <button onClick={() => setShowSummary(false)} style={{ padding: '15px', background: 'none', border: '1px solid #ccc', borderRadius: '12px' }}>Back to Editing</button>
+          <button onClick={() => setShowSummary(false)} style={{ padding: '15px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', color: '#64748b', fontWeight: 'bold' }}>Back to Scorecard</button>
         </div>
       </div>
     );
@@ -103,40 +118,43 @@ export default function ScorecardPage() {
       maxWidth: '500px', 
       margin: '0 auto', 
       fontFamily: 'sans-serif',
-      paddingBottom: '140px' // THIS FIXES THE OVERLAP WITH THE BOTTOM NAV
+      paddingBottom: '160px' // SPACER FOR MOBILE NAV
     }}>
       <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, color: '#166534', fontSize: '1rem' }}>Team {teamFilter || "All"}</h2>
-        <div style={{ fontSize: '2.5rem', fontWeight: '900', letterSpacing: '-1px' }}>Hole {currentHole}</div>
-        <p style={{ opacity: 0.6, fontWeight: 'bold' }}>Par {currentHoleInfo?.par} • {currentHoleInfo?.yardage} yards</p>
+        <h2 style={{ margin: 0, color: '#166534', fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Team {teamFilter || "All"}</h2>
+        <div style={{ fontSize: '2.8rem', fontWeight: '900', letterSpacing: '-1.5px', margin: '4px 0' }}>Hole {currentHole}</div>
+        <p style={{ opacity: 0.5, fontSize: '0.85rem', fontWeight: 'bold' }}>PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS</p>
       </div>
 
-      <div style={{ display: 'flex', overflowX: 'auto', gap: '8px', marginBottom: '24px', paddingBottom: '10px', scrollbarWidth: 'none' }}>
+      <div style={{ display: 'flex', overflowX: 'auto', gap: '8px', marginBottom: '24px', paddingBottom: '12px', WebkitOverflowScrolling: 'touch' }}>
         {Array.from({ length: 18 }, (_, i) => i + 1).map(h => (
-          <button key={h} onClick={() => setCurrentHole(h)} style={{ minWidth: '38px', height: '38px', borderRadius: '50%', border: h === currentHole ? '2px solid #166534' : '1px solid #ddd', background: h === currentHole ? '#166534' : 'white', color: h === currentHole ? 'white' : '#666', fontWeight: 'bold' }}>{h}</button>
+          <button key={h} onClick={() => setCurrentHole(h)} style={{ minWidth: '40px', height: '40px', borderRadius: '50%', border: h === currentHole ? '2px solid #166534' : '1px solid #e2e8f0', background: h === currentHole ? '#166534' : 'white', color: h === currentHole ? 'white' : '#94a3b8', fontWeight: 'bold', fontSize: '0.9rem' }}>{h}</button>
         ))}
       </div>
 
       {roundPlayers.map(rp => (
-        <div key={rp.id} style={{ background: 'white', padding: '16px', borderRadius: '16px', border: '1px solid #f1f5f9', marginBottom: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-             <span style={{ fontWeight: '800', color: '#1e293b' }}>{rp.display_name}</span>
-             <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '2px 8px', borderRadius: '10px', color: '#64748b' }}>Total: {Object.values(scores[rp.id] || {}).reduce((a: any, b: any) => a + b, 0)}</span>
+        <div key={rp.id} style={{ background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #f1f5f9', marginBottom: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.03)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+             <span style={{ fontWeight: '800', color: '#1e293b', fontSize: '1.1rem' }}>{rp.display_name}</span>
+             <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Total</div>
+                <div style={{ fontWeight: '800', color: '#64748b' }}>{calculateTotal(rp.id)}</div>
+             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px' }}>
-            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) - 1)} style={{ width: '55px', height: '55px', borderRadius: '14px', border: '1px solid #e2e8f0', fontSize: '24px', background: '#f8fafc', color: '#1e293b' }}>−</button>
-            <div style={{ fontSize: '2.8rem', fontWeight: '900', minWidth: '60px', textAlign: 'center', color: '#1e3a8a' }}>{scores[rp.id]?.[currentHole] || "—"}</div>
-            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) + 1)} style={{ width: '55px', height: '55px', borderRadius: '14px', border: '1px solid #e2e8f0', fontSize: '24px', background: '#f8fafc', color: '#1e293b' }}>+</button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '32px' }}>
+            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) - 1)} style={{ width: '60px', height: '60px', borderRadius: '18px', border: '1px solid #e2e8f0', fontSize: '28px', background: '#f8fafc', color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>−</button>
+            <div style={{ fontSize: '3.2rem', fontWeight: '900', minWidth: '70px', textAlign: 'center', color: '#1e3a8a' }}>{scores[rp.id]?.[currentHole] || "—"}</div>
+            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) + 1)} style={{ width: '60px', height: '60px', borderRadius: '18px', border: '1px solid #e2e8f0', fontSize: '28px', background: '#f8fafc', color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>+</button>
           </div>
         </div>
       ))}
 
-      {/* FOOTER NAVIGATION */}
+      {/* FOOTER NAV */}
       <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
         <button 
           onClick={() => setCurrentHole(h => Math.max(1, h-1))} 
           disabled={currentHole === 1}
-          style={{ flex: 1, padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0', background: 'white', fontWeight: 'bold', color: currentHole === 1 ? '#ccc' : '#64748b' }}
+          style={{ flex: 1, padding: '20px', borderRadius: '14px', border: '1px solid #e2e8f0', background: 'white', fontWeight: 'bold', color: currentHole === 1 ? '#cbd5e1' : '#64748b', fontSize: '0.9rem' }}
         >
           Previous
         </button>
@@ -144,14 +162,14 @@ export default function ScorecardPage() {
         {currentHole < 18 ? (
           <button 
             onClick={() => setCurrentHole(h => h + 1)} 
-            style={{ flex: 2, padding: '18px', borderRadius: '12px', background: '#166534', color: 'white', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 4px 10px rgba(22, 101, 52, 0.2)' }}
+            style={{ flex: 2, padding: '20px', borderRadius: '14px', background: '#166534', color: 'white', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 10px 15px -3px rgba(22, 101, 52, 0.2)' }}
           >
             Next Hole →
           </button>
         ) : (
           <button 
             onClick={() => setShowSummary(true)} 
-            style={{ flex: 2, padding: '18px', borderRadius: '12px', background: '#fbbf24', color: '#78350f', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 4px 10px rgba(251, 191, 36, 0.3)' }}
+            style={{ flex: 2, padding: '20px', borderRadius: '14px', background: '#fbbf24', color: '#78350f', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 10px 15px -3px rgba(251, 191, 36, 0.3)' }}
           >
             FINALIZE ROUND
           </button>
