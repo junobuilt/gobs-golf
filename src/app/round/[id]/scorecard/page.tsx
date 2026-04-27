@@ -8,7 +8,6 @@ export default function ScorecardPage() {
   const params = useParams();
   const router = useRouter();
   const roundId = params.id as string;
-  
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [roundPlayers, setRoundPlayers] = useState<any[]>([]);
   const [holesByTee, setHolesByTee] = useState<any>({});
@@ -22,34 +21,19 @@ export default function ScorecardPage() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     setTeamFilter(urlParams.get("team"));
-
     async function load() {
       const { data: round } = await supabase.from("rounds").select("played_on").eq("id", roundId).single();
       if (round) setPlayedOn(round.played_on);
-
       let query = supabase.from("round_players").select(`id, player_id, tee_id, team_number, course_handicap, players ( full_name, display_name )`).eq("round_id", roundId);
-      
       const team = new URLSearchParams(window.location.search).get("team");
       if (team) query = query.eq("team_number", parseInt(team));
-
       const { data: rp } = await query.order("id");
-
       if (rp && rp.length > 0) {
-        setRoundPlayers(rp.map((r: any) => ({
-          id: r.id,
-          tee_id: r.tee_id,
-          display_name: r.players?.display_name || r.players?.full_name || "?",
-          course_handicap: r.course_handicap
-        })));
-
+        setRoundPlayers(rp.map((r: any) => ({ id: r.id, tee_id: r.tee_id, display_name: r.players?.display_name || r.players?.full_name || "?", course_handicap: r.course_handicap })));
         const { data: s } = await supabase.from("scores").select("*").in("round_player_id", rp.map(r => r.id));
         const scoreMap: any = {};
-        s?.forEach(item => {
-          if (!scoreMap[item.round_player_id]) scoreMap[item.round_player_id] = {};
-          scoreMap[item.round_player_id][item.hole_number] = item.strokes;
-        });
+        s?.forEach(item => { if (!scoreMap[item.round_player_id]) scoreMap[item.round_player_id] = {}; scoreMap[item.round_player_id][item.hole_number] = item.strokes; });
         setScores(scoreMap);
-
         const { data: h } = await supabase.from("holes").select("*").eq("tee_id", rp[0].tee_id).order("hole_number");
         setHolesByTee({ [rp[0].tee_id]: h });
       }
@@ -58,11 +42,10 @@ export default function ScorecardPage() {
     load();
   }, [roundId]);
 
-  // HELPER TO CALCULATE TOTALS SAFELY FOR TYPESCRIPT
   const calculateTotal = (rpId: number): number => {
-    const playerScores = scores[rpId];
-    if (!playerScores) return 0;
-    return Object.values(playerScores).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0) as number;
+    const pScores = scores[rpId];
+    if (!pScores) return 0;
+    return Object.values(pScores).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0);
   };
 
   const setScore = async (rpId: number, hole: number, strokes: number) => {
@@ -73,106 +56,59 @@ export default function ScorecardPage() {
     else await supabase.from("scores").insert({ round_player_id: rpId, hole_number: hole, strokes });
   };
 
-  async function finishRound() {
-    setSaving(true);
-    await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId);
-    router.push("/");
-  }
-
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading Scorecard...</div>;
-
+  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading...</div>;
   const currentHoleInfo = holesByTee[roundPlayers[0]?.tee_id]?.find((h: any) => h.hole_number === currentHole);
 
-  // SUMMARY VIEW
   if (showSummary) {
     return (
       <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', paddingBottom: '160px' }}>
-        <h2 style={{ textAlign: 'center', marginBottom: '10px' }}>Round Review</h2>
-        <p style={{ textAlign: 'center', fontSize: '0.8rem', opacity: 0.6, marginBottom: '24px' }}>{playedOn}</p>
-        
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {roundPlayers.map(rp => (
-             <div key={rp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #eee' }}>
-                <span style={{ fontWeight: 'bold' }}>{rp.display_name}</span>
-                <div style={{ textAlign: 'right' }}>
-                   <div style={{ fontWeight: '900', fontSize: '1.2rem', color: '#166534' }}>{calculateTotal(rp.id)}</div>
-                   <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>GROSS TOTAL</div>
-                </div>
-             </div>
-          ))}
-        </div>
-
-        <div style={{ marginTop: '32px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <button onClick={finishRound} disabled={saving} style={{ padding: '20px', background: '#fbbf24', color: '#78350f', border: 'none', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-            {saving ? "SAVING..." : "CONFIRM & FINALIZE ROUND"}
-          </button>
-          <button onClick={() => setShowSummary(false)} style={{ padding: '15px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', color: '#64748b', fontWeight: 'bold' }}>Back to Scorecard</button>
-        </div>
+        <h2 style={{ textAlign: 'center' }}>Summary</h2>
+        {roundPlayers.map(rp => (
+           <div key={rp.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '16px', borderBottom: '1px solid #eee' }}>
+              <span style={{ fontWeight: 'bold' }}>{rp.display_name}</span>
+              <span style={{ fontWeight: 900, color: '#166534' }}>{calculateTotal(rp.id)}</span>
+           </div>
+        ))}
+        <button onClick={async () => { setSaving(true); await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId); router.push("/"); }} disabled={saving} style={{ width: '100%', padding: '20px', background: '#fbbf24', border: 'none', borderRadius: '12px', fontWeight: '900', marginTop: '20px' }}>{saving ? "SAVING..." : "FINALIZE ROUND"}</button>
+        <button onClick={() => setShowSummary(false)} style={{ width: '100%', padding: '15px', background: 'none', border: '1px solid #ccc', borderRadius: '12px', marginTop: '10px' }}>Back</button>
       </div>
     );
   }
 
   return (
-    <div style={{ 
-      padding: '20px', 
-      maxWidth: '500px', 
-      margin: '0 auto', 
-      fontFamily: 'sans-serif',
-      paddingBottom: '160px' // SPACER FOR MOBILE NAV
-    }}>
-      <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, color: '#166534', fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Team {teamFilter || "All"}</h2>
-        <div style={{ fontSize: '2.8rem', fontWeight: '900', letterSpacing: '-1.5px', margin: '4px 0' }}>Hole {currentHole}</div>
-        <p style={{ opacity: 0.5, fontSize: '0.85rem', fontWeight: 'bold' }}>PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS</p>
+    <div style={{ padding: '15px', maxWidth: '500px', margin: '0 auto', fontFamily: 'sans-serif', paddingBottom: '160px' }}>
+      <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+        <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 'bold', color: '#166534' }}>TEAM {teamFilter}</p>
+        <div style={{ fontSize: '1.8rem', fontWeight: '900' }}>Hole {currentHole}</div>
+        <p style={{ opacity: 0.5, fontSize: '0.7rem', margin: 0 }}>Par {currentHoleInfo?.par} • {currentHoleInfo?.yardage}y</p>
       </div>
 
-      <div style={{ display: 'flex', overflowX: 'auto', gap: '8px', marginBottom: '24px', paddingBottom: '12px', WebkitOverflowScrolling: 'touch' }}>
+      <div style={{ display: 'flex', overflowX: 'auto', gap: '6px', marginBottom: '15px', paddingBottom: '10px' }}>
         {Array.from({ length: 18 }, (_, i) => i + 1).map(h => (
-          <button key={h} onClick={() => setCurrentHole(h)} style={{ minWidth: '40px', height: '40px', borderRadius: '50%', border: h === currentHole ? '2px solid #166534' : '1px solid #e2e8f0', background: h === currentHole ? '#166534' : 'white', color: h === currentHole ? 'white' : '#94a3b8', fontWeight: 'bold', fontSize: '0.9rem' }}>{h}</button>
+          <button key={h} onClick={() => setCurrentHole(h)} style={{ minWidth: '32px', height: '32px', borderRadius: '50%', border: 'none', background: h === currentHole ? '#166534' : '#f1f5f9', color: h === currentHole ? 'white' : '#64748b', fontSize: '0.75rem', fontWeight: 'bold' }}>{h}</button>
         ))}
       </div>
 
       {roundPlayers.map(rp => (
-        <div key={rp.id} style={{ background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #f1f5f9', marginBottom: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.03)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-             <span style={{ fontWeight: '800', color: '#1e293b', fontSize: '1.1rem' }}>{rp.display_name}</span>
-             <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Total</div>
-                <div style={{ fontWeight: '800', color: '#64748b' }}>{calculateTotal(rp.id)}</div>
-             </div>
+        <div key={rp.id} style={{ background: 'white', padding: '10px 15px', borderRadius: '12px', border: '1px solid #f1f5f9', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{rp.display_name}</div>
+            <div style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total: {calculateTotal(rp.id)}</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '32px' }}>
-            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) - 1)} style={{ width: '60px', height: '60px', borderRadius: '18px', border: '1px solid #e2e8f0', fontSize: '28px', background: '#f8fafc', color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>−</button>
-            <div style={{ fontSize: '3.2rem', fontWeight: '900', minWidth: '70px', textAlign: 'center', color: '#1e3a8a' }}>{scores[rp.id]?.[currentHole] || "—"}</div>
-            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) + 1)} style={{ width: '60px', height: '60px', borderRadius: '18px', border: '1px solid #e2e8f0', fontSize: '28px', background: '#f8fafc', color: '#1e293b', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>+</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) - 1)} style={{ width: '40px', height: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '18px' }}>−</button>
+            <div style={{ fontSize: '1.6rem', fontWeight: '900', minWidth: '30px', textAlign: 'center' }}>{scores[rp.id]?.[currentHole] || "—"}</div>
+            <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || currentHoleInfo?.par || 4) + 1)} style={{ width: '40px', height: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '18px' }}>+</button>
           </div>
         </div>
       ))}
 
-      {/* FOOTER NAV */}
-      <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-        <button 
-          onClick={() => setCurrentHole(h => Math.max(1, h-1))} 
-          disabled={currentHole === 1}
-          style={{ flex: 1, padding: '20px', borderRadius: '14px', border: '1px solid #e2e8f0', background: 'white', fontWeight: 'bold', color: currentHole === 1 ? '#cbd5e1' : '#64748b', fontSize: '0.9rem' }}
-        >
-          Previous
-        </button>
-        
+      <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+        <button onClick={() => setCurrentHole(h => Math.max(1, h-1))} disabled={currentHole === 1} style={{ flex: 1, padding: '15px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', fontWeight: 'bold', color: '#64748b' }}>Back</button>
         {currentHole < 18 ? (
-          <button 
-            onClick={() => setCurrentHole(h => h + 1)} 
-            style={{ flex: 2, padding: '20px', borderRadius: '14px', background: '#166534', color: 'white', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 10px 15px -3px rgba(22, 101, 52, 0.2)' }}
-          >
-            Next Hole →
-          </button>
+          <button onClick={() => setCurrentHole(h => h + 1)} style={{ flex: 2, padding: '15px', borderRadius: '10px', background: '#166534', color: 'white', border: 'none', fontWeight: '900' }}>Next Hole →</button>
         ) : (
-          <button 
-            onClick={() => setShowSummary(true)} 
-            style={{ flex: 2, padding: '20px', borderRadius: '14px', background: '#fbbf24', color: '#78350f', border: 'none', fontWeight: '900', fontSize: '1rem', boxShadow: '0 10px 15px -3px rgba(251, 191, 36, 0.3)' }}
-          >
-            FINALIZE ROUND
-          </button>
+          <button onClick={() => setShowSummary(true)} style={{ flex: 2, padding: '15px', borderRadius: '10px', background: '#fbbf24', color: '#78350f', border: 'none', fontWeight: '900' }}>FINALIZE</button>
         )}
       </div>
     </div>
