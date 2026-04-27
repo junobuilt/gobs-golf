@@ -73,13 +73,13 @@ export default function AdminDashboard() {
   const unassigned = roster.filter(r => !Object.values(teams).flat().find(tp => tp.id === r.id));
 
   return (
-    <div className="p-6 max-w-7xl mx-auto bg-slate-50 min-h-screen text-slate-900">
+    <div className="p-6 max-w-7xl mx-auto bg-slate-50 min-h-screen text-slate-900 font-sans">
       {/* HEADER */}
       <div className="flex justify-between items-center mb-8 bg-blue-900 p-6 rounded-xl shadow-lg text-white">
         <div>
-          <h1 className="text-2xl font-black tracking-tight">GOBs LEAGUE MANAGER <span className="text-blue-300 text-sm ml-2">V2 PRO</span></h1>
+          <h1 className="text-2xl font-black tracking-tight uppercase">GOBs LEAGUE MANAGER <span className="text-blue-300 text-sm ml-2 font-normal">V2 PRO</span></h1>
           <div className="flex items-center gap-2 mt-1 text-blue-100">
-             <span>Date:</span>
+             <span>Playing on:</span>
              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="bg-blue-800 border-none rounded px-2 py-1 text-white font-bold cursor-pointer"/>
           </div>
         </div>
@@ -89,7 +89,7 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-12 gap-6">
         {/* STEP 1: MASTER ROSTER */}
         <div className="col-span-3 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="font-bold text-slate-400 uppercase text-xs tracking-widest mb-4">1. Check-In Players</h2>
+          <h2 className="font-bold text-slate-400 uppercase text-[10px] tracking-widest mb-4">1. Today's Roster</h2>
           <div className="space-y-1 overflow-y-auto max-h-[70vh] pr-2">
             {players.map(p => (
               <button key={p.id} onClick={() => toggleInRoster(p)} className={`w-full text-left px-3 py-2 rounded-md text-sm transition-all ${roster.find(r => r.id === p.id) ? 'bg-blue-600 text-white font-bold' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
@@ -101,12 +101,12 @@ export default function AdminDashboard() {
 
         {/* STEP 2: DRAFTING AREA */}
         <div className="col-span-9">
-          <h2 className="font-bold text-slate-400 uppercase text-xs tracking-widest mb-4">2. Assign to Teams</h2>
+          <h2 className="font-bold text-slate-400 uppercase text-[10px] tracking-widest mb-4">2. Assign to Teams</h2>
           
           {/* THE POOL */}
           <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-sm mb-6 flex flex-wrap gap-2 items-center min-h-[60px]">
-            <span className="text-xs font-bold text-blue-500 mr-2">POOL:</span>
-            {unassigned.length === 0 && <span className="text-slate-300 italic text-sm">Select players on the left to add to the pool...</span>}
+            <span className="text-[10px] font-black text-blue-500 mr-2 uppercase">Bench:</span>
+            {unassigned.length === 0 && <span className="text-slate-300 italic text-sm">Select players on the left to "check them in"...</span>}
             {unassigned.map(p => (
               <span key={p.id} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold border border-blue-100">
                 {p.full_name}
@@ -117,12 +117,12 @@ export default function AdminDashboard() {
           {/* TEAM GRID */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
-              <div key={num} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div key={num} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                 <div className="bg-slate-800 p-2 text-white text-[10px] font-black flex justify-between uppercase">
                   <span>Team {num}</span>
                   <span className={teams[num].length > 4 ? 'text-red-400' : 'text-slate-400'}>{teams[num].length} Players</span>
                 </div>
-                <div className="p-3 min-h-[160px] flex flex-col justify-between">
+                <div className="p-3 min-h-[160px] flex-grow flex flex-col justify-between">
                   <div className="space-y-2">
                     {teams[num].map(p => (
                       <div key={p.id} className="flex justify-between items-center bg-slate-50 p-2 rounded border border-slate-100 text-sm font-medium">
@@ -137,7 +137,7 @@ export default function AdminDashboard() {
                     onChange={e => assignToTeam(unassigned.find(u => u.id === parseInt(e.target.value)), num)}
                     className="w-full mt-4 p-2 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-600 font-bold outline-none hover:border-blue-400"
                   >
-                    <option value="" disabled>+ Add from Pool</option>
+                    <option value="" disabled>+ Add from Bench</option>
                     {unassigned.map(u => {
                       const conflict = getCompatibility(u, num);
                       return (
