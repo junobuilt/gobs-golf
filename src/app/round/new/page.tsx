@@ -50,6 +50,8 @@ export default function NewRoundPage() {
   const [defaultTeeId, setDefaultTeeId] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [existingRound, setExistingRound] = useState<{ id: number; teamCount: number } | null>(null);
+  const [alreadyInRound, setAlreadyInRound] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     async function load() {
@@ -68,6 +70,34 @@ export default function NewRoundPage() {
       if (teesData && teesData.length > 0) {
         setDefaultTeeId(teesData[0].id);
       }
+
+      // Check if a round already exists for today
+      const today = new Date().toISOString().split("T")[0];
+      const { data: todayRounds } = await supabase
+        .from("rounds")
+        .select("id")
+        .eq("played_on", today)
+        .eq("is_complete", false)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (todayRounds && todayRounds.length > 0) {
+        const roundId = todayRounds[0].id;
+        // Find the highest team number and which players are already in
+        const { data: rps } = await supabase
+          .from("round_players")
+          .select("team_number, player_id")
+          .eq("round_id", roundId);
+
+        const maxTeam = rps && rps.length > 0
+          ? Math.max(...rps.map((r: any) => r.team_number || 0))
+          : 0;
+        const playerIds = new Set((rps || []).map((r: any) => r.player_id));
+
+        setExistingRound({ id: roundId, teamCount: maxTeam });
+        setAlreadyInRound(playerIds as Set<number>);
+      }
+
       setLoading(false);
     }
     load();
@@ -75,10 +105,11 @@ export default function NewRoundPage() {
 
   const selectedIds = new Set(selected.map((s) => s.player.id));
 
-  // Filter for the roster list (optional search to narrow down 45 names)
+  // Filter for the roster list — exclude already selected AND already in today's round
   const rosterPlayers = players.filter(
     (p) =>
       !selectedIds.has(p.id) &&
+      !alreadyInRound.has(p.id) &&
       (filter === "" || p.full_name.toLowerCase().includes(filter.toLowerCase()))
   );
 
@@ -113,17 +144,29 @@ export default function NewRoundPage() {
     if (selected.length === 0) return;
     setSaving(true);
 
-    const today = new Date().toISOString().split("T")[0];
-    const { data: round, error: roundError } = await supabase
-      .from("rounds")
-      .insert({ course_id: 1, played_on: today, is_complete: false })
-      .select("id")
-      .single();
+    let roundId: number;
+    let teamNumber: number;
 
-    if (roundError || !round) {
-      alert("Error creating round: " + (roundError?.message || "Unknown"));
-      setSaving(false);
-      return;
+    if (existingRound) {
+      // Join the existing round as the next team
+      roundId = existingRound.id;
+      teamNumber = existingRound.teamCount + 1;
+    } else {
+      // Create a new round
+      const today = new Date().toISOString().split("T")[0];
+      const { data: round, error: roundError } = await supabase
+        .from("rounds")
+        .insert({ course_id: 1, played_on: today, is_complete: false })
+        .select("id")
+        .single();
+
+      if (roundError || !round) {
+        alert("Error creating round: " + (roundError?.message || "Unknown"));
+        setSaving(false);
+        return;
+      }
+      roundId = round.id;
+      teamNumber = 1;
     }
 
     const roundPlayers = selected.map((s) => {
@@ -137,10 +180,10 @@ export default function NewRoundPage() {
           )
         : null;
       return {
-        round_id: round.id,
+        round_id: roundId,
         player_id: s.player.id,
         tee_id: s.tee_id,
-        team_number: 1,
+        team_number: teamNumber,
         course_handicap: ch,
       };
     });
@@ -155,7 +198,7 @@ export default function NewRoundPage() {
       return;
     }
 
-    router.push(`/round/${round.id}/scorecard`);
+    router.push(`/round/${roundId}/scorecard?team=${teamNumber}`);
   }
 
   if (loading) {
@@ -171,9 +214,23 @@ export default function NewRoundPage() {
       <h2 style={{ color: "#166534", fontWeight: 900, fontSize: "1.4rem", marginBottom: "4px" }}>
         Start a Scorecard
       </h2>
-      <p style={{ color: "#64748b", fontSize: "0.85rem", marginBottom: "20px" }}>
+      <p style={{ color: "#64748b", fontSize: "0.85rem", marginBottom: "6px" }}>
         Tap players to add them to your group
       </p>
+
+      {existingRound && (
+        <div style={{
+          background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px",
+          padding: "10px 14px", marginBottom: "16px", fontSize: "0.8rem", color: "#1e40af",
+        }}>
+          <strong>Today&apos;s round already exists</strong> — your group will be added as Team {existingRound.teamCount + 1}.
+          {alreadyInRound.size > 0 && (
+            <span style={{ display: "block", marginTop: "4px", opacity: 0.8 }}>
+              {alreadyInRound.size} player{alreadyInRound.size !== 1 ? "s" : ""} already assigned to other teams today.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Selected players section — shown at top when anyone is picked */}
       {selected.length > 0 && (
@@ -278,7 +335,10 @@ export default function NewRoundPage() {
               opacity: saving ? 0.6 : 1,
             }}
           >
-            {saving ? "Creating Round..." : `Start Round (${selected.length} players) →`}
+            {saving ? "Creating..." : existingRound
+              ? `Join as Team ${existingRound.teamCount + 1} (${selected.length} players) →`
+              : `Start Round (${selected.length} players) →`
+            }
           </button>
         </div>
       )}
