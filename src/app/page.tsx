@@ -65,8 +65,8 @@ export default function HomePage() {
         <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 800 }}>Good Ole Boys</h2>
         <p style={{ opacity: 0.9, fontSize: '0.85rem', marginBottom: '20px' }}>{playerCount} Players • Semiahmoo GCC</p>
         <div style={{ display: 'flex', gap: '8px' }}>
-          
-            <Link href="/thomas-admin" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', textDecoration: 'none', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.3)' }}>Admin</Link>
+          <Link href="/round/new" style={{ backgroundColor: 'white', color: '#14532d', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', textDecoration: 'none', fontSize: '0.85rem', border: 'none' }}>+ Start a Scorecard</Link>
+          <Link href="/thomas-admin" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', textDecoration: 'none', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.3)' }}>Admin</Link>
         </div>
       </div>
 

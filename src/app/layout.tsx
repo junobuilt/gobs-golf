@@ -74,11 +74,7 @@ export default function RootLayout({
             <HomeIcon />
             Home
           </Link>
-          <Link href="/round/new">
-            <FlagIcon />
-            New Round
-            </Link>
-            <Link href="/round/active">
+          <Link href="/round/active">
             <ClipboardIcon />
             Scorecard
           </Link>
