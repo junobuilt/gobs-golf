@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 
@@ -25,11 +25,11 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
-      // 1. Get Tees from Semiahmoo
+      // 1. Fetch Tees
       const { data: tees } = await supabase.from("tees").select("*").eq("course_id", 1);
       setAllTees(tees || []);
 
-      // 2. Get players for this team
+      // 2. Fetch Players
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase.from("round_players").select(`
         id, player_id, tee_id, team_number, course_handicap,
@@ -44,11 +44,11 @@ export default function ScorecardPage() {
           id: r.id,
           tee_id: r.tee_id || 0, 
           display_name: r.players?.display_name || r.players?.full_name || "?",
-          handicap_index: r.players?.handicap_index || 0,
+          handicap_index: Number(r.players?.handicap_index) || 0,
           course_handicap: r.course_handicap
         })));
 
-        // If even one player has no tee assigned, stay in setup mode
+        // If everyone has a tee assigned, skip setup
         const allSet = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
         setNeedsSetup(!allSet);
 
@@ -61,7 +61,7 @@ export default function ScorecardPage() {
         });
         setScores(scoreMap);
 
-        // 4. Load hole data for the first player's tee (for par/yardage display)
+        // 4. Load hole info for first player's tee
         const activeTee = rp[0].tee_id || 1;
         const { data: h } = await supabase.from("holes").select("*").eq("tee_id", activeTee).order("hole_number");
         setHolesByTee({ [activeTee]: h });
@@ -71,7 +71,7 @@ export default function ScorecardPage() {
     load();
   }, [roundId]);
 
-  // THE SAVING ENGINE (Fixed the "Cannot find name setScore" error)
+  // THIS SAVES THE STROKES (Fixed the Vercel Error)
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores((prev: any) => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
@@ -82,19 +82,26 @@ export default function ScorecardPage() {
 
   const calculateCH = (index: number, teeId: number) => {
     const tee = allTees.find(t => t.id === teeId);
-    if (!tee) return Math.round(index);
-    return Math.round((index * (tee.slope / 113)) + (tee.rating - 72));
+    if (!tee || !tee.slope) return Math.round(index);
+    // USGA: (Index * (Slope/113)) + (Rating - Par)
+    return Math.round((index * (Number(tee.slope) / 113)) + (Number(tee.rating) - 72));
   };
 
   const updatePlayerTee = async (rpId: number, teeId: number) => {
     const player = roundPlayers.find(p => p.id === rpId);
+    if (!player) return;
+
     const newCH = calculateCH(player.handicap_index, teeId);
+    
+    // Update local state so CH: ? changes to a number immediately
     setRoundPlayers(prev => prev.map(p => p.id === rpId ? { ...p, tee_id: teeId, course_handicap: newCH } : p));
+    
+    // Update Database
     await supabase.from("round_players").update({ tee_id: teeId, course_handicap: newCH }).eq("id", rpId);
     
     if (!holesByTee[teeId]) {
-        const { data: h } = await supabase.from("holes").select("*").eq("tee_id", teeId).order("hole_number");
-        setHolesByTee((prev: any) => ({ ...prev, [teeId]: h }));
+      const { data: h } = await supabase.from("holes").select("*").eq("tee_id", teeId).order("hole_number");
+      setHolesByTee((prev: any) => ({ ...prev, [teeId]: h }));
     }
   };
 
@@ -103,24 +110,28 @@ export default function ScorecardPage() {
     return Object.values(pScores).reduce((a: number, b: any) => a + (Number(b) || 0), 0);
   };
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading...</div>;
+  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading Round...</div>;
 
-  // VIEW 1: PREGAME TEE SELECTION
+  // SCREEN 1: PREGAME TEE SELECTION
   if (needsSetup) {
     return (
       <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', fontFamily: 'sans-serif' }}>
         <h2 style={{ textAlign: 'center', color: '#166534', fontWeight: 900 }}>Tee Selection</h2>
         <p style={{ textAlign: 'center', fontSize: '0.8rem', color: '#64748b', marginBottom: '24px' }}>Confirm tees for Team {teamFilter}:</p>
+        
         {roundPlayers.map(rp => (
           <div key={rp.id} style={{ background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', marginBottom: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
               <span style={{ fontWeight: '800', fontSize: '1.1rem' }}>{rp.display_name}</span>
-              <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#166534', background: '#f1f5f9', padding: '4px 12px', borderRadius: '20px' }}>CH: {rp.course_handicap || "?"}</span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#166534', background: '#f1f5f9', padding: '4px 12px', borderRadius: '20px' }}>
+                CH: {rp.course_handicap !== null && rp.course_handicap !== undefined ? rp.course_handicap : "?"}
+              </span>
             </div>
+            
             <div style={{ display: 'flex', gap: '8px' }}>
               {allTees.map((t) => {
                 const isSelected = rp.tee_id === t.id;
-                // Determine if text should be black or white based on the tee name
+                // Dark background if blue or black, otherwise light
                 const isDark = t.name?.toLowerCase().includes('blue') || t.name?.toLowerCase().includes('black');
                 
                 return (
@@ -128,26 +139,27 @@ export default function ScorecardPage() {
                     key={t.id} 
                     onClick={() => updatePlayerTee(rp.id, t.id)} 
                     style={{ 
-                      flex: 1, padding: '12px 4px', borderRadius: '10px', fontSize: '11px', fontWeight: '900',
-                      border: isSelected ? '2px solid #166534' : '1px solid #e2e8f0',
+                      flex: 1, padding: '14px 4px', borderRadius: '10px', fontSize: '11px', fontWeight: '900',
+                      border: isSelected ? '3px solid #166534' : '1px solid #e2e8f0',
                       background: isSelected ? (t.color_code || '#000') : '#f8fafc',
                       color: isSelected ? (isDark ? '#ffffff' : '#000000') : '#94a3b8',
                       textTransform: 'uppercase'
                     }}
                   >
-                    {t.name}
+                    {t.name || "Tee"}
                   </button>
                 );
               })}
             </div>
           </div>
         ))}
+        
         <button onClick={() => setNeedsSetup(false)} style={{ width: '100%', padding: '20px', background: '#166534', color: 'white', border: 'none', borderRadius: '16px', fontWeight: '900', fontSize: '1.1rem', marginTop: '20px' }}>START ROUND →</button>
       </div>
     );
   }
 
-  // VIEW 2: MAIN SCORECARD
+  // SCREEN 2: MAIN SCORECARD
   const currentHoleInfo = holesByTee[roundPlayers[0]?.tee_id]?.find((h: any) => h.hole_number === currentHole);
 
   return (
@@ -180,7 +192,7 @@ export default function ScorecardPage() {
 
       <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
         <button onClick={() => setCurrentHole(h => Math.max(1, h-1))} disabled={currentHole === 1} style={{ flex: 1, padding: '18px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>Back</button>
-        <button onClick={() => setCurrentHole(h => h + 1)} style={{ flex: 2, padding: '18px', borderRadius: '12px', background: '#166534', color: 'white', border: 'none', fontWeight: '900' }}>Next Hole →</button>
+        <button onClick={() => setCurrentHole(h => Math.min(18, h+1))} style={{ flex: 2, padding: '18px', borderRadius: '12px', background: '#166534', color: 'white', border: 'none', fontWeight: '900' }}>Next Hole →</button>
       </div>
     </div>
   );
