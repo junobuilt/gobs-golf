@@ -12,6 +12,8 @@ export default function AdminDashboard() {
   const [teams, setTeams] = useState<Record<number, any[]>>({
     1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 8: []
   });
+  const [showLeaderboard, setShowLeaderboard] = useState(true);
+  const [showWeeklyWinners, setShowWeeklyWinners] = useState(true);
 
   useEffect(() => {
     async function loadData() {
@@ -19,9 +21,23 @@ export default function AdminDashboard() {
       const { data: m } = await supabase.from('played_with_matrix').select('*');
       if (p) setPlayers(p);
       if (m) setMatrix(m);
+
+      // Load settings
+      const { data: settings } = await supabase.from('league_settings').select('key, value');
+      settings?.forEach(s => {
+        if (s.key === 'show_leaderboard') setShowLeaderboard(s.value === 'true');
+        if (s.key === 'show_weekly_winners') setShowWeeklyWinners(s.value === 'true');
+      });
     }
     loadData();
   }, []);
+
+  const toggleSetting = async (key: string, currentValue: boolean) => {
+    const newValue = !currentValue;
+    if (key === 'show_leaderboard') setShowLeaderboard(newValue);
+    if (key === 'show_weekly_winners') setShowWeeklyWinners(newValue);
+    await supabase.from('league_settings').update({ value: String(newValue) }).eq('key', key);
+  };
 
   const toggleInRoster = (player: any) => {
     if (roster.find(p => p.id === player.id)) {
@@ -99,6 +115,41 @@ export default function AdminDashboard() {
           </div>
         </div>
         <button onClick={saveRound} style={{ backgroundColor: '#22c55e', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>FINALIZE & SAVE ROUND</button>
+      </div>
+
+      {/* LEAGUE SETTINGS */}
+      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px', boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)' }}>
+        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px' }}>League Settings</h2>
+        <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <div onClick={() => toggleSetting('show_leaderboard', showLeaderboard)} style={{
+              width: '44px', height: '24px', borderRadius: '12px', position: 'relative' as const,
+              background: showLeaderboard ? '#22c55e' : '#cbd5e1', transition: 'background 0.2s',
+              cursor: 'pointer',
+            }}>
+              <div style={{
+                width: '20px', height: '20px', borderRadius: '50%', background: 'white',
+                position: 'absolute' as const, top: '2px', left: showLeaderboard ? '22px' : '2px',
+                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              }} />
+            </div>
+            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>Show Leaderboard</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <div onClick={() => toggleSetting('show_weekly_winners', showWeeklyWinners)} style={{
+              width: '44px', height: '24px', borderRadius: '12px', position: 'relative' as const,
+              background: showWeeklyWinners ? '#22c55e' : '#cbd5e1', transition: 'background 0.2s',
+              cursor: 'pointer',
+            }}>
+              <div style={{
+                width: '20px', height: '20px', borderRadius: '50%', background: 'white',
+                position: 'absolute' as const, top: '2px', left: showWeeklyWinners ? '22px' : '2px',
+                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              }} />
+            </div>
+            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e293b' }}>Show Weekly Winners</span>
+          </label>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '24px' }}>
