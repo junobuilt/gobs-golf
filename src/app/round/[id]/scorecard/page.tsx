@@ -25,9 +25,11 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
+      // 1. Fetch Tees (Ensure we get Slope/Rating for math)
       const { data: tees } = await supabase.from("tees").select("*").eq("course_id", 1).order('id');
       setAllTees(tees || []);
 
+      // 2. Fetch Players
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase.from("round_players").select(`
         id, player_id, tee_id, team_number, course_handicap,
@@ -47,9 +49,11 @@ export default function ScorecardPage() {
         }));
         setRoundPlayers(playersData);
 
+        // If everyone has a tee assigned, move to scoring
         const allSet = playersData.every(p => p.tee_id !== null && p.tee_id !== 0);
         setNeedsSetup(!allSet);
 
+        // 3. Load existing scores
         const { data: s } = await supabase.from("scores").select("*").in("round_player_id", rp.map(r => r.id));
         const scoreMap: any = {};
         s?.forEach(item => {
@@ -58,6 +62,7 @@ export default function ScorecardPage() {
         });
         setScores(scoreMap);
 
+        // 4. Initial hole data load
         const activeTee = playersData[0].tee_id || 1;
         const { data: h } = await supabase.from("holes").select("*").eq("tee_id", activeTee).order("hole_number");
         setHolesByTee({ [activeTee]: h });
@@ -67,6 +72,7 @@ export default function ScorecardPage() {
     load();
   }, [roundId]);
 
+  // STROKE SAVING ENGINE
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores((prev: any) => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
@@ -75,18 +81,29 @@ export default function ScorecardPage() {
     else await supabase.from("scores").insert({ round_player_id: rpId, hole_number: hole, strokes });
   };
 
+  // USGA HANDICAP CALCULATION
   const calculateCH = (index: number, teeId: number) => {
     const tee = allTees.find(t => t.id === teeId);
-    if (!tee || !tee.slope) return Math.round(index);
-    return Math.round((index * (Number(tee.slope) / 113)) + (Number(tee.rating) - 72));
+    if (!tee || !tee.slope || !tee.rating) return Math.round(index);
+    // Formula: (Handicap Index * (Slope / 113)) + (Rating - Par 72)
+    const ch = (index * (Number(tee.slope) / 113)) + (Number(tee.rating) - 72);
+    return Math.round(ch);
   };
 
+  // INSTANT TEE UPDATE
   const updatePlayerTee = async (rpId: number, teeId: number) => {
     const player = roundPlayers.find(p => p.id === rpId);
     if (!player) return;
+
     const newCH = calculateCH(player.handicap_index, teeId);
+    
+    // 1. Update UI state immediately (fixes the "locking" feel)
     setRoundPlayers(prev => prev.map(p => p.id === rpId ? { ...p, tee_id: teeId, course_handicap: newCH } : p));
+    
+    // 2. Update Database in background
     await supabase.from("round_players").update({ tee_id: teeId, course_handicap: newCH }).eq("id", rpId);
+    
+    // 3. Load hole info for this specific tee if missing
     if (!holesByTee[teeId]) {
       const { data: h } = await supabase.from("holes").select("*").eq("tee_id", teeId).order("hole_number");
       setHolesByTee((prev: any) => ({ ...prev, [teeId]: h }));
@@ -100,6 +117,7 @@ export default function ScorecardPage() {
 
   if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading Round...</div>;
 
+  // VIEW 1: PREGAME SETUP (The Selection Screen)
   if (needsSetup) {
     return (
       <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', fontFamily: 'sans-serif' }}>
@@ -109,19 +127,20 @@ export default function ScorecardPage() {
         {roundPlayers.map(rp => (
           <div key={rp.id} style={{ background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', marginBottom: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
-              <span style={{ fontWeight: '800', fontSize: '1.1rem' }}>{rp.display_name}</span>
-              <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#166534', background: '#f1f5f9', padding: '4px 12px', borderRadius: '20px' }}>
-                CH: {rp.course_handicap !== null ? rp.course_handicap : "?"}
-              </span>
+              <span style={{ fontWeight: '900', fontSize: '1.2rem', color: '#1e293b' }}>{rp.display_name}</span>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', display: 'block' }}>HANDICAP</span>
+                <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#166534' }}>
+                  {rp.course_handicap !== null ? rp.course_handicap : "?"}
+                </span>
+              </div>
             </div>
             
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
               {allTees.map((t) => {
                 const isSelected = rp.tee_id === t.id;
                 
-                // IMPROVED CONTRAST LOGIC
-                // If it's the Blue tee (#1e40af), use white text.
-                // Otherwise (White/Yellow), use black text.
+                // FIXED CONTRAST: If the color code is the Blue hex, use white text. Otherwise black.
                 const textColor = (t.color_code === '#1e40af') ? '#ffffff' : '#000000';
                 
                 return (
@@ -129,17 +148,24 @@ export default function ScorecardPage() {
                     key={t.id} 
                     onClick={() => updatePlayerTee(rp.id, t.id)} 
                     style={{ 
-                      flex: 1, padding: '14px 4px', borderRadius: '10px', fontSize: '10px', fontWeight: '900',
+                      flex: 1, 
+                      padding: '16px 4px', 
+                      borderRadius: '12px', 
+                      fontSize: '11px', 
+                      fontWeight: '900',
+                      // Visual Selection Feedback
                       border: isSelected ? '4px solid #166534' : '1px solid #e2e8f0',
-                      background: t.color_code || '#cccccc',
-                      color: isSelected ? textColor : '#94a3b8',
+                      background: t.color_code || '#ccc',
+                      color: textColor,
                       textTransform: 'uppercase',
+                      // Behavior Feedback
                       opacity: isSelected ? 1 : 0.3,
                       transform: isSelected ? 'scale(1.05)' : 'scale(1)',
-                      transition: 'all 0.15s ease'
+                      transition: 'all 0.15s ease-in-out',
+                      boxShadow: isSelected ? '0 4px 10px rgba(0,0,0,0.1)' : 'none'
                     }}
                   >
-                    {t.name}
+                    {t.name || "TEE"}
                   </button>
                 );
               })}
@@ -152,6 +178,7 @@ export default function ScorecardPage() {
     );
   }
 
+  // VIEW 2: THE SCORECARD
   const currentHoleInfo = holesByTee[roundPlayers[0]?.tee_id]?.find((h: any) => h.hole_number === currentHole);
 
   return (
