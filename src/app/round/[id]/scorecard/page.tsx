@@ -25,11 +25,9 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
-      // 1. Fetch Tees
-      const { data: tees } = await supabase.from("tees").select("*").eq("course_id", 1);
+      const { data: tees } = await supabase.from("tees").select("*").eq("course_id", 1).order('id');
       setAllTees(tees || []);
 
-      // 2. Fetch Players
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase.from("round_players").select(`
         id, player_id, tee_id, team_number, course_handicap,
@@ -40,19 +38,18 @@ export default function ScorecardPage() {
       const { data: rp } = await query.order("id");
 
       if (rp && rp.length > 0) {
-        setRoundPlayers(rp.map((r: any) => ({
+        const playersData = rp.map((r: any) => ({
           id: r.id,
           tee_id: r.tee_id || 0, 
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: Number(r.players?.handicap_index) || 0,
           course_handicap: r.course_handicap
-        })));
+        }));
+        setRoundPlayers(playersData);
 
-        // If everyone has a tee assigned, skip setup
-        const allSet = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
+        const allSet = playersData.every(p => p.tee_id !== null && p.tee_id !== 0);
         setNeedsSetup(!allSet);
 
-        // 3. Load scores
         const { data: s } = await supabase.from("scores").select("*").in("round_player_id", rp.map(r => r.id));
         const scoreMap: any = {};
         s?.forEach(item => {
@@ -61,8 +58,7 @@ export default function ScorecardPage() {
         });
         setScores(scoreMap);
 
-        // 4. Load hole info for first player's tee
-        const activeTee = rp[0].tee_id || 1;
+        const activeTee = playersData[0].tee_id || 1;
         const { data: h } = await supabase.from("holes").select("*").eq("tee_id", activeTee).order("hole_number");
         setHolesByTee({ [activeTee]: h });
       }
@@ -71,7 +67,6 @@ export default function ScorecardPage() {
     load();
   }, [roundId]);
 
-  // THIS SAVES THE STROKES (Fixed the Vercel Error)
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores((prev: any) => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
@@ -83,22 +78,15 @@ export default function ScorecardPage() {
   const calculateCH = (index: number, teeId: number) => {
     const tee = allTees.find(t => t.id === teeId);
     if (!tee || !tee.slope) return Math.round(index);
-    // USGA: (Index * (Slope/113)) + (Rating - Par)
     return Math.round((index * (Number(tee.slope) / 113)) + (Number(tee.rating) - 72));
   };
 
   const updatePlayerTee = async (rpId: number, teeId: number) => {
     const player = roundPlayers.find(p => p.id === rpId);
     if (!player) return;
-
     const newCH = calculateCH(player.handicap_index, teeId);
-    
-    // Update local state so CH: ? changes to a number immediately
     setRoundPlayers(prev => prev.map(p => p.id === rpId ? { ...p, tee_id: teeId, course_handicap: newCH } : p));
-    
-    // Update Database
     await supabase.from("round_players").update({ tee_id: teeId, course_handicap: newCH }).eq("id", rpId);
-    
     if (!holesByTee[teeId]) {
       const { data: h } = await supabase.from("holes").select("*").eq("tee_id", teeId).order("hole_number");
       setHolesByTee((prev: any) => ({ ...prev, [teeId]: h }));
@@ -112,7 +100,6 @@ export default function ScorecardPage() {
 
   if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading Round...</div>;
 
-  // SCREEN 1: PREGAME TEE SELECTION
   if (needsSetup) {
     return (
       <div style={{ padding: '20px', maxWidth: '500px', margin: '0 auto', fontFamily: 'sans-serif' }}>
@@ -124,29 +111,35 @@ export default function ScorecardPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
               <span style={{ fontWeight: '800', fontSize: '1.1rem' }}>{rp.display_name}</span>
               <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#166534', background: '#f1f5f9', padding: '4px 12px', borderRadius: '20px' }}>
-                CH: {rp.course_handicap !== null && rp.course_handicap !== undefined ? rp.course_handicap : "?"}
+                CH: {rp.course_handicap !== null ? rp.course_handicap : "?"}
               </span>
             </div>
             
             <div style={{ display: 'flex', gap: '8px' }}>
               {allTees.map((t) => {
                 const isSelected = rp.tee_id === t.id;
-                // Dark background if blue or black, otherwise light
-                const isDark = t.name?.toLowerCase().includes('blue') || t.name?.toLowerCase().includes('black');
+                
+                // IMPROVED CONTRAST LOGIC
+                // If it's the Blue tee (#1e40af), use white text.
+                // Otherwise (White/Yellow), use black text.
+                const textColor = (t.color_code === '#1e40af') ? '#ffffff' : '#000000';
                 
                 return (
                   <button 
                     key={t.id} 
                     onClick={() => updatePlayerTee(rp.id, t.id)} 
                     style={{ 
-                      flex: 1, padding: '14px 4px', borderRadius: '10px', fontSize: '11px', fontWeight: '900',
-                      border: isSelected ? '3px solid #166534' : '1px solid #e2e8f0',
-                      background: isSelected ? (t.color_code || '#000') : '#f8fafc',
-                      color: isSelected ? (isDark ? '#ffffff' : '#000000') : '#94a3b8',
-                      textTransform: 'uppercase'
+                      flex: 1, padding: '14px 4px', borderRadius: '10px', fontSize: '10px', fontWeight: '900',
+                      border: isSelected ? '4px solid #166534' : '1px solid #e2e8f0',
+                      background: t.color_code || '#cccccc',
+                      color: isSelected ? textColor : '#94a3b8',
+                      textTransform: 'uppercase',
+                      opacity: isSelected ? 1 : 0.3,
+                      transform: isSelected ? 'scale(1.05)' : 'scale(1)',
+                      transition: 'all 0.15s ease'
                     }}
                   >
-                    {t.name || "Tee"}
+                    {t.name}
                   </button>
                 );
               })}
@@ -159,7 +152,6 @@ export default function ScorecardPage() {
     );
   }
 
-  // SCREEN 2: MAIN SCORECARD
   const currentHoleInfo = holesByTee[roundPlayers[0]?.tee_id]?.find((h: any) => h.hole_number === currentHole);
 
   return (
