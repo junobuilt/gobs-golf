@@ -39,24 +39,27 @@ export default function ScorecardPage() {
       const { data: rp } = await query.order("id");
 
       if (rp && rp.length > 0) {
+        // DIAGNOSTIC LOG
+        console.log("SCORECARD LOADED DATA:", rp);
+
         setRoundPlayers(rp.map((r: any) => ({
           id: r.id,
-          tee_id: r.tee_id, // We want the actual value from DB
+          tee_id: r.tee_id, 
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index || 0,
           course_handicap: r.course_handicap
         })));
 
-        // LOGIC FIX: 
-        // We show the setup screen if ANY player is missing a tee_id.
-        const allHaveTees = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
+        // FORCE CHECK: If any tee_id is 1, null, or 0, we show setup
+        const allPlayersHaveTees = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
         
-        if (allHaveTees) {
+        if (allPlayersHaveTees) {
+          console.log("All players have tees assigned. Moving to scoring.");
           setNeedsSetup(false);
-          // Load hole data for the first player's tee since we're ready to score
           const { data: h } = await supabase.from("holes").select("*").eq("tee_id", rp[0].tee_id).order("hole_number");
           setHolesByTee({ [rp[0].tee_id]: h });
         } else {
+          console.log("Missing Tee IDs found. Redirecting to Setup Screen.");
           setNeedsSetup(true);
         }
 
