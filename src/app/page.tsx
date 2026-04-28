@@ -81,7 +81,7 @@ export default function HomePage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
                 <span style={{ fontWeight: 800 }}>{formatDate(round.played_on)}</span>
                 <span style={{ fontSize: '9px', textTransform: 'uppercase', fontWeight: 'bold', color: round.is_complete ? '#94a3b8' : '#16a34a' }}>
-                  {round.is_complete ? 'Archived' : 'Live'}
+                  {round.is_complete ? 'Round Complete' : 'Live'}
                 </span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
@@ -92,6 +92,16 @@ export default function HomePage() {
                   </Link>
                 ))}
               </div>
+              {round.is_complete && (
+                <Link href={`/round/${round.id}/summary`} style={{
+                  display: 'block', textAlign: 'center', marginTop: '10px',
+                  padding: '8px', borderRadius: '8px', background: '#f0fdf4',
+                  color: '#166534', fontSize: '0.8rem', fontWeight: 700,
+                  textDecoration: 'none', border: '1px solid #bbf7d0',
+                }}>
+                  View Summary →
+                </Link>
+              )}
             </div>
           ))}
         </div>
