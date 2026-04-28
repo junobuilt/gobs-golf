@@ -26,30 +26,40 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
-      // 1. Get Tees for the course
       const { data: tees } = await supabase.from("tees").select("*").eq("course_id", 1);
       setAllTees(tees || []);
 
-      // 2. Get players for this team
       const team = new URLSearchParams(window.location.search).get("team");
-      let query = supabase.from("round_players").select(`id, player_id, tee_id, team_number, course_handicap, players ( full_name, display_name, handicap_index )`).eq("round_id", roundId);
+      let query = supabase.from("round_players").select(`
+        id, player_id, tee_id, team_number, course_handicap,
+        players ( full_name, display_name, handicap_index )
+      `).eq("round_id", roundId);
+      
       if (team) query = query.eq("team_number", parseInt(team));
       const { data: rp } = await query.order("id");
 
       if (rp && rp.length > 0) {
         setRoundPlayers(rp.map((r: any) => ({
           id: r.id,
-          tee_id: r.tee_id || 0, 
+          tee_id: r.tee_id, // We want the actual value from DB
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index || 0,
           course_handicap: r.course_handicap
         })));
 
-        // If even one player has no tee assigned, show setup
-        const alreadySet = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
-        setNeedsSetup(!alreadySet);
+        // LOGIC FIX: 
+        // We show the setup screen if ANY player is missing a tee_id.
+        const allHaveTees = rp.every(r => r.tee_id !== null && r.tee_id !== 0);
+        
+        if (allHaveTees) {
+          setNeedsSetup(false);
+          // Load hole data for the first player's tee since we're ready to score
+          const { data: h } = await supabase.from("holes").select("*").eq("tee_id", rp[0].tee_id).order("hole_number");
+          setHolesByTee({ [rp[0].tee_id]: h });
+        } else {
+          setNeedsSetup(true);
+        }
 
-        // 3. Load scores
         const { data: s } = await supabase.from("scores").select("*").in("round_player_id", rp.map(r => r.id));
         const scoreMap: any = {};
         s?.forEach(item => {
@@ -57,10 +67,6 @@ export default function ScorecardPage() {
           scoreMap[item.round_player_id][item.hole_number] = item.strokes;
         });
         setScores(scoreMap);
-
-        // 4. Load hole data for the first player's tee (for par/yardage display)
-        const { data: h } = await supabase.from("holes").select("*").eq("tee_id", rp[0].tee_id || 1).order("hole_number");
-        setHolesByTee({ [rp[0].tee_id || 1]: h });
       }
       setLoading(false);
     }
