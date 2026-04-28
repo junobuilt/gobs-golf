@@ -66,14 +66,36 @@ export default function AdminDashboard() {
   };
 
   const saveRound = async () => {
-    const { data: round, error: rErr } = await supabase.from('rounds').insert({ played_on: selectedDate, course_id: 1 }).select().single();
+    // 1. Create the round
+    const { data: round, error: rErr } = await supabase
+      .from('rounds')
+      .insert({ played_on: selectedDate, course_id: 1 })
+      .select()
+      .single();
+
     if (rErr) return alert(rErr.message);
+    
+    // 2. Prepare assignments with NO tee assigned yet
     const assignments = Object.entries(teams).flatMap(([num, ps]) => 
-      ps.map(p => ({ round_id: round.id, player_id: p.id, team_number: parseInt(num), tee_id: 1 }))
+      ps.map(p => ({ 
+        round_id: round.id, 
+        player_id: p.id, 
+        team_number: parseInt(num), 
+        tee_id: null  // <--- Double check this says null, NOT 1
+      }))
     );
+    
+    // 3. Save assignments
     const { error: aErr } = await supabase.from('round_players').insert(assignments);
-    if (aErr) alert(aErr.message);
-    else alert("Success! Round created and players assigned.");
+    
+    if (aErr) {
+      alert("Error saving teams: " + aErr.message);
+    } else {
+      alert("Success! Teams saved. Players will pick tees on their phones.");
+      // Optional: Clear the teams on screen so you know it's done
+      setRoster([]);
+      setTeams({ 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 8: [] });
+    }
   };
 
   const unassigned = roster.filter(r => !Object.values(teams).flat().find(tp => tp.id === r.id));
