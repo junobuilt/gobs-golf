@@ -74,10 +74,10 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <header className="app-header">
-          <div>
+          <Link href="/" style={{ textDecoration: "none", color: "inherit" }}>
             <h1>GOBS Golf</h1>
             <div className="subtitle">Semiahmoo Golf &amp; Country Club</div>
-          </div>
+          </Link>
         </header>
 
         <main>{children}</main>

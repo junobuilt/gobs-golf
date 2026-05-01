@@ -11,7 +11,8 @@
       "Bash(npx tsc *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(gh pr create --title 'Mobile redesign, scorecard fixes, and summary improvements' --body ' *)"
     ]
   }
 }

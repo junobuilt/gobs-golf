@@ -7,6 +7,7 @@ import Link from "next/link";
 type TeamInfo = {
   number: number;
   players: string[];
+  hasScores: boolean;
 };
 
 type RecentRound = {
@@ -15,6 +16,7 @@ type RecentRound = {
   is_complete: boolean;
   isYesterday: boolean;
   teams: TeamInfo[];
+  hasAnyScores: boolean;
 };
 
 function todayStr() {
@@ -43,7 +45,6 @@ export default function HomePage() {
       const today = todayStr();
       const yesterday = yesterdayStr();
 
-      // Load today's rounds + yesterday's incomplete rounds
       const { data: rounds } = await supabase
         .from("rounds")
         .select("id, played_on, is_complete")
@@ -53,27 +54,44 @@ export default function HomePage() {
       if (rounds) {
         const roundsWithTeams = await Promise.all(
           rounds.map(async (round) => {
+            // Fetch round_players including id for score lookup
             const { data: rps } = await supabase
               .from("round_players")
-              .select("team_number, players ( display_name, full_name )")
+              .select("id, team_number, players ( display_name, full_name )")
               .eq("round_id", round.id);
 
-            const teamMap: Record<number, string[]> = {};
+            // Get which round_player_ids have any scores
+            const rpIds = rps?.map((rp: any) => rp.id) || [];
+            const rpIdsWithScores = new Set<number>();
+            if (rpIds.length > 0) {
+              const { data: scoreData } = await supabase
+                .from("scores")
+                .select("round_player_id")
+                .in("round_player_id", rpIds);
+              scoreData?.forEach((s: any) => rpIdsWithScores.add(s.round_player_id));
+            }
+
+            // Build team map with per-team hasScores flag
+            const teamMap: Record<number, { players: string[]; hasScores: boolean }> = {};
             rps?.forEach((rp: any) => {
               const tNum = rp.team_number;
               if (!tNum) return;
-              if (!teamMap[tNum]) teamMap[tNum] = [];
-              teamMap[tNum].push(rp.players?.display_name || rp.players?.full_name || "?");
+              if (!teamMap[tNum]) teamMap[tNum] = { players: [], hasScores: false };
+              teamMap[tNum].players.push(rp.players?.display_name || rp.players?.full_name || "?");
+              if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
             });
 
             const teamList: TeamInfo[] = Object.entries(teamMap)
-              .map(([num, players]) => ({ number: parseInt(num), players }))
+              .map(([num, info]) => ({ number: parseInt(num), players: info.players, hasScores: info.hasScores }))
               .sort((a, b) => a.number - b.number);
+
+            const hasAnyScores = teamList.some(t => t.hasScores);
 
             return {
               ...round,
               isYesterday: round.played_on === yesterday,
               teams: teamList,
+              hasAnyScores,
             };
           })
         );
@@ -119,47 +137,93 @@ export default function HomePage() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {recentRounds.map((round) => (
-            <div key={round.id} style={{ background: "white", borderRadius: "14px", border: "1px solid rgba(0,0,0,0.07)", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px", alignItems: "center" }}>
-                <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{formatDate(round.played_on)}</span>
-                <span style={{
-                  fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
-                  padding: "3px 10px", borderRadius: "999px",
-                  background: round.is_complete ? "#dcfce7" : round.isYesterday ? "#fef3c7" : "#eff6ff",
-                  color: round.is_complete ? "#166534" : round.isYesterday ? "#92400e" : "#1d4ed8",
-                }}>
-                  {round.is_complete ? "Complete" : round.isYesterday ? "Unfinished" : "In Progress"}
-                </span>
-              </div>
+          {recentRounds.map((round) => {
+            // Determine overall round status
+            const status = round.is_complete ? "Complete"
+              : round.isYesterday ? "Unfinished"
+              : round.hasAnyScores ? "In Progress"
+              : "Not Started";
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
-                {round.teams.map((team) => (
-                  <Link
-                    key={team.number}
-                    href={`/round/${round.id}/scorecard?team=${team.number}`}
-                    style={{ display: "flex", flexDirection: "column", padding: "10px 12px", backgroundColor: "#f8fafc", borderRadius: "10px", textDecoration: "none", border: "1px solid #f1f5f9" }}
-                  >
-                    <span style={{ fontSize: "0.68rem", fontWeight: 800, color: "#0c3057", marginBottom: "3px" }}>TEAM {team.number}</span>
-                    <span style={{ fontSize: "0.78rem", color: "#64748b", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-                      {team.players.join(", ")}
-                    </span>
+            const statusBg = round.is_complete ? "#f1f5f9"
+              : round.isYesterday ? "#fef3c7"
+              : round.hasAnyScores ? "#dcfce7"
+              : "#fef3c7";
+
+            const statusColor = round.is_complete ? "#475569"
+              : round.isYesterday ? "#92400e"
+              : round.hasAnyScores ? "#166534"
+              : "#92400e";
+
+            return (
+              <div key={round.id} style={{ background: "white", borderRadius: "14px", border: "1px solid rgba(0,0,0,0.07)", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px", alignItems: "center" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{formatDate(round.played_on)}</span>
+                  <span style={{
+                    fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
+                    padding: "3px 10px", borderRadius: "999px",
+                    background: statusBg, color: statusColor,
+                  }}>
+                    {status}
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+                  {round.teams.map((team) => {
+                    // Color-code each team card by its own score status
+                    const teamBg = round.is_complete
+                      ? "#f8fafc"
+                      : team.hasScores
+                      ? "#f0fdf4"
+                      : "#fffbeb";
+
+                    const teamBorder = round.is_complete
+                      ? "#f1f5f9"
+                      : team.hasScores
+                      ? "#bbf7d0"
+                      : "#fde68a";
+
+                    const teamAccent = round.is_complete
+                      ? "#94a3b8"
+                      : team.hasScores
+                      ? "#166534"
+                      : "#92400e";
+
+                    return (
+                      <Link
+                        key={team.number}
+                        href={`/round/${round.id}/scorecard?team=${team.number}`}
+                        style={{
+                          display: "flex", flexDirection: "column", padding: "10px 12px",
+                          backgroundColor: teamBg, borderRadius: "10px", textDecoration: "none",
+                          border: `1px solid ${teamBorder}`,
+                        }}
+                      >
+                        <span style={{ fontSize: "0.68rem", fontWeight: 800, color: teamAccent, marginBottom: "4px" }}>
+                          TEAM {team.number}
+                        </span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+                          {team.players.map((name, i) => (
+                            <span key={i} style={{ fontSize: "0.75rem", color: "#64748b" }}>{name}</span>
+                          ))}
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+
+                {round.is_complete && (
+                  <Link href={`/round/${round.id}/summary`} style={{
+                    display: "block", textAlign: "center", marginTop: "10px",
+                    padding: "8px", borderRadius: "8px", background: "#f0fdf4",
+                    color: "#166534", fontSize: "0.82rem", fontWeight: 700,
+                    textDecoration: "none", border: "1px solid #bbf7d0",
+                  }}>
+                    View Summary →
                   </Link>
-                ))}
+                )}
               </div>
-
-              {round.is_complete && (
-                <Link href={`/round/${round.id}/summary`} style={{
-                  display: "block", textAlign: "center", marginTop: "10px",
-                  padding: "8px", borderRadius: "8px", background: "#f0fdf4",
-                  color: "#166534", fontSize: "0.82rem", fontWeight: 700,
-                  textDecoration: "none", border: "1px solid #bbf7d0",
-                }}>
-                  View Summary →
-                </Link>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

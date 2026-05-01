@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { LeagueSettings } from "../page";
 
@@ -75,14 +75,40 @@ function SettingRow({ label, description, children }: { label: string; descripti
   );
 }
 
+type ToggleKey = "show_leaderboard" | "show_weekly_winners" | "two_ball_scoring";
+
 export default function Settings({ settings, onRefresh }: Props) {
   const [buyIn, setBuyIn] = useState(settings["buy_in_amount"] ?? "10");
   const [savingBuyIn, setSavingBuyIn] = useState(false);
   const [buyInSaved, setBuyInSaved] = useState(false);
 
-  const toggleSetting = async (key: string) => {
-    const current = settings[key] === "true";
-    await supabase.from("league_settings").upsert({ key, value: String(!current) }, { onConflict: "key" });
+  // Optimistic local state — updates immediately on click, then syncs after DB round-trip
+  const [localToggles, setLocalToggles] = useState<Record<ToggleKey, boolean>>({
+    show_leaderboard: settings["show_leaderboard"] === "true",
+    show_weekly_winners: settings["show_weekly_winners"] === "true",
+    two_ball_scoring: settings["two_ball_scoring"] === "true",
+  });
+
+  useEffect(() => {
+    setLocalToggles({
+      show_leaderboard: settings["show_leaderboard"] === "true",
+      show_weekly_winners: settings["show_weekly_winners"] === "true",
+      two_ball_scoring: settings["two_ball_scoring"] === "true",
+    });
+  }, [settings]);
+
+  const toggleSetting = async (key: ToggleKey) => {
+    const newValue = !localToggles[key];
+    setLocalToggles(prev => ({ ...prev, [key]: newValue }));
+    // Use update (not upsert) to avoid creating duplicate rows if there's no unique constraint
+    const { data } = await supabase
+      .from("league_settings")
+      .update({ value: String(newValue) })
+      .eq("key", key)
+      .select();
+    if (!data || data.length === 0) {
+      await supabase.from("league_settings").insert({ key, value: String(newValue) });
+    }
     onRefresh();
   };
 
@@ -115,7 +141,7 @@ export default function Settings({ settings, onRefresh }: Props) {
               style={{
                 width: "72px", padding: "6px 10px",
                 border: `1.5px solid ${C.border}`, borderRadius: "8px",
-                fontSize: "0.9rem", fontFamily: "DM Sans, system-ui, sans-serif",
+                fontSize: "0.9rem", fontFamily: "system-ui, sans-serif",
                 outline: "none", textAlign: "center", color: "#1f2937",
               }}
             />
@@ -127,7 +153,7 @@ export default function Settings({ settings, onRefresh }: Props) {
                 background: buyInSaved ? "#dcfce7" : C.green,
                 color: buyInSaved ? "#166534" : "white",
                 fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
-                fontFamily: "DM Sans, system-ui, sans-serif",
+                fontFamily: "system-ui, sans-serif",
                 transition: "background 0.2s",
               }}
             >
@@ -141,11 +167,11 @@ export default function Settings({ settings, onRefresh }: Props) {
       <SectionHeader>Display</SectionHeader>
       <Card>
         <SettingRow label="Show Leaderboard" description="Visible on the public leaderboard page">
-          <Toggle value={settings["show_leaderboard"] === "true"} onChange={() => toggleSetting("show_leaderboard")} />
+          <Toggle value={localToggles.show_leaderboard} onChange={() => toggleSetting("show_leaderboard")} />
         </SettingRow>
         <div style={{ borderBottom: "none" }}>
           <SettingRow label="Show Weekly Winners" description="Display weekly winner highlights">
-            <Toggle value={settings["show_weekly_winners"] === "true"} onChange={() => toggleSetting("show_weekly_winners")} />
+            <Toggle value={localToggles.show_weekly_winners} onChange={() => toggleSetting("show_weekly_winners")} />
           </SettingRow>
         </div>
       </Card>
@@ -155,7 +181,7 @@ export default function Settings({ settings, onRefresh }: Props) {
       <Card>
         <div style={{ borderBottom: "none" }}>
           <SettingRow label="2-ball Scoring" description="Count best 2 balls per team per hole">
-            <Toggle value={settings["two_ball_scoring"] === "true"} onChange={() => toggleSetting("two_ball_scoring")} />
+            <Toggle value={localToggles.two_ball_scoring} onChange={() => toggleSetting("two_ball_scoring")} />
           </SettingRow>
         </div>
       </Card>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import Link from "next/link";
 import { Player, MatrixRow, LeagueSettings } from "../page";
 import DangerModal from "../components/DangerModal";
 
@@ -50,6 +51,8 @@ function Toggle({ value, onChange }: { value: boolean; onChange: () => void }) {
   );
 }
 
+type ToggleKey = "show_leaderboard" | "show_weekly_winners" | "two_ball_scoring";
+
 export default function RoundSetup({ allPlayers, matrix, settings, onSettingsChange }: Props) {
   const isMobile = useIsMobile();
 
@@ -63,6 +66,9 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
   const [deleteModal, setDeleteModal] = useState(false);
   const [maxTeams, setMaxTeams] = useState(8);
 
+  // "active" = round exists with scores in progress; "setup" = editing mode
+  const [viewMode, setViewMode] = useState<"active" | "setup">("setup");
+
   // Mobile step state
   const [mobileStep, setMobileStep] = useState<"checkin" | "teams">("checkin");
   const [bottomSheetPlayer, setBottomSheetPlayer] = useState<Player | null>(null);
@@ -70,12 +76,28 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
   // Suggest teams guard
   const [suggestModal, setSuggestModal] = useState(false);
 
+  // Optimistic toggle state — updates immediately on click, then syncs after DB round-trip
+  const [localToggles, setLocalToggles] = useState<Record<ToggleKey, boolean>>({
+    show_leaderboard: settings["show_leaderboard"] === "true",
+    show_weekly_winners: settings["show_weekly_winners"] === "true",
+    two_ball_scoring: settings["two_ball_scoring"] === "true",
+  });
+
+  useEffect(() => {
+    setLocalToggles({
+      show_leaderboard: settings["show_leaderboard"] === "true",
+      show_weekly_winners: settings["show_weekly_winners"] === "true",
+      two_ball_scoring: settings["two_ball_scoring"] === "true",
+    });
+  }, [settings]);
+
   const loadRoundForDate = useCallback(async (date: string) => {
     setExistingRoundId(null);
     setIsComplete(false);
     setRoster([]);
     setTeams({ 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 8: [] });
     setMobileStep("checkin");
+    setViewMode("setup");
 
     const { data: rounds } = await supabase
       .from("rounds").select("id, is_complete").eq("played_on", date)
@@ -87,7 +109,7 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
       setIsComplete(round.is_complete);
 
       const { data: rps } = await supabase
-        .from("round_players").select("player_id, team_number").eq("round_id", round.id);
+        .from("round_players").select("id, player_id, team_number").eq("round_id", round.id);
 
       if (rps && rps.length > 0) {
         const loadedRoster: Player[] = [];
@@ -103,6 +125,17 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
         setTeams(loadedTeams);
         const usedTeams = Object.entries(loadedTeams).filter(([, ps]) => ps.length > 0).length;
         setMaxTeams(Math.max(usedTeams, 8));
+
+        // Detect whether play has started (scores exist) → show active view
+        if (usedTeams > 0) {
+          const { count: scoreCount } = await supabase
+            .from("scores")
+            .select("id", { count: "exact", head: true })
+            .in("round_player_id", rps.map((r: any) => r.id));
+          if ((scoreCount ?? 0) > 0 || round.is_complete) {
+            setViewMode("active");
+          }
+        }
       }
     }
   }, [allPlayers]);
@@ -111,12 +144,18 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
     if (allPlayers.length > 0) loadRoundForDate(selectedDate);
   }, [selectedDate, allPlayers, loadRoundForDate]);
 
-  const toggleSetting = async (key: string) => {
-    const current = settings[key] === "true";
-    const { error } = await supabase
+  const toggleSetting = async (key: ToggleKey) => {
+    const newValue = !localToggles[key];
+    setLocalToggles(prev => ({ ...prev, [key]: newValue }));
+    const { data } = await supabase
       .from("league_settings")
-      .upsert({ key, value: String(!current) }, { onConflict: "key" });
-    if (!error) onSettingsChange();
+      .update({ value: String(newValue) })
+      .eq("key", key)
+      .select();
+    if (!data || data.length === 0) {
+      await supabase.from("league_settings").insert({ key, value: String(newValue) });
+    }
+    onSettingsChange();
   };
 
   const toggleInRoster = (player: Player) => {
@@ -241,6 +280,7 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
     setIsComplete(false);
     setRoster([]);
     setTeams({ 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 8: [] });
+    setViewMode("setup");
     setSaving(false);
   };
 
@@ -257,7 +297,7 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
     return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   };
 
-  // ── Hero bar (shared mobile + desktop) ──────────────────────────────────
+  // ── Hero bar ─────────────────────────────────────────────────────────────
   const heroBar = (
     <div style={{
       background: `linear-gradient(135deg, ${C.navy} 0%, ${C.midNavy} 100%)`,
@@ -297,34 +337,59 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
         </div>
 
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <button onClick={handleSuggestTeams} disabled={roster.length < 2} style={{
-            padding: "8px 14px", borderRadius: "8px",
-            border: "1.5px solid rgba(255,255,255,0.5)",
-            background: "transparent", color: "white",
-            fontSize: "0.82rem", fontWeight: 600,
-            cursor: roster.length < 2 ? "not-allowed" : "pointer",
-            opacity: roster.length < 2 ? 0.4 : 1, fontFamily: C.font,
-          }}>
-            Suggest teams
-          </button>
-          {existingRoundId && (
-            <button onClick={() => setDeleteModal(true)} disabled={saving} style={{
-              padding: "8px 14px", borderRadius: "8px",
-              border: "none", background: C.red, color: "white",
-              fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
-              opacity: saving ? 0.6 : 1, fontFamily: C.font,
-            }}>
-              Delete round
-            </button>
+          {viewMode === "active" ? (
+            <>
+              <button onClick={() => setViewMode("setup")} style={{
+                padding: "8px 14px", borderRadius: "8px",
+                border: "1.5px solid rgba(255,255,255,0.5)",
+                background: "transparent", color: "white",
+                fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", fontFamily: C.font,
+              }}>
+                Edit teams
+              </button>
+              {existingRoundId && (
+                <button onClick={() => setDeleteModal(true)} disabled={saving} style={{
+                  padding: "8px 14px", borderRadius: "8px",
+                  border: "none", background: C.red, color: "white",
+                  fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
+                  opacity: saving ? 0.6 : 1, fontFamily: C.font,
+                }}>
+                  Delete round
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button onClick={handleSuggestTeams} disabled={roster.length < 2} style={{
+                padding: "8px 14px", borderRadius: "8px",
+                border: "1.5px solid rgba(255,255,255,0.5)",
+                background: "transparent", color: "white",
+                fontSize: "0.82rem", fontWeight: 600,
+                cursor: roster.length < 2 ? "not-allowed" : "pointer",
+                opacity: roster.length < 2 ? 0.4 : 1, fontFamily: C.font,
+              }}>
+                Suggest teams
+              </button>
+              {existingRoundId && (
+                <button onClick={() => setDeleteModal(true)} disabled={saving} style={{
+                  padding: "8px 14px", borderRadius: "8px",
+                  border: "none", background: C.red, color: "white",
+                  fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
+                  opacity: saving ? 0.6 : 1, fontFamily: C.font,
+                }}>
+                  Delete round
+                </button>
+              )}
+              <button onClick={saveRound} disabled={saving || totalAssigned === 0} style={{
+                padding: "8px 16px", borderRadius: "8px",
+                border: "none", background: C.green, color: "white",
+                fontSize: "0.82rem", fontWeight: 700, cursor: "pointer",
+                opacity: (saving || totalAssigned === 0) ? 0.5 : 1, fontFamily: C.font,
+              }}>
+                {saving ? "Saving…" : existingRoundId ? "Update teams" : "Create round"}
+              </button>
+            </>
           )}
-          <button onClick={saveRound} disabled={saving || totalAssigned === 0} style={{
-            padding: "8px 16px", borderRadius: "8px",
-            border: "none", background: C.green, color: "white",
-            fontSize: "0.82rem", fontWeight: 700, cursor: "pointer",
-            opacity: (saving || totalAssigned === 0) ? 0.5 : 1, fontFamily: C.font,
-          }}>
-            {saving ? "Saving…" : existingRoundId ? "Update teams" : "Create round"}
-          </button>
         </div>
       </div>
 
@@ -348,7 +413,7 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
     </div>
   );
 
-  // ── League settings bar (shared) ─────────────────────────────────────────
+  // ── Settings bar ─────────────────────────────────────────────────────────
   const settingsBar = (
     <div style={{
       background: "white", borderBottom: `1px solid ${C.border}`,
@@ -357,18 +422,121 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
       <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em" }}>
         League
       </span>
-      {[
-        { key: "show_leaderboard", label: "Show Leaderboard" },
-        { key: "show_weekly_winners", label: "Show Weekly Winners" },
-        { key: "two_ball_scoring", label: "2-ball Scoring" },
-      ].map(s => (
-        <label key={s.key} style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-          <Toggle value={settings[s.key] === "true"} onChange={() => toggleSetting(s.key)} />
+      {([
+        { key: "show_leaderboard" as ToggleKey, label: "Show Leaderboard" },
+        { key: "show_weekly_winners" as ToggleKey, label: "Show Weekly Winners" },
+        { key: "two_ball_scoring" as ToggleKey, label: "2-ball Scoring" },
+      ]).map(s => (
+        <div key={s.key} style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+          onClick={() => toggleSetting(s.key)}>
+          <Toggle value={localToggles[s.key]} onChange={() => toggleSetting(s.key)} />
           <span style={{ fontSize: "0.82rem", fontWeight: 500, color: "#374151" }}>{s.label}</span>
-        </label>
+        </div>
       ))}
     </div>
   );
+
+  // ── Active round view (read-only, shown when play is in progress) ─────────
+  if (viewMode === "active") {
+    const activeTeams = Object.entries(teams)
+      .filter(([, ps]) => ps.length > 0)
+      .sort(([a], [b]) => parseInt(a) - parseInt(b));
+
+    return (
+      <div style={{ fontFamily: C.font }}>
+        {heroBar}
+        {settingsBar}
+
+        <div style={{ padding: "16px", maxWidth: "700px", margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Today's Teams
+            </div>
+            <button onClick={() => setViewMode("setup")} style={{
+              padding: "7px 14px", borderRadius: "8px",
+              border: `1.5px solid ${C.border}`, background: "white",
+              color: C.navy, fontSize: "0.82rem", fontWeight: 600,
+              cursor: "pointer", fontFamily: C.font,
+            }}>
+              Edit teams
+            </button>
+          </div>
+
+          {activeTeams.map(([num, players]) => {
+            const combinedHC = players.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
+            return (
+              <div key={num} style={{
+                background: "white", borderRadius: "10px",
+                border: `1px solid ${C.border}`, marginBottom: "10px", overflow: "hidden",
+              }}>
+                <div style={{
+                  background: C.navy, padding: "10px 14px",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ color: "white", fontWeight: 700, fontSize: "0.88rem" }}>Team {num}</span>
+                    <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.6)" }}>HC {Math.round(combinedHC)}</span>
+                  </div>
+                  {existingRoundId && (
+                    <Link
+                      href={`/round/${existingRoundId}/scorecard?team=${num}`}
+                      style={{
+                        color: "white", fontSize: "0.78rem", fontWeight: 600,
+                        textDecoration: "none", background: "rgba(255,255,255,0.15)",
+                        padding: "4px 10px", borderRadius: "6px",
+                        border: "1px solid rgba(255,255,255,0.25)",
+                      }}
+                    >
+                      Open scorecard →
+                    </Link>
+                  )}
+                </div>
+                <div style={{ padding: "8px 14px" }}>
+                  {players.map((p, pi) => (
+                    <div key={p.id} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "6px 0",
+                      borderBottom: pi < players.length - 1 ? `1px solid ${C.border}` : "none",
+                    }}>
+                      <span style={{ fontSize: "0.88rem", fontWeight: 500 }}>{p.display_name || p.full_name}</span>
+                      <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                        {p.handicap_index != null ? `HC ${p.handicap_index}` : "–"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {activeTeams.length === 0 && (
+            <div style={{ textAlign: "center", padding: "40px", color: "#9ca3af", fontSize: "0.88rem" }}>
+              No teams assigned yet.
+            </div>
+          )}
+
+          <button onClick={() => setViewMode("setup")} style={{
+            width: "100%", marginTop: "8px", padding: "14px", borderRadius: "10px",
+            border: `1.5px dashed ${C.border}`, background: "transparent",
+            color: "#9ca3af", fontSize: "0.85rem", fontWeight: 500,
+            cursor: "pointer", fontFamily: C.font,
+          }}>
+            + Add or change teams
+          </button>
+        </div>
+
+        {deleteModal && (
+          <DangerModal
+            title="Delete this round?"
+            description={`This will permanently delete the round on ${formatDate(selectedDate)}, all team assignments, and all scores.`}
+            confirmLabel="Delete round"
+            onConfirm={doDeleteRound}
+            onCancel={() => setDeleteModal(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // MOBILE LAYOUT
@@ -417,7 +585,6 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
                     minHeight: "56px",
                   }}
                 >
-                  {/* Checkbox */}
                   <div style={{
                     width: "22px", height: "22px", borderRadius: "6px", flexShrink: 0,
                     border: checked ? "none" : `2px solid #d1d5db`,
@@ -491,11 +658,12 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
           </span>
         </div>
 
-        {/* Unassigned chips */}
+        {/* Unassigned chips — sticky so it stays visible while scrolling teams */}
         {unassigned.length > 0 && (
           <div style={{
+            position: "sticky", top: 0, zIndex: 10,
             padding: "12px 16px", background: "#eff6ff",
-            borderBottom: `1px solid #dbeafe`,
+            borderBottom: "1px solid #dbeafe",
             display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center",
           }}>
             <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.04em" }}>
@@ -573,7 +741,6 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
                     </div>
                   )}
 
-                  {/* Tap-to-assign button when a chip is selected */}
                   {bottomSheetPlayer && (
                     <button
                       onClick={() => assignToTeam(bottomSheetPlayer, num)}
@@ -602,7 +769,6 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
           </button>
         </div>
 
-        {/* Modals */}
         {deleteModal && (
           <DangerModal
             title="Delete this round?"
