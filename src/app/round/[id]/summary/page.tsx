@@ -254,7 +254,7 @@ export default function RoundSummaryPage() {
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
               padding: "14px 16px",
-              background: idx === 0 ? (viewMode === "gross" ? "#166534" : "#1e40af") : "#1e293b",
+              background: idx === 0 ? (viewMode === "gross" ? "#166534" : "#1e40af") : "#0c3057",
               color: "white",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -304,6 +304,48 @@ export default function RoundSummaryPage() {
           No team scores found for this round.
         </div>
       )}
+
+      {/* Individual player rankings */}
+      {(() => {
+        const allPlayers = sortedTeams
+          .filter(t => t.team_number > 0)
+          .flatMap(t => t.players.map(p => ({ ...p, team_number: t.team_number })))
+          .filter(p => p.holes_played > 0)
+          .sort((a, b) => a.gross_total - b.gross_total);
+        if (allPlayers.length === 0) return null;
+        return (
+          <div style={{ background: "white", borderRadius: "16px", border: "1px solid #e2e8f0", overflow: "hidden", marginTop: "8px" }}>
+            <div style={{ padding: "12px 16px", background: "#0c3057", color: "white" }}>
+              <div style={{ fontWeight: 800, fontSize: "0.9rem" }}>Individual Rankings</div>
+              <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>Sorted by gross score</div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase" }}>#</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase" }}>Player</th>
+                    <th style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase" }}>Team</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase" }}>Gross</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase" }}>Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allPlayers.map((p, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: i === 0 ? "#0c3057" : "#94a3b8" }}>{i + 1}</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 600 }}>{p.display_name}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#64748b" }}>{p.team_number}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700 }}>{p.gross_total}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", color: "#1e40af", fontWeight: 600 }}>{p.net_total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
