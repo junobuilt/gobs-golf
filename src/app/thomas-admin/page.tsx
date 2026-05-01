@@ -51,11 +51,29 @@ export default function AdminPage() {
       ]);
       if (p) setPlayers(p);
       if (m) setMatrix(m);
+
+      const map: LeagueSettings = {};
       if (s) {
-        const map: LeagueSettings = {};
         s.forEach((row: { key: string; value: string }) => { map[row.key] = row.value; });
-        setSettings(map);
       }
+
+      // Seed any missing defaults — upsert so existing values are never overwritten
+      const defaults: LeagueSettings = {
+        two_ball_scoring: "true",
+        show_leaderboard: "true",
+        show_weekly_winners: "true",
+        buy_in_amount: "10",
+      };
+      const missing = Object.entries(defaults).filter(([k]) => !(k in map));
+      if (missing.length > 0) {
+        await supabase.from("league_settings").upsert(
+          missing.map(([key, value]) => ({ key, value })),
+          { onConflict: "key", ignoreDuplicates: true }
+        );
+        missing.forEach(([k, v]) => { map[k] = v; });
+      }
+
+      setSettings(map);
       setLoading(false);
     }
     load();
@@ -78,7 +96,7 @@ export default function AdminPage() {
   if (loading) {
     return (
       <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: C.navy, fontFamily: "DM Sans, system-ui, sans-serif", fontSize: "0.9rem", opacity: 0.6 }}>
+        <div style={{ color: C.navy, fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif", fontSize: "0.9rem", opacity: 0.6 }}>
           Loading…
         </div>
       </div>
@@ -86,7 +104,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "DM Sans, system-ui, sans-serif", paddingBottom: "80px" }}>
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif", paddingBottom: "80px" }}>
       {/* Tab nav */}
       <div style={{
         background: "white",
@@ -112,7 +130,7 @@ export default function AdminPage() {
                   fontWeight: active ? 700 : 500,
                   cursor: "pointer",
                   whiteSpace: "nowrap",
-                  fontFamily: "DM Sans, system-ui, sans-serif",
+                  fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
                   transition: "color 0.15s",
                   marginBottom: "-1px",
                 }}

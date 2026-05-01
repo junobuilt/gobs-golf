@@ -70,6 +70,7 @@ export default function ScorecardPage() {
   const [needsSetup, setNeedsSetup] = useState(true);
   const [saving, setSaving] = useState(false);
   const [endRoundModal, setEndRoundModal] = useState(false);
+  const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
 
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
@@ -173,17 +174,23 @@ export default function ScorecardPage() {
 
   const applyTempHandicap = async (rpId: number, teeId: number | null) => {
     const raw = tempHandicaps[rpId];
-    if (!raw || raw.trim() === "" || !teeId) return;
+    if (!raw || raw.trim() === "") return;
     const hcIndex = parseFloat(raw);
     if (isNaN(hcIndex)) return;
-    const tee = allTees.find(t => t.id === teeId);
-    if (!tee) return;
-    const newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
+
+    let newCH: number | null = null;
+    if (teeId) {
+      const tee = allTees.find(t => t.id === teeId);
+      if (tee) newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
+    }
+
     setRoundPlayers(current =>
       current.map(p => p.id === rpId ? { ...p, handicap_index: hcIndex, course_handicap: newCH } : p)
     );
-    await supabase.from("round_players").update({ course_handicap: newCH }).eq("id", rpId);
-    // Optimistically record on player (non-blocking, best-effort)
+    if (newCH !== null) {
+      await supabase.from("round_players").update({ course_handicap: newCH }).eq("id", rpId);
+    }
+    // Persist HC index to player record (best-effort)
     const { data: playerRef } = await supabase
       .from("round_players").select("player_id").eq("id", rpId).single();
     if (playerRef) {
@@ -194,6 +201,12 @@ export default function ScorecardPage() {
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
+    // Clear manual override so best-2 recalculates from the new score
+    setCountingOverrides(prev => {
+      const next = { ...prev };
+      delete next[hole];
+      return next;
+    });
 
     const { data: exists } = await supabase
       .from("scores").select("id").eq("round_player_id", rpId).eq("hole_number", hole).maybeSingle();
@@ -203,6 +216,12 @@ export default function ScorecardPage() {
     } else {
       await supabase.from("scores").insert({ round_player_id: rpId, hole_number: hole, strokes });
     }
+  };
+
+  const removePlayer = async (rpId: number) => {
+    await supabase.from("round_players").update({ team_number: 0 }).eq("id", rpId);
+    setRoundPlayers(prev => prev.filter(p => p.id !== rpId));
+    setRemovePlayerModal(null);
   };
 
   // --- SCORING HELPERS ---
@@ -229,6 +248,23 @@ export default function ScorecardPage() {
     if (netScores.length < 2) return [];
     netScores.sort((a, b) => a.net - b.net);
     return [netScores[0].id, netScores[1].id];
+  };
+
+  // Detect whether the auto-selected Ball 1 or Ball 2 involves a tie.
+  const getTieInfo = (holeNumber: number): { tiedForBall1: boolean; tiedForBall2: boolean } => {
+    if (countingOverrides[holeNumber]) return { tiedForBall1: false, tiedForBall2: false };
+
+    const netScores: { id: number; net: number }[] = [];
+    for (const rp of roundPlayers) {
+      const net = getNetScore(rp, holeNumber);
+      if (net != null) netScores.push({ id: rp.id, net });
+    }
+    if (netScores.length < 2) return { tiedForBall1: false, tiedForBall2: false };
+    netScores.sort((a, b) => a.net - b.net);
+
+    const tiedForBall1 = netScores[0].net === netScores[1].net;
+    const tiedForBall2 = !tiedForBall1 && netScores.length >= 3 && netScores[1].net === netScores[2].net;
+    return { tiedForBall1, tiedForBall2 };
   };
 
   const getBest2ForHole = (holeNumber: number, mode: "gross" | "net"): number | null => {
@@ -301,21 +337,58 @@ export default function ScorecardPage() {
     setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
   };
 
+  // Check if all active teams have ≥2 players with 18 hole scores before marking complete.
+  const finishRound = async () => {
+    setEndRoundModal(false);
+    setSaving(true);
+
+    const { data: allRPs } = await supabase
+      .from("round_players")
+      .select("id, team_number")
+      .eq("round_id", roundId)
+      .gt("team_number", 0);
+
+    let allComplete = false;
+    if (allRPs && allRPs.length > 0) {
+      const teamGroups: Record<number, number[]> = {};
+      allRPs.forEach((rp: any) => {
+        if (!teamGroups[rp.team_number]) teamGroups[rp.team_number] = [];
+        teamGroups[rp.team_number].push(rp.id);
+      });
+
+      const { data: allScores } = await supabase
+        .from("scores")
+        .select("round_player_id, hole_number")
+        .in("round_player_id", allRPs.map((r: any) => r.id));
+
+      const scoreCounts: Record<number, number> = {};
+      allScores?.forEach((s: any) => {
+        scoreCounts[s.round_player_id] = (scoreCounts[s.round_player_id] || 0) + 1;
+      });
+
+      allComplete = Object.values(teamGroups).every(rpIds =>
+        rpIds.filter(id => (scoreCounts[id] || 0) >= 18).length >= 2
+      );
+    }
+
+    if (allComplete) {
+      await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId);
+    }
+
+    setSaving(false);
+    router.push(`/round/${roundId}/summary`);
+  };
+
   // --- LOADING ---
   if (loading) {
     return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
   }
 
-  // --- NO HANDICAP PROMPT (shown as part of setup if any player has no HC) ---
-  const playersNeedingHC = needsSetup
-    ? roundPlayers.filter(p => p.handicap_index == null)
-    : [];
-
   // --- TEE SELECTION SCREEN ---
   if (needsSetup) {
     return (
       <div style={{ padding: "20px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif" }}>
-        <h2 style={{ textAlign: "center", color: "#166534", fontWeight: 900, marginBottom: "4px" }}>
+        <h2 style={{ textAlign: "center", color: "#0c3057", fontWeight: 900, marginBottom: "4px" }}>
           Tee Selection
         </h2>
         <p style={{ textAlign: "center", fontSize: "0.8rem", color: "#64748b", marginBottom: "24px" }}>
@@ -324,6 +397,7 @@ export default function ScorecardPage() {
 
         {roundPlayers.map(rp => {
           const noHC = rp.handicap_index == null;
+          const applyDisabled = !tempHandicaps[rp.id] || tempHandicaps[rp.id].trim() === "";
           return (
             <div key={rp.id} style={{
               background: "white", padding: "20px", borderRadius: "24px",
@@ -339,7 +413,7 @@ export default function ScorecardPage() {
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>CH</span>
-                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#166534" }}>
+                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#0c3057" }}>
                     {rp.course_handicap !== null ? rp.course_handicap : "?"}
                   </span>
                 </div>
@@ -369,11 +443,12 @@ export default function ScorecardPage() {
                     />
                     <button
                       onClick={() => applyTempHandicap(rp.id, rp.tee_id)}
-                      disabled={!tempHandicaps[rp.id] || !rp.tee_id}
+                      disabled={applyDisabled}
                       style={{
                         padding: "6px 14px", borderRadius: "8px", border: "none",
-                        background: "#166534", color: "white", fontSize: "0.82rem",
-                        fontWeight: 700, cursor: "pointer", opacity: (!tempHandicaps[rp.id] || !rp.tee_id) ? 0.5 : 1,
+                        background: "#0c3057", color: "white", fontSize: "0.82rem",
+                        fontWeight: 700, cursor: applyDisabled ? "default" : "pointer",
+                        opacity: applyDisabled ? 0.5 : 1,
                       }}
                     >
                       Apply
@@ -390,7 +465,7 @@ export default function ScorecardPage() {
                   return (
                     <button key={t.id} onClick={() => updatePlayerTee(rp.id, t.id)} style={{
                       flex: 1, padding: "14px 4px", borderRadius: "12px", fontSize: "10px", fontWeight: 900,
-                      border: isSelected ? "4px solid #166534" : "1px solid #e2e8f0",
+                      border: isSelected ? "4px solid #0c3057" : "1px solid #e2e8f0",
                       background: colors.bg, color: colors.text, textTransform: "uppercase",
                       opacity: isSelected ? 1 : 0.4, transform: isSelected ? "scale(1.05)" : "scale(1)",
                       transition: "all 0.15s ease", cursor: "pointer",
@@ -411,7 +486,7 @@ export default function ScorecardPage() {
           }
           setNeedsSetup(false);
         }} style={{
-          width: "100%", padding: "20px", background: "#166534", color: "white",
+          width: "100%", padding: "20px", background: "#0c3057", color: "white",
           border: "none", borderRadius: "16px", fontWeight: 900, fontSize: "1.1rem",
           marginTop: "20px", cursor: "pointer",
         }}>
@@ -429,13 +504,15 @@ export default function ScorecardPage() {
   const teamPar = getTeamParTotal();
   const scoredHoles = holesWithTeamScores();
   const countingIds = getCountingPlayerIds(currentHole);
+  const { tiedForBall1, tiedForBall2 } = getTieInfo(currentHole);
+  const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
   return (
     <div style={{ padding: "15px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif", paddingBottom: "160px" }}>
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: "15px" }}>
         {teamFilter && (
-          <p style={{ margin: 0, fontSize: "0.7rem", fontWeight: 900, color: "#166534" }}>TEAM {teamFilter}</p>
+          <p style={{ margin: 0, fontSize: "0.7rem", fontWeight: 900, color: "#0c3057" }}>TEAM {teamFilter}</p>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
@@ -446,7 +523,7 @@ export default function ScorecardPage() {
       {/* Team score summary bar */}
       {scoredHoles > 0 && (
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          <div style={{ flex: 1, background: "#166534", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
+          <div style={{ flex: 1, background: "#0c3057", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
             <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Gross</div>
             <div style={{ fontSize: "1.3rem", fontWeight: 900 }}>
               {teamGross}
@@ -479,9 +556,9 @@ export default function ScorecardPage() {
           return (
             <button key={h} onClick={() => setCurrentHole(h)} style={{
               minWidth: "35px", height: "35px", borderRadius: "50%",
-              border: h === currentHole ? "2px solid #166534" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
-              background: h === currentHole ? "#166534" : hasScores ? "#dcfce7" : "white",
-              color: h === currentHole ? "white" : hasScores ? "#166534" : "#94a3b8",
+              border: h === currentHole ? "2px solid #0c3057" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
+              background: h === currentHole ? "#0c3057" : hasScores ? "#dbeafe" : "white",
+              color: h === currentHole ? "white" : hasScores ? "#1e40af" : "#94a3b8",
               fontSize: "0.8rem", fontWeight: "bold", cursor: "pointer",
             }}>
               {h}
@@ -489,6 +566,19 @@ export default function ScorecardPage() {
           );
         })}
       </div>
+
+      {/* Tie notices */}
+      {(tiedForBall1 || tiedForBall2) && (
+        <div style={{
+          background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "10px",
+          padding: "8px 12px", marginBottom: "10px", fontSize: "0.75rem",
+          color: "#92400e", fontWeight: 600,
+        }}>
+          {tiedForBall1
+            ? "Tied for Ball 1 — tap a card to override which balls count"
+            : "Tied for Ball 2 — tap a card to override which balls count"}
+        </div>
+      )}
 
       {/* Player score entry cards */}
       {roundPlayers.map(rp => {
@@ -501,11 +591,12 @@ export default function ScorecardPage() {
         const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
 
         const isCounting = countingIds.includes(rp.id);
-        const countingRank = countingIds.indexOf(rp.id); // 0 = lowest net, 1 = second
+        const countingRank = countingIds.indexOf(rp.id); // 0 = Ball 1, 1 = Ball 2
 
-        // Highlight colors: green for best, blue for second
-        const countingBorderColor = countingRank === 0 ? "#166534" : "#1e40af";
-        const countingBg = countingRank === 0 ? "#f0fdf4" : "#eff6ff";
+        const countingBorderColor = countingRank === 0 ? "#0c3057" : "#1e40af";
+        const countingBg = countingRank === 0 ? "#eff6ff" : "#eff6ff";
+
+        const isTied = isCounting && ((countingRank === 0 && tiedForBall1) || (countingRank === 1 && tiedForBall2));
 
         return (
           <div
@@ -522,14 +613,27 @@ export default function ScorecardPage() {
             }}
           >
             <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>{rp.display_name}</span>
-                {isCounting && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                <span
+                  style={{ fontWeight: 800, fontSize: "0.95rem" }}
+                  onClick={e => { e.stopPropagation(); setRemovePlayerModal(rp.id); }}
+                >
+                  {rp.display_name}
+                </span>
+                {isCounting && !isTied && (
                   <span style={{
                     fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
                     background: countingBorderColor, color: "white", textTransform: "uppercase",
                   }}>
-                    {countingRank === 0 ? "Best" : "2nd"}
+                    {countingRank === 0 ? "Ball 1" : "Ball 2"}
+                  </span>
+                )}
+                {isTied && (
+                  <span style={{
+                    fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
+                    background: "#f59e0b", color: "white", textTransform: "uppercase",
+                  }}>
+                    Tied
                   </span>
                 )}
               </div>
@@ -542,7 +646,7 @@ export default function ScorecardPage() {
                   <span style={{ color: "#1e40af" }}>({hcpStrokes} stroke{hcpStrokes > 1 ? "s" : ""})</span>
                 )}
                 {gross != null && net != null && net !== gross && (
-                  <span style={{ color: "#166534" }}>Net: {net}</span>
+                  <span style={{ color: "#0c3057" }}>Net: {net}</span>
                 )}
                 {playerTotal > 0 && (
                   <span style={{ color: "#64748b" }}>Tot: {playerTotal}</span>
@@ -578,13 +682,13 @@ export default function ScorecardPage() {
         const holePar = (currentHoleInfo?.par || 4) * 2;
         return (
           <div style={{
-            background: "#f0fdf4", borderRadius: "12px", padding: "10px 14px",
-            border: "1px solid #bbf7d0", marginTop: "4px", marginBottom: "4px",
+            background: "#f0f9ff", borderRadius: "12px", padding: "10px 14px",
+            border: "1px solid #bae6fd", marginTop: "4px", marginBottom: "4px",
             display: "flex", justifyContent: "space-around", textAlign: "center",
           }}>
             <div>
-              <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#166534", textTransform: "uppercase" }}>Best 2 Gross</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 900, color: "#166534" }}>
+              <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#0c3057", textTransform: "uppercase" }}>Best 2 Gross</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 900, color: "#0c3057" }}>
                 {best2Gross} <span style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.7 }}>({best2Gross - holePar >= 0 ? "+" : ""}{best2Gross - holePar})</span>
               </div>
             </div>
@@ -599,7 +703,7 @@ export default function ScorecardPage() {
       })()}
 
       {/* Tap hint when scores are entered */}
-      {countingIds.length >= 2 && (
+      {countingIds.length >= 2 && !tiedForBall1 && !tiedForBall2 && (
         <p style={{ textAlign: "center", fontSize: "0.68rem", color: "#94a3b8", margin: "6px 0 0" }}>
           Tap a player card to override which balls count
         </p>
@@ -617,7 +721,7 @@ export default function ScorecardPage() {
         </button>
         {currentHole < 18 ? (
           <button onClick={() => setCurrentHole(h => h + 1)} style={{
-            flex: 2, padding: "18px", borderRadius: "12px", background: "#166534",
+            flex: 2, padding: "18px", borderRadius: "12px", background: "#0c3057",
             color: "white", border: "none", fontWeight: 900, cursor: "pointer", fontFamily: "sans-serif",
           }}>
             Next Hole →
@@ -648,17 +752,22 @@ export default function ScorecardPage() {
       {endRoundModal && (
         <DangerModal
           title="Finalize this round?"
-          description="This will mark the round as complete and save all scores. You won't be able to enter additional scores after this."
+          description="This will save all scores. If all teams have completed 18 holes, the round will be marked complete."
           cannotBeUndone={false}
           confirmLabel="Finish Round"
-          onConfirm={async () => {
-            setEndRoundModal(false);
-            setSaving(true);
-            await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId);
-            setSaving(false);
-            router.push(`/round/${roundId}/summary`);
-          }}
+          onConfirm={finishRound}
           onCancel={() => setEndRoundModal(false)}
+        />
+      )}
+
+      {removePlayerModal !== null && playerToRemove && (
+        <DangerModal
+          title={`Remove ${playerToRemove.display_name}?`}
+          description={`${playerToRemove.display_name} will be removed from this team's scorecard. Their scores will not be deleted.`}
+          cannotBeUndone={false}
+          confirmLabel="Remove from round"
+          onConfirm={() => removePlayer(removePlayerModal)}
+          onCancel={() => setRemovePlayerModal(null)}
         />
       )}
     </div>

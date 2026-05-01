@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap');
-
 :root {
   /* ── Core palette: golf club aesthetic ── */
   --green-900: #1a3a2a;
@@ -25,8 +23,8 @@
   --red-100: #fde8e8;
 
   /* ── Typography ── */
-  --font-display: 'DM Serif Display', Georgia, serif;
-  --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
 
   /* ── Spacing ── */
   --page-pad: 16px;
@@ -55,7 +53,7 @@ body {
 
 /* ── App shell ── */
 .app-header {
-  background: var(--green-900);
+  background: #0c3057;
   color: var(--white);
   padding: 12px var(--page-pad);
   display: flex;
@@ -68,10 +66,10 @@ body {
 }
 
 .app-header h1 {
-  font-family: var(--font-display);
-  font-size: 1.4rem;
-  font-weight: 400;
-  letter-spacing: 0.02em;
+  font-family: var(--font-body);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .app-header .subtitle {
