@@ -387,7 +387,7 @@ export default function ScorecardPage() {
   // --- TEE SELECTION SCREEN ---
   if (needsSetup) {
     return (
-      <div style={{ padding: "20px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif" }}>
+      <div style={{ padding: "20px", paddingBottom: "100px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif" }}>
         <h2 style={{ textAlign: "center", color: "#0c3057", fontWeight: 900, marginBottom: "4px" }}>
           Tee Selection
         </h2>

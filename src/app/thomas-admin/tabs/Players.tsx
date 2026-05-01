@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { Player } from "../page";
 import DangerModal from "../components/DangerModal";
@@ -21,7 +21,19 @@ const C = {
 type DeactivateTarget = { id: number; name: string };
 type AddingState = { full_name: string; display_name: string; handicap_index: string };
 
+function useIsMobile() {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+  return mobile;
+}
+
 export default function Players({ players, onRefresh }: Props) {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [editingHC, setEditingHC] = useState<Record<number, string>>({});
   const [savingHC, setSavingHC] = useState<number | null>(null);
@@ -100,7 +112,7 @@ export default function Players({ players, onRefresh }: Props) {
             style={{
               width: "100%", padding: "8px 10px 8px 30px",
               border: `1px solid ${C.border}`, borderRadius: "8px",
-              fontSize: "0.82rem", fontFamily: "DM Sans, system-ui, sans-serif",
+              fontSize: "0.82rem", fontFamily: "system-ui, sans-serif",
               outline: "none", background: "white", color: "#1f2937",
             }}
           />
@@ -111,7 +123,7 @@ export default function Players({ players, onRefresh }: Props) {
             padding: "9px 18px", borderRadius: "8px", border: "none",
             background: C.green, color: "white",
             fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
-            fontFamily: "DM Sans, system-ui, sans-serif",
+            fontFamily: "system-ui, sans-serif",
           }}
         >
           + Add player
@@ -127,7 +139,7 @@ export default function Players({ players, onRefresh }: Props) {
           <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "14px" }}>
             New Player
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 120px", gap: "10px", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 120px", gap: "10px" }}>
             <input
               placeholder="Full name *"
               value={newPlayer.full_name}
@@ -155,7 +167,7 @@ export default function Players({ players, onRefresh }: Props) {
               background: C.green, color: "white",
               fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
               opacity: savingNew || !newPlayer.full_name.trim() ? 0.5 : 1,
-              fontFamily: "DM Sans, system-ui, sans-serif",
+              fontFamily: "system-ui, sans-serif",
             }}>
               {savingNew ? "Saving…" : "Save"}
             </button>
@@ -163,7 +175,7 @@ export default function Players({ players, onRefresh }: Props) {
               padding: "8px 16px", borderRadius: "8px",
               border: `1.5px solid ${C.border}`, background: "white",
               fontSize: "0.85rem", fontWeight: 600, color: "#6b7280", cursor: "pointer",
-              fontFamily: "DM Sans, system-ui, sans-serif",
+              fontFamily: "system-ui, sans-serif",
             }}>
               Cancel
             </button>
@@ -171,20 +183,23 @@ export default function Players({ players, onRefresh }: Props) {
         </div>
       )}
 
-      {/* Table */}
+      {/* Player list */}
       <div style={{ background: "white", borderRadius: "10px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
-        {/* Header */}
-        <div style={{
-          display: "grid", gridTemplateColumns: "2fr 1.5fr 120px 100px 160px",
-          padding: "10px 16px", borderBottom: `1px solid ${C.border}`,
-          fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em",
-        }}>
-          <span>Full Name</span>
-          <span>Display Name</span>
-          <span>Handicap</span>
-          <span>Status</span>
-          <span>Actions</span>
-        </div>
+
+        {/* Desktop table header (hidden on mobile) */}
+        {!isMobile && (
+          <div style={{
+            display: "grid", gridTemplateColumns: "2fr 1.5fr 120px 100px 160px",
+            padding: "10px 16px", borderBottom: `1px solid ${C.border}`,
+            fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em",
+          }}>
+            <span>Full Name</span>
+            <span>Display Name</span>
+            <span>Handicap</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
+        )}
 
         {displayed.length === 0 && (
           <div style={{ padding: "40px", textAlign: "center", color: "#9ca3af", fontSize: "0.88rem" }}>
@@ -196,6 +211,87 @@ export default function Players({ players, onRefresh }: Props) {
           const isEditing = p.id in editingHC;
           const isLast = i === displayed.length - 1;
 
+          // ── Mobile card row ──────────────────────────────────────────────
+          if (isMobile) {
+            return (
+              <div
+                key={p.id}
+                style={{
+                  padding: "12px 16px",
+                  borderBottom: isLast ? "none" : `1px solid ${C.border}`,
+                  opacity: p.is_active ? 1 : 0.55,
+                  display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px",
+                }}
+              >
+                {/* Left: name + meta / inline HC edit */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: "#1f2937" }}>{p.full_name}</div>
+                  {isEditing ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+                      <input
+                        type="number"
+                        step="0.1"
+                        autoFocus
+                        value={editingHC[p.id]}
+                        onChange={e => setEditingHC(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") saveHC(p); if (e.key === "Escape") cancelEditHC(p.id); }}
+                        style={{
+                          width: "70px", padding: "4px 6px",
+                          border: `1.5px solid ${C.navy}`, borderRadius: "6px",
+                          fontSize: "0.85rem", fontFamily: "system-ui, sans-serif",
+                          outline: "none", color: "#1f2937",
+                        }}
+                      />
+                      <button onClick={() => saveHC(p)} disabled={savingHC === p.id} style={smallBtnStyle(C.green)}>✓</button>
+                      <button onClick={() => cancelEditHC(p.id)} style={smallBtnStyle("#6b7280")}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
+                      {p.display_name ? `${p.display_name} · ` : ""}
+                      {p.handicap_index != null ? `HC ${p.handicap_index}` : "No HC"}
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: badge + action links */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "5px", flexShrink: 0 }}>
+                  <span style={{
+                    display: "inline-block", padding: "2px 8px", borderRadius: "999px",
+                    background: p.is_active ? "#dcfce7" : "#f3f4f6",
+                    color: p.is_active ? "#166534" : "#6b7280",
+                    fontSize: "0.65rem", fontWeight: 700,
+                  }}>
+                    {p.is_active ? "Active" : "Inactive"}
+                  </span>
+                  {!isEditing && (
+                    <button
+                      onClick={() => startEditHC(p)}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.navy, fontWeight: 600, textDecoration: "underline" }}
+                    >
+                      {p.handicap_index == null ? "Add HC" : "Edit HC"}
+                    </button>
+                  )}
+                  {p.is_active ? (
+                    <button
+                      onClick={() => setDeactivateTarget({ id: p.id, name: p.full_name })}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.red, fontWeight: 600, textDecoration: "underline" }}
+                    >
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => reactivate(p.id)}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.green, fontWeight: 600, textDecoration: "underline" }}
+                    >
+                      Reactivate
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          // ── Desktop table row ────────────────────────────────────────────
           return (
             <div
               key={p.id}
@@ -223,7 +319,7 @@ export default function Players({ players, onRefresh }: Props) {
                       style={{
                         width: "64px", padding: "4px 6px",
                         border: `1.5px solid ${C.navy}`, borderRadius: "6px",
-                        fontSize: "0.85rem", fontFamily: "DM Sans, system-ui, sans-serif",
+                        fontSize: "0.85rem", fontFamily: "system-ui, sans-serif",
                         outline: "none", color: "#1f2937",
                       }}
                     />
@@ -298,7 +394,7 @@ export default function Players({ players, onRefresh }: Props) {
 
 const inputStyle: React.CSSProperties = {
   padding: "8px 10px", border: "1px solid rgba(0,0,0,0.1)", borderRadius: "8px",
-  fontSize: "0.85rem", fontFamily: "DM Sans, system-ui, sans-serif",
+  fontSize: "0.85rem", fontFamily: "system-ui, sans-serif",
   outline: "none", width: "100%", color: "#1f2937",
 };
 
@@ -307,7 +403,7 @@ function smallBtnStyle(color: string): React.CSSProperties {
     padding: "3px 7px", borderRadius: "5px", border: "none",
     background: color, color: "white",
     fontSize: "0.75rem", fontWeight: 700, cursor: "pointer",
-    fontFamily: "DM Sans, system-ui, sans-serif",
+    fontFamily: "system-ui, sans-serif",
   };
 }
 
@@ -316,7 +412,7 @@ function actionBtnStyle(color: string): React.CSSProperties {
     padding: "5px 12px", borderRadius: "6px",
     border: `1.5px solid ${color}`, background: "white",
     color: color, fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
-    fontFamily: "DM Sans, system-ui, sans-serif",
+    fontFamily: "system-ui, sans-serif",
     whiteSpace: "nowrap",
   };
 }
