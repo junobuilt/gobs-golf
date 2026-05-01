@@ -638,14 +638,14 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
     const teamNums = Array.from({ length: maxTeams }, (_, i) => i + 1);
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", fontFamily: C.font }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "calc(100dvh - 108px)", overflow: "hidden", fontFamily: C.font }}>
         {heroBar}
         {settingsBar}
 
         {/* Step header */}
         <div style={{
           padding: "12px 16px", background: "white", borderBottom: `1px solid ${C.border}`,
-          display: "flex", alignItems: "center", gap: "12px",
+          display: "flex", alignItems: "center", gap: "12px", flexShrink: 0,
         }}>
           <button onClick={() => setMobileStep("checkin")} style={{
             background: "none", border: "none", color: C.navy,
@@ -658,37 +658,39 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
           </span>
         </div>
 
-        {/* Unassigned chips — sticky so it stays visible while scrolling teams */}
-        {unassigned.length > 0 && (
-          <div style={{
-            position: "sticky", top: 0, zIndex: 10,
-            padding: "12px 16px", background: "#eff6ff",
-            borderBottom: "1px solid #dbeafe",
-            display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center",
-          }}>
-            <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Tap to assign:
-            </span>
-            {unassigned.map(p => (
-              <button
-                key={p.id}
-                onClick={() => setBottomSheetPlayer(p)}
-                style={{
-                  padding: "6px 12px", borderRadius: "999px",
-                  background: bottomSheetPlayer?.id === p.id ? C.navy : "white",
-                  color: bottomSheetPlayer?.id === p.id ? "white" : "#1d4ed8",
-                  border: `1.5px solid ${bottomSheetPlayer?.id === p.id ? C.navy : "#93c5fd"}`,
-                  fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", fontFamily: C.font,
-                }}
-              >
-                {p.display_name || p.full_name}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Scrollable area — sticky banner sticks within this container */}
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {/* Unassigned chips — sticky within the scroll container */}
+          {unassigned.length > 0 && (
+            <div style={{
+              position: "sticky", top: 0, zIndex: 10,
+              padding: "12px 16px", background: "#eff6ff",
+              borderBottom: "1px solid #dbeafe",
+              display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center",
+            }}>
+              <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Tap to assign:
+              </span>
+              {unassigned.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setBottomSheetPlayer(p)}
+                  style={{
+                    padding: "6px 12px", borderRadius: "999px",
+                    background: bottomSheetPlayer?.id === p.id ? C.navy : "white",
+                    color: bottomSheetPlayer?.id === p.id ? "white" : "#1d4ed8",
+                    border: `1.5px solid ${bottomSheetPlayer?.id === p.id ? C.navy : "#93c5fd"}`,
+                    fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", fontFamily: C.font,
+                  }}
+                >
+                  {p.display_name || p.full_name}
+                </button>
+              ))}
+            </div>
+          )}
 
-        {/* Team cards */}
-        <div style={{ padding: "12px 16px", background: C.bg, paddingBottom: "100px" }}>
+          {/* Team cards */}
+          <div style={{ padding: "12px 16px", background: C.bg, paddingBottom: "100px" }}>
           {teamNums.map(num => {
             const teamPlayers = teams[num] || [];
             const hasPlayers = teamPlayers.length > 0;
@@ -768,6 +770,7 @@ export default function RoundSetup({ allPlayers, matrix, settings, onSettingsCha
             + Add team
           </button>
         </div>
+        </div>{/* end scroll container */}
 
         {deleteModal && (
           <DangerModal
