@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
+import DangerModal from "@/app/thomas-admin/components/DangerModal";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -44,16 +45,12 @@ function computeCourseHandicap(
   return Math.round(handicapIndex * slope / 113 + (rating - par));
 }
 
-// How many handicap strokes does a player get on a given hole?
-// CH 18 = 1 stroke per hole. CH 24 = 1 on all + extra on stroke_index 1-6.
-// CH 5 = 1 stroke only on the 5 hardest holes (stroke_index 1-5).
 function getHandicapStrokes(courseHandicap: number | null, strokeIndex: number): number {
   if (courseHandicap === null || courseHandicap === 0) return 0;
   const ch = Math.abs(courseHandicap);
   const fullStrokes = Math.floor(ch / 18);
   const remainder = ch % 18;
   let strokes = fullStrokes + (strokeIndex <= remainder ? 1 : 0);
-  // If negative handicap (scratch+), they give strokes — rare for this league but correct
   if (courseHandicap < 0) strokes = -strokes;
   return strokes;
 }
@@ -72,6 +69,13 @@ export default function ScorecardPage() {
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [endRoundModal, setEndRoundModal] = useState(false);
+
+  // Inline handicap entry for players without one
+  const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
+
+  // Per-hole manual overrides: which 2 round_player ids count
+  const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -95,10 +99,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`
-          id, tee_id, course_handicap,
-          players ( full_name, display_name, handicap_index )
-        `)
+        .select(`id, tee_id, course_handicap, players ( full_name, display_name, handicap_index )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -151,7 +152,8 @@ export default function ScorecardPage() {
     const tee = allTees.find(t => t.id === teeId);
     if (!player || !tee) return;
 
-    const newCH = computeCourseHandicap(player.handicap_index, tee.slope_rating, tee.course_rating, tee.par);
+    const hcIndex = player.handicap_index ?? (tempHandicaps[rpId] !== undefined ? parseFloat(tempHandicaps[rpId]) : null);
+    const newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
 
     setRoundPlayers(current =>
       current.map(p => p.id === rpId ? { ...p, tee_id: teeId, course_handicap: newCH } : p)
@@ -169,12 +171,29 @@ export default function ScorecardPage() {
     }
   };
 
+  const applyTempHandicap = async (rpId: number, teeId: number | null) => {
+    const raw = tempHandicaps[rpId];
+    if (!raw || raw.trim() === "" || !teeId) return;
+    const hcIndex = parseFloat(raw);
+    if (isNaN(hcIndex)) return;
+    const tee = allTees.find(t => t.id === teeId);
+    if (!tee) return;
+    const newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
+    setRoundPlayers(current =>
+      current.map(p => p.id === rpId ? { ...p, handicap_index: hcIndex, course_handicap: newCH } : p)
+    );
+    await supabase.from("round_players").update({ course_handicap: newCH }).eq("id", rpId);
+    // Optimistically record on player (non-blocking, best-effort)
+    const { data: playerRef } = await supabase
+      .from("round_players").select("player_id").eq("id", rpId).single();
+    if (playerRef) {
+      await supabase.from("players").update({ handicap_index: hcIndex }).eq("id", playerRef.player_id);
+    }
+  };
+
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
-    setScores(prev => ({
-      ...prev,
-      [rpId]: { ...prev[rpId], [hole]: strokes },
-    }));
+    setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
 
     const { data: exists } = await supabase
       .from("scores").select("id").eq("round_player_id", rpId).eq("hole_number", hole).maybeSingle();
@@ -186,9 +205,8 @@ export default function ScorecardPage() {
     }
   };
 
-  // --- TEAM SCORING HELPERS ---
+  // --- SCORING HELPERS ---
 
-  // Get the net score for a player on a hole
   const getNetScore = (rp: RoundPlayer, holeNumber: number): number | null => {
     const gross = scores[rp.id]?.[holeNumber];
     if (gross == null) return null;
@@ -198,24 +216,32 @@ export default function ScorecardPage() {
     return gross - strokes;
   };
 
-  // Get best 2 scores from the team on a hole (returns null if fewer than 2 have scored)
-  const getBest2ForHole = (holeNumber: number, mode: "gross" | "net"): number | null => {
-    const holeScores: number[] = [];
+  // Returns the ids of the two players whose net scores count on this hole.
+  // Respects manual overrides. Returns [] if fewer than 2 have scored.
+  const getCountingPlayerIds = (holeNumber: number): number[] => {
+    if (countingOverrides[holeNumber]) return countingOverrides[holeNumber];
+
+    const netScores: { id: number; net: number }[] = [];
     for (const rp of roundPlayers) {
-      if (mode === "gross") {
-        const s = scores[rp.id]?.[holeNumber];
-        if (s != null) holeScores.push(s);
-      } else {
-        const n = getNetScore(rp, holeNumber);
-        if (n != null) holeScores.push(n);
-      }
+      const net = getNetScore(rp, holeNumber);
+      if (net != null) netScores.push({ id: rp.id, net });
     }
-    if (holeScores.length < 2) return null;
-    holeScores.sort((a, b) => a - b);
-    return holeScores[0] + holeScores[1];
+    if (netScores.length < 2) return [];
+    netScores.sort((a, b) => a.net - b.net);
+    return [netScores[0].id, netScores[1].id];
   };
 
-  // Running team totals across all holes scored so far
+  const getBest2ForHole = (holeNumber: number, mode: "gross" | "net"): number | null => {
+    const counting = getCountingPlayerIds(holeNumber);
+    if (counting.length < 2) return null;
+    const vals = counting.map(id => {
+      const rp = roundPlayers.find(p => p.id === id)!;
+      return mode === "gross" ? scores[rp.id]?.[holeNumber] : getNetScore(rp, holeNumber);
+    }).filter((v): v is number => v != null);
+    if (vals.length < 2) return null;
+    return vals[0] + vals[1];
+  };
+
   const getTeamTotal = (mode: "gross" | "net"): number => {
     let total = 0;
     for (let h = 1; h <= 18; h++) {
@@ -225,15 +251,14 @@ export default function ScorecardPage() {
     return total;
   };
 
-  // Team par total for holes scored (best 2 pars per hole)
   const getTeamParTotal = (): number => {
     let total = 0;
     const activeTeeId = roundPlayers[0]?.tee_id || 0;
     for (let h = 1; h <= 18; h++) {
-      const hasScores = roundPlayers.filter(rp => scores[rp.id]?.[h] != null).length >= 2;
-      if (hasScores) {
+      const counting = getCountingPlayerIds(h);
+      if (counting.length >= 2) {
         const holeInfo = holesByTee[activeTeeId]?.find(hi => hi.hole_number === h);
-        if (holeInfo) total += holeInfo.par * 2; // best 2 of par = 2x par
+        if (holeInfo) total += holeInfo.par * 2;
       }
     }
     return total;
@@ -245,20 +270,46 @@ export default function ScorecardPage() {
     return Object.values(playerScores).reduce((sum, s) => sum + s, 0);
   };
 
-  // Count holes where at least 2 players have scored
   const holesWithTeamScores = (): number => {
     let count = 0;
     for (let h = 1; h <= 18; h++) {
-      const playersScored = roundPlayers.filter(rp => scores[rp.id]?.[h] != null).length;
-      if (playersScored >= 2) count++;
+      if (getCountingPlayerIds(h).length >= 2) count++;
     }
     return count;
   };
 
+  const toggleOverride = (holeNumber: number, rpId: number) => {
+    const current = countingOverrides[holeNumber] ?? getCountingPlayerIds(holeNumber);
+    let next: number[];
+    if (current.includes(rpId)) {
+      // Replace with next best scorer not already counting
+      const netScores = roundPlayers
+        .filter(p => !current.includes(p.id) || p.id === rpId)
+        .map(p => ({ id: p.id, net: getNetScore(p, holeNumber) ?? Infinity }))
+        .sort((a, b) => a.net - b.net);
+      const replacement = netScores.find(s => !current.includes(s.id));
+      if (!replacement) return;
+      next = current.map(id => id === rpId ? replacement.id : id);
+    } else {
+      // Swap out the higher of the two counting scores
+      const higherIdx = current.length < 2 ? 0 :
+        ((getNetScore(roundPlayers.find(p => p.id === current[0])!, holeNumber) ?? 0) >
+          (getNetScore(roundPlayers.find(p => p.id === current[1])!, holeNumber) ?? 0) ? 0 : 1);
+      next = [...current];
+      next[higherIdx] = rpId;
+    }
+    setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
+  };
+
   // --- LOADING ---
   if (loading) {
-    return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round...</div>;
+    return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
   }
+
+  // --- NO HANDICAP PROMPT (shown as part of setup if any player has no HC) ---
+  const playersNeedingHC = needsSetup
+    ? roundPlayers.filter(p => p.handicap_index == null)
+    : [];
 
   // --- TEE SELECTION SCREEN ---
   if (needsSetup) {
@@ -271,45 +322,87 @@ export default function ScorecardPage() {
           {teamFilter ? `Confirm tees for Team ${teamFilter}` : "Confirm tees for each player"}
         </p>
 
-        {roundPlayers.map(rp => (
-          <div key={rp.id} style={{
-            background: "white", padding: "20px", borderRadius: "24px",
-            border: "1px solid #e2e8f0", marginBottom: "16px",
-            boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", alignItems: "center" }}>
-              <div>
-                <span style={{ fontWeight: 900, fontSize: "1.2rem", color: "#1e293b" }}>{rp.display_name}</span>
-                <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>
-                  HCP Index: {rp.handicap_index ?? "N/A"}
+        {roundPlayers.map(rp => {
+          const noHC = rp.handicap_index == null;
+          return (
+            <div key={rp.id} style={{
+              background: "white", padding: "20px", borderRadius: "24px",
+              border: `1px solid ${noHC ? "#fcd34d" : "#e2e8f0"}`, marginBottom: "16px",
+              boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: noHC ? "12px" : "16px", alignItems: "center" }}>
+                <div>
+                  <span style={{ fontWeight: 900, fontSize: "1.2rem", color: "#1e293b" }}>{rp.display_name}</span>
+                  <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>
+                    HCP Index: {rp.handicap_index ?? "Not on file"}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>CH</span>
+                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#166534" }}>
+                    {rp.course_handicap !== null ? rp.course_handicap : "?"}
+                  </span>
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>CH</span>
-                <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#166534" }}>
-                  {rp.course_handicap !== null ? rp.course_handicap : "?"}
-                </span>
+
+              {/* Inline HC prompt */}
+              {noHC && (
+                <div style={{
+                  background: "#fef9c3", borderRadius: "10px", padding: "10px 12px", marginBottom: "14px",
+                  border: "1px solid #fde68a",
+                }}>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#92400e", marginBottom: "6px" }}>
+                    No handicap on file for {rp.display_name}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Enter HC index"
+                      value={tempHandicaps[rp.id] ?? ""}
+                      onChange={e => setTempHandicaps(prev => ({ ...prev, [rp.id]: e.target.value }))}
+                      style={{
+                        flex: 1, padding: "6px 10px", borderRadius: "8px",
+                        border: "1px solid #fcd34d", fontSize: "0.85rem",
+                        fontFamily: "sans-serif", outline: "none",
+                      }}
+                    />
+                    <button
+                      onClick={() => applyTempHandicap(rp.id, rp.tee_id)}
+                      disabled={!tempHandicaps[rp.id] || !rp.tee_id}
+                      style={{
+                        padding: "6px 14px", borderRadius: "8px", border: "none",
+                        background: "#166534", color: "white", fontSize: "0.82rem",
+                        fontWeight: 700, cursor: "pointer", opacity: (!tempHandicaps[rp.id] || !rp.tee_id) ? 0.5 : 1,
+                      }}
+                    >
+                      Apply
+                    </button>
+                    <span style={{ fontSize: "0.72rem", color: "#92400e" }}>or play gross</span>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                {allTees.map(t => {
+                  const isSelected = rp.tee_id === t.id;
+                  const colors = TEE_COLORS[t.color] || { bg: "#ccc", text: "#000" };
+                  return (
+                    <button key={t.id} onClick={() => updatePlayerTee(rp.id, t.id)} style={{
+                      flex: 1, padding: "14px 4px", borderRadius: "12px", fontSize: "10px", fontWeight: 900,
+                      border: isSelected ? "4px solid #166534" : "1px solid #e2e8f0",
+                      background: colors.bg, color: colors.text, textTransform: "uppercase",
+                      opacity: isSelected ? 1 : 0.4, transform: isSelected ? "scale(1.05)" : "scale(1)",
+                      transition: "all 0.15s ease", cursor: "pointer",
+                    }}>
+                      {t.color}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {allTees.map(t => {
-                const isSelected = rp.tee_id === t.id;
-                const colors = TEE_COLORS[t.color] || { bg: "#ccc", text: "#000" };
-                return (
-                  <button key={t.id} onClick={() => updatePlayerTee(rp.id, t.id)} style={{
-                    flex: 1, padding: "14px 4px", borderRadius: "12px", fontSize: "10px", fontWeight: 900,
-                    border: isSelected ? "4px solid #166534" : "1px solid #e2e8f0",
-                    background: colors.bg, color: colors.text, textTransform: "uppercase",
-                    opacity: isSelected ? 1 : 0.4, transform: isSelected ? "scale(1.05)" : "scale(1)",
-                    transition: "all 0.15s ease", cursor: "pointer",
-                  }}>
-                    {t.color}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         <button onClick={() => {
           if (!roundPlayers.every(p => p.tee_id !== null && p.tee_id !== 0)) {
@@ -335,6 +428,7 @@ export default function ScorecardPage() {
   const teamNet = getTeamTotal("net");
   const teamPar = getTeamParTotal();
   const scoredHoles = holesWithTeamScores();
+  const countingIds = getCountingPlayerIds(currentHole);
 
   return (
     <div style={{ padding: "15px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif", paddingBottom: "160px" }}>
@@ -351,16 +445,9 @@ export default function ScorecardPage() {
 
       {/* Team score summary bar */}
       {scoredHoles > 0 && (
-        <div style={{
-          display: "flex", gap: "8px", marginBottom: "16px",
-        }}>
-          <div style={{
-            flex: 1, background: "#166534", borderRadius: "12px", padding: "10px 14px",
-            color: "white", textAlign: "center",
-          }}>
-            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Team Gross
-            </div>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          <div style={{ flex: 1, background: "#166534", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
+            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Gross</div>
             <div style={{ fontSize: "1.3rem", fontWeight: 900 }}>
               {teamGross}
               <span style={{ fontSize: "0.7rem", fontWeight: 600, opacity: 0.7, marginLeft: "4px" }}>
@@ -368,13 +455,8 @@ export default function ScorecardPage() {
               </span>
             </div>
           </div>
-          <div style={{
-            flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px",
-            color: "white", textAlign: "center",
-          }}>
-            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Team Net
-            </div>
+          <div style={{ flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
+            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Net</div>
             <div style={{ fontSize: "1.3rem", fontWeight: 900 }}>
               {teamNet}
               <span style={{ fontSize: "0.7rem", fontWeight: 600, opacity: 0.7, marginLeft: "4px" }}>
@@ -382,10 +464,7 @@ export default function ScorecardPage() {
               </span>
             </div>
           </div>
-          <div style={{
-            background: "#f8fafc", borderRadius: "12px", padding: "10px 14px",
-            textAlign: "center", border: "1px solid #e2e8f0", minWidth: "60px",
-          }}>
+          <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px", textAlign: "center", border: "1px solid #e2e8f0", minWidth: "60px" }}>
             <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>Holes</div>
             <div style={{ fontSize: "1.3rem", fontWeight: 900, color: "#1e293b" }}>{scoredHoles}</div>
           </div>
@@ -396,10 +475,11 @@ export default function ScorecardPage() {
       <div style={{ display: "flex", overflowX: "auto", gap: "6px", marginBottom: "20px", paddingBottom: "10px" }}>
         {Array.from({ length: 18 }, (_, i) => i + 1).map(h => {
           const hasScores = roundPlayers.some(rp => scores[rp.id]?.[h] != null);
+          const hasOverride = !!countingOverrides[h];
           return (
             <button key={h} onClick={() => setCurrentHole(h)} style={{
               minWidth: "35px", height: "35px", borderRadius: "50%",
-              border: h === currentHole ? "2px solid #166534" : "1px solid #e2e8f0",
+              border: h === currentHole ? "2px solid #166534" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
               background: h === currentHole ? "#166534" : hasScores ? "#dcfce7" : "white",
               color: h === currentHole ? "white" : hasScores ? "#166534" : "#94a3b8",
               fontSize: "0.8rem", fontWeight: "bold", cursor: "pointer",
@@ -420,21 +500,43 @@ export default function ScorecardPage() {
         const holeInfo = holesByTee[rp.tee_id || 0]?.find(h => h.hole_number === currentHole);
         const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
 
+        const isCounting = countingIds.includes(rp.id);
+        const countingRank = countingIds.indexOf(rp.id); // 0 = lowest net, 1 = second
+
+        // Highlight colors: green for best, blue for second
+        const countingBorderColor = countingRank === 0 ? "#166534" : "#1e40af";
+        const countingBg = countingRank === 0 ? "#f0fdf4" : "#eff6ff";
+
         return (
-          <div key={rp.id} style={{
-            background: "white", padding: "12px 16px", borderRadius: "16px",
-            border: "1px solid #f1f5f9", marginBottom: "10px",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-          }}>
+          <div
+            key={rp.id}
+            onClick={() => gross != null ? toggleOverride(currentHole, rp.id) : undefined}
+            style={{
+              background: isCounting ? countingBg : "white",
+              padding: "12px 16px", borderRadius: "16px",
+              border: isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
+              marginBottom: "10px",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              cursor: gross != null ? "pointer" : "default",
+              transition: "background 0.15s, border-color 0.15s",
+            }}
+          >
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 800, fontSize: "0.95rem" }}>{rp.display_name}</div>
-              <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>{rp.display_name}</span>
+                {isCounting && (
+                  <span style={{
+                    fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
+                    background: countingBorderColor, color: "white", textTransform: "uppercase",
+                  }}>
+                    {countingRank === 0 ? "Best" : "2nd"}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
                 <span>CH: {rp.course_handicap ?? "?"}</span>
                 {teeColor && (
-                  <span style={{
-                    display: "inline-block", width: "8px", height: "8px", borderRadius: "50%",
-                    background: teeColor.bg, border: "1px solid #cbd5e1",
-                  }} />
+                  <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
                 )}
                 {hcpStrokes > 0 && (
                   <span style={{ color: "#1e40af" }}>({hcpStrokes} stroke{hcpStrokes > 1 ? "s" : ""})</span>
@@ -447,16 +549,20 @@ export default function ScorecardPage() {
                 )}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
-              <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) - 1)}
-                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "15px" }} onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) - 1)}
+                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
+              >
                 −
               </button>
               <div style={{ fontSize: "1.8rem", fontWeight: 900, minWidth: "35px", textAlign: "center" }}>
                 {scores[rp.id]?.[currentHole] || "—"}
               </div>
-              <button onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) + 1)}
-                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}>
+              <button
+                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) + 1)}
+                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
+              >
                 +
               </button>
             </div>
@@ -492,38 +598,69 @@ export default function ScorecardPage() {
         );
       })()}
 
+      {/* Tap hint when scores are entered */}
+      {countingIds.length >= 2 && (
+        <p style={{ textAlign: "center", fontSize: "0.68rem", color: "#94a3b8", margin: "6px 0 0" }}>
+          Tap a player card to override which balls count
+        </p>
+      )}
+
       {/* Navigation buttons */}
       <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
         <button onClick={() => setCurrentHole(h => Math.max(1, h - 1))} disabled={currentHole === 1}
           style={{
             flex: 1, padding: "18px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "white",
             cursor: currentHole === 1 ? "default" : "pointer", opacity: currentHole === 1 ? 0.4 : 1,
+            fontFamily: "sans-serif",
           }}>
           ← Back
         </button>
         {currentHole < 18 ? (
           <button onClick={() => setCurrentHole(h => h + 1)} style={{
             flex: 2, padding: "18px", borderRadius: "12px", background: "#166534",
-            color: "white", border: "none", fontWeight: 900, cursor: "pointer",
+            color: "white", border: "none", fontWeight: 900, cursor: "pointer", fontFamily: "sans-serif",
           }}>
             Next Hole →
           </button>
         ) : (
-          <button onClick={async () => {
-            if (!confirm("Finalize this round? Scores will be saved.")) return;
+          <button onClick={() => setEndRoundModal(true)} disabled={saving} style={{
+            flex: 2, padding: "18px", borderRadius: "12px", background: "#b45309",
+            color: "white", border: "none", fontWeight: 900, cursor: "pointer",
+            opacity: saving ? 0.6 : 1, fontFamily: "sans-serif",
+          }}>
+            {saving ? "Saving…" : "Finish Round ✓"}
+          </button>
+        )}
+      </div>
+
+      {/* End round early link */}
+      {currentHole < 18 && (
+        <div style={{ textAlign: "center", marginTop: "20px" }}>
+          <button
+            onClick={() => setEndRoundModal(true)}
+            style={{ background: "none", border: "none", color: "#94a3b8", fontSize: "0.78rem", cursor: "pointer", textDecoration: "underline" }}
+          >
+            End round early
+          </button>
+        </div>
+      )}
+
+      {endRoundModal && (
+        <DangerModal
+          title="Finalize this round?"
+          description="This will mark the round as complete and save all scores. You won't be able to enter additional scores after this."
+          cannotBeUndone={false}
+          confirmLabel="Finish Round"
+          onConfirm={async () => {
+            setEndRoundModal(false);
             setSaving(true);
             await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId);
             setSaving(false);
             router.push(`/round/${roundId}/summary`);
-          }} disabled={saving} style={{
-            flex: 2, padding: "18px", borderRadius: "12px", background: "#b45309",
-            color: "white", border: "none", fontWeight: 900, cursor: "pointer",
-            opacity: saving ? 0.6 : 1,
-          }}>
-            {saving ? "Saving..." : "Finish Round ✓"}
-          </button>
-        )}
-      </div>
+          }}
+          onCancel={() => setEndRoundModal(false)}
+        />
+      )}
     </div>
   );
 }
