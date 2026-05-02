@@ -39,7 +39,10 @@ function useIsMobile() {
 export default function RoundSetup({ allPlayers }: Props) {
   const isMobile = useIsMobile();
 
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [roster, setRoster] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Record<number, Player[]>>({});
   const [existingRoundId, setExistingRoundId] = useState<number | null>(null);
