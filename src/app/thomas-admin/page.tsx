@@ -148,8 +148,6 @@ export default function AdminPage() {
           <RoundSetup
             allPlayers={players.filter(p => p.is_active)}
             matrix={matrix}
-            settings={settings}
-            onSettingsChange={refreshSettings}
           />
         )}
         {activeTab === "Players" && (

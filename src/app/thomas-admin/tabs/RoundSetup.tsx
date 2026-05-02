@@ -3,15 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
-import { Player, MatrixRow, LeagueSettings } from "../page";
+import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 
 interface Props {
   allPlayers: Player[];
   matrix: MatrixRow[];
-  settings: LeagueSettings;
-  onSettingsChange: () => void;
 }
 
 const C = {
