@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
+import { getTeamColor } from "@/lib/teamColors";
 
 type TeamInfo = {
   number: number;
@@ -169,37 +170,19 @@ export default function HomePage() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
                   {round.teams.map((team) => {
-                    // Color-code each team card by its own score status
-                    const teamBg = round.is_complete
-                      ? "#f8fafc"
-                      : team.hasScores
-                      ? "#f0fdf4"
-                      : "#fffbeb";
-
-                    const teamBorder = round.is_complete
-                      ? "#f1f5f9"
-                      : team.hasScores
-                      ? "#bbf7d0"
-                      : "#fde68a";
-
-                    const teamAccent = round.is_complete
-                      ? "#94a3b8"
-                      : team.hasScores
-                      ? "#166534"
-                      : "#92400e";
-
+                    const tc = getTeamColor(team.number);
                     return (
                       <Link
                         key={team.number}
                         href={`/round/${round.id}/scorecard?team=${team.number}`}
                         style={{
                           display: "flex", flexDirection: "column", padding: "10px 12px",
-                          backgroundColor: teamBg, borderRadius: "10px", textDecoration: "none",
-                          border: `1px solid ${teamBorder}`,
+                          backgroundColor: tc.bg, borderRadius: "10px", textDecoration: "none",
+                          border: `1px solid ${tc.border}`, borderLeft: `3px solid ${tc.border}`,
                         }}
                       >
-                        <span style={{ fontSize: "0.68rem", fontWeight: 800, color: teamAccent, marginBottom: "4px" }}>
-                          TEAM {team.number}
+                        <span style={{ fontSize: "0.62rem", fontWeight: 800, color: tc.pillText, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          Team {team.number}
                         </span>
                         <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
                           {team.players.map((name, i) => (

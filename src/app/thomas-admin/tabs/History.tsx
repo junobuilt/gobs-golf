@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getTeamColor } from "@/lib/teamColors";
 
 const C = {
   navy: "#0c3057",
@@ -123,18 +124,24 @@ export default function History() {
             {isExpanded && (
               <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px", background: C.bg }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px" }}>
-                  {teamNums.map(tn => (
+                  {teamNums.map(tn => {
+                    const tc = getTeamColor(tn);
+                    return (
                     <div key={tn} style={{
-                      background: "white", borderRadius: "8px", border: `1px solid ${C.border}`, overflow: "hidden",
+                      background: tc.bg, borderRadius: "8px",
+                      border: `1px solid ${tc.border}`, borderLeft: `3px solid ${tc.border}`,
+                      overflow: "hidden",
                     }}>
-                      <div style={{
-                        background: C.navy, padding: "6px 10px",
-                        fontSize: "0.68rem", fontWeight: 700, color: "white",
-                        textTransform: "uppercase", letterSpacing: "0.05em",
-                      }}>
-                        Team {tn}
+                      <div style={{ padding: "6px 10px" }}>
+                        <span style={{
+                          background: tc.pillBg, color: tc.pillText,
+                          fontSize: "0.62rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em",
+                          padding: "2px 7px", borderRadius: "999px",
+                        }}>
+                          Team {tn}
+                        </span>
                       </div>
-                      <div style={{ padding: "8px 10px" }}>
+                      <div style={{ padding: "4px 10px 10px" }}>
                         {round.teams[tn].map((name, i) => (
                           <div key={i} style={{ fontSize: "0.82rem", color: "#374151", padding: "2px 0" }}>
                             {name}
@@ -142,7 +149,8 @@ export default function History() {
                         ))}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
