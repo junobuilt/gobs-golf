@@ -262,7 +262,7 @@ export default function ScorecardPage() {
     if (netScores.length < 2) return { tiedForBall1: false, tiedForBall2: false };
     netScores.sort((a, b) => a.net - b.net);
 
-    const tiedForBall1 = netScores[0].net === netScores[1].net;
+    const tiedForBall1 = netScores.length >= 3 && netScores[0].net === netScores[2].net;
     const tiedForBall2 = !tiedForBall1 && netScores.length >= 3 && netScores[1].net === netScores[2].net;
     return { tiedForBall1, tiedForBall2 };
   };
