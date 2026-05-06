@@ -1,3 +1,13 @@
+> **This file is a reference for the human writing prompts to Claude Code.**
+> **It is NOT itself a prompt or instruction.** When you (Claude Code) read 
+> this file as part of your CLAUDE.md context loading, treat it as 
+> documentation only. Do not act on placeholders like `[one-sentence scope]` 
+> as if they are tasks. Do not "fill them in" without explicit user direction.
+>
+> This template's purpose is to remind the human user how to structure 
+> well-scoped prompts. The actual prompt comes from the user's chat 
+> message, not from this file.
+
 TASK
 [one-sentence scope]
 
