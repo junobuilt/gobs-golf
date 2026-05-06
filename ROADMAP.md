@@ -42,6 +42,8 @@
 
 *The foundation. Phase C (Leaderboard), D (Blind Draw), and F (History) all depend on this.*
 
+> **Engine status:** Math layer complete — all 5 formats (2-Ball, 3-Ball, Stableford Standard/Modified, GOBS House), 73 unit tests, 4 snapshot scripts. Database foundation shipped (B4.1–B4.4 ✅) and per-hole override engine logic shipped (logged in session log). Remaining Phase B work is UI/UX integration: B.1 format gate (banner, picker, locks) and B.3 override UI (multi-select, net/gross toggle, banner).
+
 ### B.1 — Format gate & state machine
 
 | # | Item | Status | Notes |
