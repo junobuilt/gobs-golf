@@ -106,7 +106,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       .from("round_players").select("player_id, team_number").eq("round_id", round.id);
 
     if (!rps || rps.length === 0) {
-      setViewMode("edit");
+      setViewMode("active");
       setMobileStep("teams");
       return;
     }
@@ -136,7 +136,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       await loadScoreStatus(round.id, teamNumList);
       setViewMode("active");
     } else {
-      setViewMode("edit");
+      setViewMode("active");
       setMobileStep("teams");
     }
   }, [allPlayers, loadScoreStatus]);
