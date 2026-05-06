@@ -1,5 +1,6 @@
 import { getHandicapStrokes } from "./handicap";
 import type {
+  Format,
   HoleInfo,
   HoleInput,
   HoleResult,
@@ -8,9 +9,15 @@ import type {
   RoundResult,
 } from "./types";
 
-function compute2BallHole(input: HoleInput): HoleResult {
+function defaultBestN(format: Format): number {
+  if (format === "2_ball") return 2;
+  if (format === "3_ball") return 3;
+  throw new Error(`Best-N undefined for format ${format}`);
+}
+
+function computeBestNHole(input: HoleInput): HoleResult {
   const { hole, players, formatConfig, manualContributors } = input;
-  const bestN = formatConfig.best_n ?? 2;
+  const bestN = formatConfig.best_n ?? defaultBestN(input.format);
   const basis = formatConfig.basis;
 
   const perPlayer: PlayerHoleResult[] = players.map(p => {
@@ -83,8 +90,8 @@ function compute2BallHole(input: HoleInput): HoleResult {
 export function computeHoleResult(input: HoleInput): HoleResult {
   switch (input.format) {
     case "2_ball":
-      return compute2BallHole(input);
     case "3_ball":
+      return computeBestNHole(input);
     case "stableford_standard":
     case "stableford_modified":
     case "gobs_house":
@@ -101,7 +108,7 @@ export function computeRoundResult(input: RoundInput): RoundResult {
   let holesScored = 0;
   let anyTeamScore = false;
 
-  const bestN = formatConfig.best_n ?? 2;
+  const bestN = formatConfig.best_n ?? defaultBestN(format);
 
   for (const hole of holes) {
     const holeInput: HoleInput = {
