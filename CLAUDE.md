@@ -17,6 +17,19 @@ only.
 
 ---
 
+## Canonical project documents
+
+Consult these at the start of any session:
+
+- **[ROADMAP.md](./ROADMAP.md)** — source of truth for *what* to build. Phase
+  list, item statuses, locked decisions, open questions. Read before
+  taking on feature work.
+- **[GOBS_Game_Rules_v1.pdf](./GOBS_Game_Rules_v1.pdf)** — source of truth for
+  *how* scoring works. Game formats, handicap application, blind draw,
+  money allocation. Read before changing scoring logic or display.
+
+---
+
 ## Tech stack
 
 - **Frontend:** Next.js (App Router), TypeScript, React
