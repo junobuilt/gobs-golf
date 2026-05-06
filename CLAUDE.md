@@ -30,6 +30,43 @@ Consult these at the start of any session:
 
 ---
 
+## Working principles for this project
+
+### Plan-first protocol
+For any code change beyond a one-line typo fix:
+1. Show the plan before writing code (files, what each change does, hypothesis)
+2. Wait for approval
+3. Implement
+4. Show the diff grouped by item, line by line
+5. List anything considered but not changed (out of scope)
+6. Run verification (npm test, tsc --noEmit)
+7. Commit and push to origin/master
+
+### Anti-drift rules
+- Do not refactor unrelated code, even in files being touched
+- Do not "clean up" formatting, comments, imports, or styling outside scope
+- Do not modify items in ROADMAP.md's "Decisions Locked" section
+- If a bug is found while working, log it but do not fix
+- If the existing math has subtle bugs, STOP and report rather than silently
+  changing behavior
+
+### Commit and push together
+"Commit" without push leaves changes in local repo only. Always push to
+origin/master unless explicitly told otherwise.
+
+### Confession is mandatory
+At the end of every plan or implementation, list:
+- What you considered changing but did not (out of scope)
+- Bugs/oddities flagged but not fixed
+- Any drift from the explicit prompt scope (font sizes, margins, etc.)
+
+### Verification scales with risk
+- Schema changes: verify against live data before commit
+- Math changes: snapshot test against existing production data
+- UI changes: type-check + manual screenshot
+- Refactors: snapshot test + unit tests
+
+---
 ## Tech stack
 
 - **Frontend:** Next.js (App Router), TypeScript, React
