@@ -298,7 +298,7 @@
 | Apr 21–27 | Schema, seed data, core app with Gemini |
 | Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
 | May 1 | Updated rosters, mobile redesign, dangerous-action pattern, played-with v1, history tab v1 |
-| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. |
+| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. Fixed navigation trap on empty/abandoned rounds in admin RoundSetup. Follow-up: RoundSetup useEffect dep on `allPlayers` reference re-runs `loadRoundForDate` unnecessarily when parent re-creates the array — minor perf, separate ticket. Follow-up: `goToTeams` does delete-then-insert on `round_players` without a transaction — failed insert loses all team assignments, separate ticket. |
 
 ---
 
