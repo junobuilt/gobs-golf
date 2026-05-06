@@ -31,7 +31,7 @@
 | A4 | Rename "CH" / "HC" / "HCP" → "Strokes" | 📋 | Apply across scorecard, player tab, profile, admin players tab |
 | A5 | Show handicap strokes as dots | 📋 | One dot per stroke that player gets on current hole, above +/− buttons. No number, dots only. |
 | A6 | Default scorecard value = dash, anchored to par | 📋 | Display starts as `—`. First +/− tap moves to par+1 or par−1. Database stores nothing until tap. |
-| A7 | Bug: admin-created scorecards not showing player names | 🔨 | Currently in production. Fix in next code push. |
+| A7 | Bug: admin-created scorecards not showing player names | ✅ | Currently in production. Fix in next code push. |
 | A8 | Keep gross score on round summary + history detail pages | 📋 | Drop from scorecard pill only; preserve elsewhere for "I'm curious" lookups |
 
 **Phase A exit criteria:** Scorecard reads cleaner, no duplicate displays, "Strokes" terminology consistent everywhere.
@@ -298,7 +298,7 @@
 | Apr 21–27 | Schema, seed data, core app with Gemini |
 | Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
 | May 1 | Updated rosters, mobile redesign, dangerous-action pattern, played-with v1, history tab v1 |
-| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. |
+| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. |
 
 ---
 
