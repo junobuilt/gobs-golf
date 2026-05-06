@@ -75,10 +75,10 @@
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B4.1 | Add `format` column to rounds table | 📋 | Enum: `2_ball`, `3_ball`, `stableford_standard`, `stableford_modified`, `gobs_house` |
-| B4.2 | Add `format_config` JSON column | 📋 | Stores point values, override holes, net/gross |
-| B4.3 | Add `format_locked_at` timestamp | 📋 | Records when first score was entered |
-| B4.4 | Backfill existing rounds as `2_ball` | 📋 | One-time migration. Database is being cleared anyway, so trivial. |
+| B4.1 | Add `format` column to rounds table | ✅ | Enum: `2_ball`, `3_ball`, `stableford_standard`, `stableford_modified`, `gobs_house` |
+| B4.2 | Add `format_config` JSON column | ✅ | Stores point values, override holes, net/gross |
+| B4.3 | Add `format_locked_at` timestamp | ✅ | Records when first score was entered |
+| B4.4 | Backfill existing rounds as `2_ball` | ✅ | One-time migration. Database is being cleared anyway, so trivial. |
 | B4.5 | Update scoring engine to switch on format | 📋 | Single function takes (format, scores, handicaps, overrides) → team score. Each format is its own pure function. |
 
 **Phase B exit criteria:** Admin can pick any of 5 formats, scorecards behave correctly for each, scores calculate correctly, format is locked once scoring starts.
@@ -223,6 +223,7 @@
 | I8 | PWA install polish | 💡 | "Add to home screen" prompts |
 | I9 | SWAT format | ❓ | Blocked. Need rules from Dad. |
 | I10 | Combo tees | ❓ | Blocked. Need rules from Dad. |
+| I11 | Generate Supabase TypeScript types | 💡 | Run `supabase gen types` CLI so query responses get column-shape type checking. Currently uses `any`, meaning tsc cannot catch column typos. Tooling-only change, no functional impact. Worth doing once schema stabilizes. |
 
 ---
 
@@ -298,7 +299,7 @@
 | Apr 21–27 | Schema, seed data, core app with Gemini |
 | Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
 | May 1 | Updated rosters, mobile redesign, dangerous-action pattern, played-with v1, history tab v1 |
-| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. Fixed navigation trap on empty/abandoned rounds in admin RoundSetup. Follow-up: RoundSetup useEffect dep on `allPlayers` reference re-runs `loadRoundForDate` unnecessarily when parent re-creates the array — minor perf, separate ticket. Follow-up: `goToTeams` does delete-then-insert on `round_players` without a transaction — failed insert loses all team assignments, separate ticket. Shipped Phase A scorecard UI cleanup: A1, A2, A3, A4, A5, A6, A8. Follow-up A4-extended: leftover CH/HC/HCP instances on leaderboard, round/new, summary, and admin RoundSetup tab — separate ticket. A2 revised: top pill now shows only the net delta (e.g., `−3`, `+2`, `E`) at 2rem; absolute net number and parentheses removed. |
+| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. Fixed navigation trap on empty/abandoned rounds in admin RoundSetup. Follow-up: RoundSetup useEffect dep on `allPlayers` reference re-runs `loadRoundForDate` unnecessarily when parent re-creates the array — minor perf, separate ticket. Follow-up: `goToTeams` does delete-then-insert on `round_players` without a transaction — failed insert loses all team assignments, separate ticket. Shipped Phase A scorecard UI cleanup: A1, A2, A3, A4, A5, A6, A8. Follow-up A4-extended: leftover CH/HC/HCP instances on leaderboard, round/new, summary, and admin RoundSetup tab — separate ticket. A2 revised: top pill now shows only the net delta (e.g., `−3`, `+2`, `E`) at 2rem; absolute net number and parentheses removed. Shipped Phase B1: rounds.format / rounds.format_config / rounds.format_locked_at + CHECK constraint + 2-Ball backfill. SQL committed at supabase/migrations/001_phase_b1_rounds_format_columns.sql. Note: format-picker UI not yet shipped — DEFAULT '2_ball' on the format column keeps the current round-creation insert flow working until the picker UI lands in a later B-phase step. Follow-up logged as I11 (type-safety via `supabase gen types`). |
 
 ---
 
