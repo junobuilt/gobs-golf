@@ -30,6 +30,11 @@ export type PlayerHoleResult = {
   netScore: number | null;
   handicapStrokes: number;
   isContributing: boolean;
+  // Stableford points awarded to this player on this hole. Populated for
+  // stableford_standard / stableford_modified / gobs_house formats; null for
+  // best-N stroke-play formats (2_ball, 3_ball) and for any player whose
+  // gross score is null.
+  points: number | null;
 };
 
 export type HoleResult = {
