@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { computeRoundResult, computePlayerRoundTotal } from "@/lib/scoring";
+import type { HoleInfo } from "@/lib/scoring";
 
 interface PlayerResult {
   display_name: string;
@@ -20,17 +22,6 @@ interface TeamResult {
   team_gross: number;
   team_net: number;
   holes_scored: number;
-}
-
-// Same handicap strokes logic as scorecard
-function getHandicapStrokes(courseHandicap: number | null, strokeIndex: number): number {
-  if (courseHandicap === null || courseHandicap === 0) return 0;
-  const ch = Math.abs(courseHandicap);
-  const fullStrokes = Math.floor(ch / 18);
-  const remainder = ch % 18;
-  let strokes = fullStrokes + (strokeIndex <= remainder ? 1 : 0);
-  if (courseHandicap < 0) strokes = -strokes;
-  return strokes;
 }
 
 export default function RoundSummaryPage() {
@@ -109,66 +100,65 @@ export default function RoundSummaryPage() {
 
       // Calculate team scores
       const teamResults: TeamResult[] = Object.entries(teamMap).map(([teamNum, teamPlayers]) => {
-        // Build player results
+        // Per-tee hole metadata in engine shape
+        const holesByTeeForEngine: Record<number, HoleInfo[]> = {};
+        for (const teeId of Object.keys(holesMap)) {
+          holesByTeeForEngine[Number(teeId)] = (holesMap[Number(teeId)] || []).map((h: any) => ({
+            holeNumber: h.hole_number,
+            par: h.par,
+            strokeIndex: h.stroke_index,
+          }));
+        }
+
+        // Per-player gross/net totals via engine helper
         const playerResults: PlayerResult[] = teamPlayers.map((rp: any) => {
           const playerScores = scoreMap[rp.id] || {};
-          const holesPlayed = Object.keys(playerScores).length;
-          const grossTotal = Object.values(playerScores).reduce((sum: number, s: any) => sum + s, 0);
-
-          // Calculate net total
-          let netTotal = 0;
-          const holes = holesMap[rp.tee_id] || [];
-          Object.entries(playerScores).forEach(([holeNum, strokes]) => {
-            const holeInfo = holes.find((h: any) => h.hole_number === parseInt(holeNum));
-            const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
-            netTotal += (strokes as number) - hcpStrokes;
-          });
-
+          const holes = holesByTeeForEngine[rp.tee_id] || [];
+          const { gross, net, holesPlayed } = computePlayerRoundTotal(
+            playerScores,
+            rp.course_handicap,
+            holes,
+          );
           return {
             display_name: rp.players?.display_name || rp.players?.full_name || "?",
             course_handicap: rp.course_handicap,
             tee_color: (rp as any).tees?.color || "?",
-            gross_total: grossTotal,
-            net_total: netTotal,
+            gross_total: gross,
+            net_total: net,
             holes_played: holesPlayed,
           };
         });
 
-        // Best 2 of N per hole for team score
-        let teamGross = 0;
-        let teamNet = 0;
-        let holesScored = 0;
+        // Team-format best-2 totals via engine. Use first player's tee for the
+        // hole metadata (par is constant across tees; stroke_index per-tee is
+        // applied per-player inside the engine via courseHandicap mapping).
+        const firstTee = teamPlayers[0]?.tee_id;
+        const holes = holesByTeeForEngine[firstTee] || [];
+        const playersForEngine = teamPlayers.map((rp: any) => ({
+          playerId: String(rp.id),
+          courseHandicap: rp.course_handicap,
+          grossScores: scoreMap[rp.id] || {},
+        }));
 
-        for (let h = 1; h <= 18; h++) {
-          const grossScores: number[] = [];
-          const netScores: number[] = [];
-
-          teamPlayers.forEach((rp: any) => {
-            const s = scoreMap[rp.id]?.[h];
-            if (s != null) {
-              grossScores.push(s);
-              const holes = holesMap[rp.tee_id] || [];
-              const holeInfo = holes.find((hi: any) => hi.hole_number === h);
-              const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
-              netScores.push(s - hcpStrokes);
-            }
-          });
-
-          if (grossScores.length >= 2) {
-            grossScores.sort((a, b) => a - b);
-            netScores.sort((a, b) => a - b);
-            teamGross += grossScores[0] + grossScores[1];
-            teamNet += netScores[0] + netScores[1];
-            holesScored++;
-          }
-        }
+        const grossResult = computeRoundResult({
+          format: "2_ball",
+          formatConfig: { basis: "gross", best_n: 2, override_holes: [] },
+          holes,
+          players: playersForEngine,
+        });
+        const netResult = computeRoundResult({
+          format: "2_ball",
+          formatConfig: { basis: "net", best_n: 2, override_holes: [] },
+          holes,
+          players: playersForEngine,
+        });
 
         return {
           team_number: parseInt(teamNum),
           players: playerResults,
-          team_gross: teamGross,
-          team_net: teamNet,
-          holes_scored: holesScored,
+          team_gross: grossResult.teamScore ?? 0,
+          team_net: netResult.teamScore ?? 0,
+          holes_scored: grossResult.holesScored,
         };
       });
 

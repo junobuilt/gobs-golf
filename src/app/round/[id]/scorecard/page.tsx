@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import DangerModal from "@/app/thomas-admin/components/DangerModal";
+import {
+  computeCourseHandicap,
+  computeHoleResult,
+  computeRoundResult,
+  getHandicapStrokes,
+} from "@/lib/scoring";
+import type { HoleInfo as EngineHoleInfo } from "@/lib/scoring";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -34,26 +41,6 @@ const TEE_COLORS: Record<string, { bg: string; text: string }> = {
   White:  { bg: "#f8fafc", text: "#000000" },
   Yellow: { bg: "#facc15", text: "#000000" },
 };
-
-function computeCourseHandicap(
-  handicapIndex: number | null,
-  slope: number,
-  rating: number,
-  par: number
-): number | null {
-  if (handicapIndex === null) return null;
-  return Math.round(handicapIndex * slope / 113 + (rating - par));
-}
-
-function getHandicapStrokes(courseHandicap: number | null, strokeIndex: number): number {
-  if (courseHandicap === null || courseHandicap === 0) return 0;
-  const ch = Math.abs(courseHandicap);
-  const fullStrokes = Math.floor(ch / 18);
-  const remainder = ch % 18;
-  let strokes = fullStrokes + (strokeIndex <= remainder ? 1 : 0);
-  if (courseHandicap < 0) strokes = -strokes;
-  return strokes;
-}
 
 export default function ScorecardPage() {
   const params = useParams();
@@ -224,80 +211,97 @@ export default function ScorecardPage() {
     setRemovePlayerModal(null);
   };
 
-  // --- SCORING HELPERS ---
+  // --- SCORING HELPERS (engine-backed) ---
+
+  const engineHole = (holeNumber: number): EngineHoleInfo | null => {
+    const activeTeeId = roundPlayers[0]?.tee_id || 0;
+    const h = holesByTee[activeTeeId]?.find(hi => hi.hole_number === holeNumber);
+    return h ? { holeNumber: h.hole_number, par: h.par, strokeIndex: h.stroke_index } : null;
+  };
+
+  const computeHoleFor = (holeNumber: number, mode: "gross" | "net") => {
+    const hole = engineHole(holeNumber);
+    if (!hole) return null;
+    const override = countingOverrides[holeNumber];
+    return computeHoleResult({
+      format: "2_ball",
+      formatConfig: { basis: mode, best_n: 2, override_holes: [] },
+      hole,
+      players: roundPlayers.map(rp => ({
+        playerId: String(rp.id),
+        grossScore: scores[rp.id]?.[holeNumber] ?? null,
+        courseHandicap: rp.course_handicap,
+      })),
+      manualContributors: override ? override.map(String) : undefined,
+    });
+  };
 
   const getNetScore = (rp: RoundPlayer, holeNumber: number): number | null => {
-    const gross = scores[rp.id]?.[holeNumber];
-    if (gross == null) return null;
-    const holeInfo = holesByTee[rp.tee_id || 0]?.find(h => h.hole_number === holeNumber);
-    if (!holeInfo) return gross;
-    const strokes = getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index);
-    return gross - strokes;
+    const result = computeHoleFor(holeNumber, "net");
+    if (!result) {
+      const gross = scores[rp.id]?.[holeNumber];
+      return gross == null ? null : gross;
+    }
+    return result.perPlayer.find(p => p.playerId === String(rp.id))?.netScore ?? null;
   };
 
   // Returns the ids of the two players whose net scores count on this hole.
   // Respects manual overrides. Returns [] if fewer than 2 have scored.
   const getCountingPlayerIds = (holeNumber: number): number[] => {
-    if (countingOverrides[holeNumber]) return countingOverrides[holeNumber];
-
-    const netScores: { id: number; net: number }[] = [];
-    for (const rp of roundPlayers) {
-      const net = getNetScore(rp, holeNumber);
-      if (net != null) netScores.push({ id: rp.id, net });
-    }
-    if (netScores.length < 2) return [];
-    netScores.sort((a, b) => a.net - b.net);
-    return [netScores[0].id, netScores[1].id];
+    const result = computeHoleFor(holeNumber, "net");
+    if (!result) return [];
+    return result.contributingPlayerIds.map(id => Number(id));
   };
 
   // Detect whether the auto-selected Ball 1 or Ball 2 involves a tie.
   const getTieInfo = (holeNumber: number): { tiedForBall1: boolean; tiedForBall2: boolean } => {
     if (countingOverrides[holeNumber]) return { tiedForBall1: false, tiedForBall2: false };
-
-    const netScores: { id: number; net: number }[] = [];
-    for (const rp of roundPlayers) {
-      const net = getNetScore(rp, holeNumber);
-      if (net != null) netScores.push({ id: rp.id, net });
-    }
-    if (netScores.length < 2) return { tiedForBall1: false, tiedForBall2: false };
-    netScores.sort((a, b) => a.net - b.net);
-
-    const tiedForBall1 = netScores.length >= 3 && netScores[0].net === netScores[2].net;
-    const tiedForBall2 = !tiedForBall1 && netScores.length >= 3 && netScores[1].net === netScores[2].net;
+    const result = computeHoleFor(holeNumber, "net");
+    if (!result) return { tiedForBall1: false, tiedForBall2: false };
+    const nets = result.perPlayer
+      .filter(p => p.netScore != null)
+      .map(p => p.netScore as number)
+      .sort((a, b) => a - b);
+    if (nets.length < 3) return { tiedForBall1: false, tiedForBall2: false };
+    const tiedForBall1 = nets[0] === nets[2];
+    const tiedForBall2 = !tiedForBall1 && nets[1] === nets[2];
     return { tiedForBall1, tiedForBall2 };
   };
 
   const getBest2ForHole = (holeNumber: number, mode: "gross" | "net"): number | null => {
-    const counting = getCountingPlayerIds(holeNumber);
-    if (counting.length < 2) return null;
-    const vals = counting.map(id => {
-      const rp = roundPlayers.find(p => p.id === id)!;
-      return mode === "gross" ? scores[rp.id]?.[holeNumber] : getNetScore(rp, holeNumber);
-    }).filter((v): v is number => v != null);
-    if (vals.length < 2) return null;
-    return vals[0] + vals[1];
+    return computeHoleFor(holeNumber, mode)?.teamScore ?? null;
+  };
+
+  const buildRoundInput = (mode: "gross" | "net") => {
+    const activeTeeId = roundPlayers[0]?.tee_id || 0;
+    const holes: EngineHoleInfo[] = (holesByTee[activeTeeId] || []).map(h => ({
+      holeNumber: h.hole_number,
+      par: h.par,
+      strokeIndex: h.stroke_index,
+    }));
+    const manualContributors: Record<number, string[]> = {};
+    for (const [hn, ids] of Object.entries(countingOverrides)) {
+      manualContributors[Number(hn)] = ids.map(String);
+    }
+    return computeRoundResult({
+      format: "2_ball",
+      formatConfig: { basis: mode, best_n: 2, override_holes: [] },
+      holes,
+      players: roundPlayers.map(rp => ({
+        playerId: String(rp.id),
+        courseHandicap: rp.course_handicap,
+        grossScores: scores[rp.id] || {},
+      })),
+      manualContributors,
+    });
   };
 
   const getTeamTotal = (mode: "gross" | "net"): number => {
-    let total = 0;
-    for (let h = 1; h <= 18; h++) {
-      const best2 = getBest2ForHole(h, mode);
-      if (best2 != null) total += best2;
-    }
-    return total;
+    return buildRoundInput(mode).teamScore ?? 0;
   };
 
   const getTeamParTotal = (): number => {
-    let total = 0;
-    const activeTeeId = roundPlayers[0]?.tee_id || 0;
-    for (let h = 1; h <= 18; h++) {
-      const counting = getCountingPlayerIds(h);
-      if (counting.length >= 2) {
-        const holeInfo = holesByTee[activeTeeId]?.find(hi => hi.hole_number === h);
-        if (holeInfo) total += holeInfo.par * 2;
-      }
-    }
-    return total;
+    return buildRoundInput("net").teamParAtScored;
   };
 
   const getPlayerTotal = (rpId: number) => {
@@ -307,11 +311,7 @@ export default function ScorecardPage() {
   };
 
   const holesWithTeamScores = (): number => {
-    let count = 0;
-    for (let h = 1; h <= 18; h++) {
-      if (getCountingPlayerIds(h).length >= 2) count++;
-    }
-    return count;
+    return buildRoundInput("net").holesScored;
   };
 
   const toggleOverride = (holeNumber: number, rpId: number) => {

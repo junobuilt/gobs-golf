@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import { computeCourseHandicap } from "@/lib/scoring";
 
 type Player = {
   id: number;
@@ -30,16 +31,6 @@ const TEE_COLORS: Record<string, { bg: string; text: string }> = {
   White:  { bg: "#f8fafc", text: "#000000" },
   Yellow: { bg: "#facc15", text: "#000000" },
 };
-
-function computeCourseHandicap(
-  handicapIndex: number | null,
-  slope: number,
-  rating: number,
-  par: number
-): number | null {
-  if (handicapIndex === null) return null;
-  return Math.round(handicapIndex * slope / 113 + (rating - par));
-}
 
 export default function NewRoundPage() {
   const router = useRouter();

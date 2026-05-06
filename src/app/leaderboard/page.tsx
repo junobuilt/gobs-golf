@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
+import { computePlayerRoundTotal } from "@/lib/scoring";
 
 interface PlayerStats {
   player_id: number;
@@ -16,16 +17,6 @@ interface PlayerStats {
   worst_gross: number;
   avg_gross: number;
   avg_net: number;
-}
-
-function getHandicapStrokes(courseHandicap: number | null, strokeIndex: number): number {
-  if (courseHandicap === null || courseHandicap === 0) return 0;
-  const ch = Math.abs(courseHandicap);
-  const fullStrokes = Math.floor(ch / 18);
-  const remainder = ch % 18;
-  let strokes = fullStrokes + (strokeIndex <= remainder ? 1 : 0);
-  if (courseHandicap < 0) strokes = -strokes;
-  return strokes;
 }
 
 export default function LeaderboardPage() {
@@ -114,16 +105,16 @@ export default function LeaderboardPage() {
         const playerScores = scoreMap[rp.id];
         if (!playerScores || Object.keys(playerScores).length < 9) return; // skip rounds with fewer than 9 holes
 
-        const grossTotal = Object.values(playerScores).reduce((sum: number, s: any) => sum + s, 0);
-
-        // Calculate net
-        let netTotal = 0;
-        const holes = holesMap[rp.tee_id] || [];
-        Object.entries(playerScores).forEach(([holeNum, strokes]) => {
-          const holeInfo = holes.find((h: any) => h.hole_number === parseInt(holeNum));
-          const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
-          netTotal += (strokes as number) - hcpStrokes;
-        });
+        const holes = (holesMap[rp.tee_id] || []).map((h: any) => ({
+          holeNumber: h.hole_number,
+          par: h.par,
+          strokeIndex: h.stroke_index,
+        }));
+        const { gross: grossTotal, net: netTotal } = computePlayerRoundTotal(
+          playerScores,
+          rp.course_handicap,
+          holes,
+        );
 
         if (!playerMap[rp.player_id]) {
           playerMap[rp.player_id] = {
