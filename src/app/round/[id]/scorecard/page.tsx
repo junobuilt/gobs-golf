@@ -526,10 +526,7 @@ export default function ScorecardPage() {
           <div style={{ flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
             <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Net</div>
             <div style={{ fontSize: "2rem", fontWeight: 900 }}>
-              {teamNet}
-              <span style={{ fontSize: "0.85rem", fontWeight: 600, opacity: 0.7, marginLeft: "6px" }}>
-                ({teamNet - teamPar >= 0 ? "+" : ""}{teamNet - teamPar})
-              </span>
+              {teamNet === teamPar ? "E" : teamNet > teamPar ? `+${teamNet - teamPar}` : `−${teamPar - teamNet}`}
             </div>
           </div>
         </div>
