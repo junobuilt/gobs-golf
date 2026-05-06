@@ -209,7 +209,19 @@
 
 ---
 
+## Tech Debt & Follow-Ups
+
+*Surfaced from session work but not tracked in the phase tables. Not phase-blocking.*
+
+| # | Item | Status | Severity | Notes |
+| --- | --- | --- | --- | --- |
+| TD1 | A4-extended: leftover CH/HC/HCP labels | 📋 | Low | Strokes terminology not yet applied on leaderboard, round/new, summary pages, and admin RoundSetup tab. Phase A only covered scorecard, player tab, profile, admin players tab. |
+| TD2 | Supabase array-vs-object pattern audit | 📋 | Medium | Same issue that broke A7 (admin scorecards not showing player names) likely affects History.tsx, scorecard/page.tsx, summary/page.tsx. Audit + fix all instances in one pass. |
+| TD3 | RoundSetup useEffect dep on `allPlayers` | 📋 | Low | Parent re-creating the array re-runs `loadRoundForDate` unnecessarily. Minor perf, no correctness issue. |
+| TD4 | `goToTeams` non-transactional delete-insert | 📋 | **High** | `round_players` does delete-then-insert without a transaction. Failed insert mid-flow loses all team assignments. Real data-loss risk — should be promoted to next sprint. |
 ## Phase I — Post-Launch / Nice-to-Haves
+
+---
 
 *Parking lot. None of these block launch. Revisit after a few months of real-world use.*
 
