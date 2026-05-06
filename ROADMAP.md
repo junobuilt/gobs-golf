@@ -1,204 +1,305 @@
 # GOBS Golf — Feature Roadmap
 
-*Last updated: May 1, 2026*
+*Last updated: May 5, 2026 — major revision after feedback consolidation and flow design*
 
 ---
 
 ## How to use this file
 
-* ✅ Done — shipped and working
-* 🔨 In Progress — actively being built
-* 📋 Ready — spec is clear, can be built anytime
-* ❓ Blocked — needs info from Dad or a decision
-* 💡 Idea — parked for later, needs scoping
+**Statuses**
+
+- ✅ **Shipped** — live and working
+- 🔨 **In Progress** — actively being built
+- 📋 **Ready to Build** — spec is locked, can start anytime
+- ❓ **Blocked** — needs info from Dad or a decision
+
+**Phases are ordered by dependency.** Phase A unblocks Phase B, etc. Items within a phase can usually be built in parallel.
+
+**One source of truth.** The companion document `GOBS_Game_Rules_v1.docx` defines all scoring logic. This roadmap covers what to build; that document covers how scoring works.
 
 ---
 
-## MVP (Shipped)
+## Phase A — Bug Fixes & Scorecard UI Cleanup
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Player roster (52 players) | ✅ | Updated May 1 — 7 new players added |
-| Handicap indexes (most players) | ✅ | 46 of 52 players have HC data |
-| Course/tees/holes data (Semiahmoo) | ✅ | Blue, White, Yellow, White/Yellow Combo tees |
-| Yellow tee yardages corrected | ✅ | 5 holes corrected May 1 from dad's scorecard |
-| Admin team builder | ✅ | Thomas can pre-make teams |
-| Start a Scorecard (tap-to-select) | ✅ | On-the-spot team creation |
-| Tee selection with CH calculation | ✅ | Per-player, per-tee |
-| Hole-by-hole score entry | ✅ | +/- buttons, hole nav dots |
-| Team scoring (best 2 of N) | ✅ | Gross and net, running totals |
-| 2-ball indicator on scorecard | ✅ | Ball 1/Ball 2 badges, tap to override |
-| Tie handling on scorecard | ✅ | Tied badge only when 3+ players share same score (fixed May 1) |
-| Round summary page | ✅ | Gross/net toggle, team rankings |
-| Individual leaderboard | ✅ | Avg score, best round, medals |
-| Player profile pages | ✅ | Round history, stats |
-| Deploy to Vercel | ✅ | [gobs-golf.vercel.app](http://gobs-golf.vercel.app) |
-| Admin panel redesign | 🔨 | Navy/green design system, three-state flow in progress |
-| Admin toggles (leaderboard, winners, 2-ball) | 🔨 | Moved to Settings tab only, toggle bug fixed |
-| Date picker defaults to today | ✅ | UTC timezone bug fixed May 1 |
-| Players tab — mobile layout | 🔨 | Card-row layout for mobile in progress |
-| Played-with matrix UI | ✅ | Desktop heatmap + mobile search view |
-| Historical team viewer (History tab) | ✅ | Browse past rounds by date |
-| Player management (add/deactivate/edit HC) | ✅ | From admin Players tab |
-| 2025 win/loss data imported | ✅ | Money tracker infrastructure ready |
+*Low-risk, high-value. Do this first to give the league a better-feeling app while bigger work is being designed.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| A1 | Remove duplicate team gross/net at bottom of scorecard | 📋 | Keep only the top scorecard pill. Drop gross from the top pill entirely; show only net. |
+| A2 | Score format: big number + small `(+/−N)` | 📋 | Big number = team net score, parenthetical delta to the right |
+| A3 | Remove duplicate "Hole 1" indicator | 📋 | Hole label appears once, not twice |
+| A4 | Rename "CH" / "HC" / "HCP" → "Strokes" | 📋 | Apply across scorecard, player tab, profile, admin players tab |
+| A5 | Show handicap strokes as dots | 📋 | One dot per stroke that player gets on current hole, above +/− buttons. No number, dots only. |
+| A6 | Default scorecard value = dash, anchored to par | 📋 | Display starts as `—`. First +/− tap moves to par+1 or par−1. Database stores nothing until tap. |
+| A7 | Bug: admin-created scorecards not showing player names | 🔨 | Currently in production. Fix in next code push. |
+| A8 | Keep gross score on round summary + history detail pages | 📋 | Drop from scorecard pill only; preserve elsewhere for "I'm curious" lookups |
+
+**Phase A exit criteria:** Scorecard reads cleaner, no duplicate displays, "Strokes" terminology consistent everywhere.
 
 ---
 
-## Phase 2 — Core Improvements
+## Phase B — Game Format Engine
 
-### Scoring & Rounds
+*The foundation. Phase C (Leaderboard), D (Blind Draw), and F (History) all depend on this.*
 
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 2.1 | Admin three-state flow | 🔨 | HIGH | State 1: no round. State 2: active scorecards view. State 3: edit mode. Suggest Teams removed for now. |
-| 2.2 | Score editing after round complete | 📋 | HIGH | Allow fixing typos on completed rounds. Dangerous-action pattern — "editing completed round" banner. |
-| 2.3 | Handicap index bulk update | ✅ | HIGH | Done May 1 — 46 players updated. 4 still need data from Dad: Gary Tobian, Gerry Heys, Norm Cavanagh, DeWaal Smith. |
-| 2.4 | Net score tiebreaker rule | ❓ | LOW | Ask Dad if there's a preferred tiebreaker when two players tie for Ball 2. |
-| 2.5 | Remove player from round mid-game | 📋 | MEDIUM | Player leaves early. Tap player chip on scorecard → "Remove from round." Scores up to that hole preserved, don't count toward team totals going forward. |
-| 2.6 | End round early | 📋 | MEDIUM | Dangerous-action modal. Partial scores saved, round marked incomplete, excluded from standings. |
-| 2.7 | Round status accuracy | 🔨 | HIGH | "Complete" only when ALL scorecards for that date are submitted. Otherwise "In Progress." |
-| 2.8 | Homepage scorecard visibility | 📋 | MEDIUM | Today's scorecards only on homepage. Yesterday's stay if still in-progress. Older rounds → History only. |
-| 2.9 | Individual player rankings on round summary | 📋 | LOW | Table below team scores showing all players ranked by gross score for the day across all teams. |
+### B.1 — Format gate & state machine
 
-### Tees
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| B1.1 | Round state machine | 📋 | States: No Round → Setup → Teams Built → **Format Chosen** → Scorecards Unlocked → Scoring → Complete |
+| B1.2 | "Format not set" home banner (admin view) | 📋 | Yellow banner when round needs format. "Choose Format" CTA opens picker. |
+| B1.3 | Scorecards locked until format chosen | 📋 | Players can build teams pre-format, but scorecard +/− buttons disabled until format locks. Polite "Waiting for Thomas to pick today's format" banner. |
+| B1.4 | Format picker UI | 📋 | Bottom sheet on mobile, modal on desktop. Five format choices. |
+| B1.5 | No defaults, no persistence | 📋 | Every round starts blank. Forces fresh choice. |
+| B1.6 | Format locks at first score | 📋 | Once any team enters a hole-1 score, format is read-only. Editing requires dangerous-action modal that warns about score recalculation. |
 
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 2.10 | White/Yellow Combo tee | ✅ | MEDIUM | Added as tee option. Using estimated rating 67.6 / slope 120 until official number obtained from pro shop. |
-| 2.11 | Combo tee official rating | ❓ | LOW | Need official course rating and slope for White/Yellow Combo from Semiahmoo pro shop scorecard. |
+### B.2 — The five formats
 
----
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| B2.1 | 2-Ball | ✅ | Existing logic. Best 2 net per hole. |
+| B2.2 | 3-Ball | 📋 | Best 3 net per hole. 4-player teams drop worst; 3-player teams all count. |
+| B2.3 | Stableford Standard | 📋 | Net-based: DB+/Bogey/Par/Birdie/Eagle/Albatross = 0/1/2/3/4/5. Team total = sum across all members. |
+| B2.4 | Stableford Modified | 📋 | Same as Standard but admin can edit point values. Saved per-round (snapshot). |
+| B2.5 | GOBS House | 📋 | Standard + −1 deduction for net double bogey or worse. |
 
-## Phase 3 — Money & Betting
+### B.3 — Per-hole overrides
 
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 3.1 | Weekly winners tracking | ❓ | HIGH | Need answers from Dad — see questions below. Infrastructure built, formula TBD. |
-| 3.2 | Hole In One pot | ❓ | MEDIUM | Accumulating pot visible in money tracker. Payout rules TBD. |
-| 3.3 | BFB pot | ❓ | MEDIUM | Need: what BFB stands for, what triggers payout, contribution per round. |
-| 3.4 | Auto-calculate winnings from scores | 💡 | HIGH | Once formula confirmed, scores go in, money comes out. No manual entry. |
-| 3.5 | Season winnings leaderboard | 💡 | MEDIUM | Total won/lost, avg per round, rounds played. Admin view + optional player view. |
-| 3.6 | Default buy-in | ✅ | HIGH | $10 per player per round, auto-applied to all players on submitted scorecards. Configurable in Settings. |
-| 3.7 | Historical 2025 win/loss import | ✅ | MEDIUM | 2025 per-round win/loss data imported from spreadsheet. |
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| B3.1 | "All scores count" hole multi-select | 📋 | Admin flags specific holes (1–18). On those holes, every team member's score contributes regardless of format. |
+| B3.2 | Net vs gross toggle | 📋 | Per-format setting. Net is default. |
+| B3.3 | Override visibility on scorecard | 📋 | Small banner appears on flagged holes: "Hole 9: all scores count" |
 
-### Questions for Dad (Money)
+### B.4 — Database changes
 
-1. How does the $10 buy-in get split? (team pot vs. Hole In One pot vs. BFB pot — exact dollar amounts)
-2. What does BFB stand for? What triggers the payout?
-3. Who wins the team money? Just 1st place? Top 2 teams?
-4. Is winning based on gross or net team score?
-5. How does the winning team split the pot? Even split among players?
-6. Does the pot carry over if nobody wins (e.g., all teams tie)?
-7. What happens to a player's buy-in if they leave mid-round?
-8. Do guests buy in the same as members?
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| B4.1 | Add `format` column to rounds table | 📋 | Enum: `2_ball`, `3_ball`, `stableford_standard`, `stableford_modified`, `gobs_house` |
+| B4.2 | Add `format_config` JSON column | 📋 | Stores point values, override holes, net/gross |
+| B4.3 | Add `format_locked_at` timestamp | 📋 | Records when first score was entered |
+| B4.4 | Backfill existing rounds as `2_ball` | 📋 | One-time migration. Database is being cleared anyway, so trivial. |
+| B4.5 | Update scoring engine to switch on format | 📋 | Single function takes (format, scores, handicaps, overrides) → team score. Each format is its own pure function. |
+
+**Phase B exit criteria:** Admin can pick any of 5 formats, scorecards behave correctly for each, scores calculate correctly, format is locked once scoring starts.
 
 ---
 
-## Phase 4 — SWAT
+## Phase C — Leaderboard Rework
 
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 4.1 | SWAT scoring engine | ❓ | UNKNOWN | Need: what SWAT stands for, full rules, how it interacts with regular scoring. |
-| 4.2 | SWAT Scramble format | ❓ | UNKNOWN | Need: scramble rules, how teams work in scramble, does it replace regular play or alternate weeks? |
+*Depends on Phase B for format-aware display.*
 
-### Questions for Dad (SWAT)
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| C1 | Team-only display during live rounds | 📋 | Remove individual leaderboard during play. Team is the unit. |
+| C2 | Row format: team name + cumulative score + "thru N" | 📋 | E.g., "Team 2 — Bill T, Bob B, Chuck B, Don D · −2 thru 7" |
+| C3 | Format-aware score display | 📋 | Stroke formats: `+2`/`−9`. Stableford: points. |
+| C4 | Tap row → round summary view | 📋 | Read-only, anyone can view. Mirrors the round summary page. |
+| C5 | Per-player dropdown in summary | 📋 | Click to expand individual hole-by-hole scores |
+| C6 | Front 9 / Back 9 / Total 18 breakdown | 📋 | Standard golf split visible in summary |
 
-1. What does SWAT stand for?
-2. How does SWAT scoring differ from regular best-2-of-4?
-3. How often do they play SWAT vs. regular format?
-4. What's a SWAT Scramble — different from regular SWAT?
-
----
-
-## Phase 5 — Admin Tools
-
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 5.1 | Played-with matrix | ✅ | MEDIUM | Desktop heatmap + mobile player-search view. Data from played_with_matrix table. |
-| 5.2 | Team recommendation engine | 💡 | LOW | Shelved — will revisit after smoke testing. Suggest balanced teams based on HC spread + played-with history. |
-| 5.3 | Weekly money summary (admin view) | ❓ | MEDIUM | Depends on 3.1. Per-round breakdown and season totals for Thomas. |
-| 5.4 | Player management | ✅ | MEDIUM | Add/deactivate/reactivate players, edit HC indexes from admin Players tab. |
-| 5.5 | Historical team viewer | ✅ | LOW | History tab — browse past rounds, who was on which team on what date. |
-| 5.6 | Admin three-state round flow | 🔨 | HIGH | See 2.1. No round → active view → edit mode. Autosave + undo toast. |
-| 5.7 | Dangerous action pattern | ✅ | HIGH | Consistent modal pattern across app: deactivate, edit completed round, end round early, move player, change HC/tee mid-round. |
+**Phase C exit criteria:** Players check leaderboard mid-round, see clean team rankings, can drill into any team's detail without editing.
 
 ---
 
-## Phase 6 — Player Profile Enhancements
+## Phase D — Blind Draw & Rainout
 
-| # | Feature | Status | Priority | Notes |
-| --- | --- | --- | --- | --- |
-| 6.1 | Season stats summary | 📋 | MEDIUM | Rounds played, avg gross, avg net, best/worst, scoring trend. |
-| 6.2 | Performance chart | 💡 | MEDIUM | Line chart of scores over time. |
-| 6.3 | Winnings/losses on profile | ❓ | LOW | Depends on 3.1. Per-player season money total and per-round history. |
-| 6.4 | Played-with stats | 📋 | LOW | Who they've played with most/least. |
-| 6.5 | Head-to-head comparisons | 💡 | LOW | "You and Bill have played together 8 times. Your team's record: 5-3." |
+*Depends on Phase B. Touches scoring engine.*
+
+### D.1 — Blind draw
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| D1.1 | Short-team designator at round setup | 📋 | "Blind Draw — applies to [holes]" badge on team card |
+| D1.2 | Mid-round dropout flow | 📋 | Admin marks player as "left at hole N." Their team plays remaining holes short. |
+| D1.3 | Round-start short team flow | 📋 | Team built with fewer than full roster. Blind draw applies to all 18 holes. |
+| D1.4 | Pending state on live leaderboard | 📋 | Short team visible with "Pending blind draw — score reveals at round end" label. No score until resolved. |
+| D1.5 | Randomizer engine | 📋 | At round-end, randomly select a player from any other team. Copy their actual scores onto short team's missing slot for affected holes. |
+| D1.6 | Multiple short teams | 📋 | Each gets independent draw. Logged note in case it becomes a problem (e.g., short team draws from another short team). |
+
+### D.2 — Rainout
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| D2.1 | 9-hole official threshold | 📋 | Round becomes "official" when any team completes 9 holes |
+| D2.2 | Sub-9 partial round handling | 📋 | Save with `partial: true` flag. Don't roll up to season stats. Decision on display/discard parked. |
+
+**Phase D exit criteria:** Short teams handled gracefully on both ends, randomizer works, partial rounds preserved without polluting stats.
+
+---
+
+## Phase E — Played-With Redesign
+
+*Independent of B/C/D. Can run in parallel.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| E1 | Egocentric view (mobile + desktop primary) | 📋 | Pick a player, see four buckets: 6+ rounds (bars), 3–5 rounds (tags), 1–2 rounds (tags), Never played (red tags) |
+| E2 | Improved sortable grid (desktop secondary) | 📋 | Linked from egocentric view as "Show full grid." 50×50 with color intensity, sort options (alphabetical, handicap, total rounds), gaps visually distinct |
+| E3 | Tap any player/cell → detail | 📋 | Shows exact count and last round together |
+| E4 | Last-played-together computed field | 📋 | New lookup against existing scores tables |
+| E5 | Season scope filter | 📋 | All-time vs. this-season toggle. Affects query. |
+
+**Phase E exit criteria:** Admin can answer "who has Bill played with?" in two taps on mobile, and "show me league-wide patterns" on desktop.
+
+---
+
+## Phase F — History & Betting Tab Split
+
+*Mostly independent. Format-aware display in Phase B helps but isn't strictly required.*
+
+### F.1 — History tab
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| F1.1 | Round summary line | 📋 | Date, format used, # teams, players per team, total players, winning team |
+| F1.2 | Expanded view: full team breakdowns | 📋 | All teams, players, final scores, glanceable without click |
+| F1.3 | Click round → full scorecards page | 📋 | Drill into past round, see every team's hole-by-hole, read-only |
+| F1.4 | Click player row in scorecard → individual round detail | 📋 | Hole-by-hole for that player on that day |
+| F1.5 | Date navigation | 📋 | Vertical list gets long across seasons. Need a date picker, season filter, or grouped-by-month view. |
+
+### F.2 — Betting tab
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| F2.1 | Per-player season summary view | 📋 | Each row: player name, rounds played, cumulative won/lost, average per round |
+| F2.2 | Click player → full per-round history | 📋 | Win/loss for each round they played that season |
+| F2.3 | Persistent season totals header strip | 📋 | Total buy-in, HiO Fund balance, BFB Fund balance (donated YTD), total paid out |
+| F2.4 | Per-round money breakdown | 📋 | Buy-in × players, HiO contribution, BFB contribution, pot, payouts |
+| F2.5 | Buy-in snapshot per round | 📋 | Default $10, but stored on round (not global setting) so historical rounds preserve their amount even if defaults change later |
+| F2.6 | Manual edits with dangerous-action modal | 📋 | Admin-only. Money disputes need fast resolution path. |
+| F2.7 | Admin-only access | 📋 | Players don't see betting tab. Don't want it getting competitive. |
+
+**Phase F exit criteria:** Dad can answer "how much has Bill won this season?" and "what's the BFB fund at?" without opening a spreadsheet.
+
+---
+
+## Phase G — Money / Payout Engine
+
+*❓ Blocked on Dad's answers. Scaffold the data model and UI now; fill in the math when his answers come back.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| G1 | Buy-in records per round per player | 📋 | Default $10 each, configurable per round, mark "didn't buy in" for guests/late arrivals |
+| G2 | Payout records per round | ❓ | Need: who wins, how much, how the pot splits |
+| G3 | Fund balance computed views | 📋 | Running totals: HiO fund, BFB fund. Computed from contributions − payouts. |
+| G4 | HiO Fund payout flow | 📋 | Manual button: "Pay out HiO Fund" creates payout record, resets fund. Logged for whenever a hole-in-one happens. |
+| G5 | BFB Fund yearly donation flow | 📋 | At end of season, admin records donation. Resets fund. |
+| G6 | Auto-calculate winnings from scores | ❓ | The end goal — scores in, money out. Blocked on team pot rules. |
+
+**Phase G exit criteria:** Dad never has to manually calculate winnings. Money math is automatic and accurate to the dollar for end-of-season BFB donation.
+
+---
+
+## Phase H — Pre-Launch Hardening
+
+*Stuff that's easy to forget but matters before going live full-time.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| H1 | Hide admin button from homepage | 📋 | URL `/admin` still accessible to those who know it. Cleaner UX, prevents players from poking admin buttons. |
+| H2 | Database backup strategy | 📋 | Daily Supabase backups. Manual export option for end-of-season snapshot. **Treated as launch-blocker for full production use.** |
+| H3 | Season open/close flow | 📋 | Admin manually closes season in Settings. Reminder banner appears as season-end approaches (Sept/Oct). Closes the BFB fund for donation. |
+| H4 | Partial round long-term decision | ❓ | Blocked on Dad's input. Display in separate section? Discard? Convert to practice? |
+| H5 | Data import for 4 weeks of historical rounds | 📋 | Once Dad fills in the spreadsheet, import script reads it and writes to Supabase. One-time job. |
+
+**Phase H exit criteria:** Dad can switch to the app exclusively without fear of data loss. League can play indefinitely without intervention.
+
+---
+
+## Phase I — Post-Launch / Nice-to-Haves
+
+*Parking lot. None of these block launch. Revisit after a few months of real-world use.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| I1 | Player profile — round history accordion | 📋 | Collapsed by default. Tap to expand. Replaces auto-displayed history. |
+| I2 | Player profile — Played With accordion | 📋 | Same pattern. Reuses Egocentric component from Phase E. |
+| I3 | Player profile — season stats summary | 📋 | Rounds played, avg gross, avg net, best/worst, scoring trend |
+| I4 | Player profile — performance chart | 💡 | Line chart of scores over time |
+| I5 | Player profile — winnings/losses | 💡 | Deferred. Don't want it competitive. May add later if Dad asks. |
+| I6 | Team recommendation engine | 💡 | Suggest balanced teams based on handicap spread + played-with history. **This is where pair-balance math lives, not in played-with view.** |
+| I7 | Custom domain | 💡 | gobsgolf.com or similar |
+| I8 | PWA install polish | 💡 | "Add to home screen" prompts |
+| I9 | SWAT format | ❓ | Blocked. Need rules from Dad. |
+| I10 | Combo tees | ❓ | Blocked. Need rules from Dad. |
 
 ---
 
 ## Open Questions for Dad
 
-| # | Question | Category | Status |
+*All collected in one place. As Dad reviews the rules document, his answers unblock items here.*
+
+| # | Question | Blocks | Source |
 | --- | --- | --- | --- |
-| Q1 | HC for Gary Tobian | Scoring | Need to ask |
-| Q2 | HC for Gerry Heys | Scoring | Need to ask |
-| Q3 | HC for Norm Cavanagh | Scoring | Need to ask |
-| Q4 | HC for DeWaal Smith | Scoring | Need to ask |
-| Q5 | How does the $10 buy-in get split? | Money | Need to ask |
-| Q6 | What does BFB stand for? Payout trigger? | Money | Need to ask |
-| Q7 | Who wins team money? 1st only or top 2? | Money | Need to ask |
-| Q8 | Gross or net for team money? | Money | Need to ask |
-| Q9 | How do winners split the pot? | Money | Need to ask |
-| Q10 | Does pot carry over on ties? | Money | Need to ask |
-| Q11 | What happens to buy-in if player leaves mid-round? | Money | Need to ask |
-| Q12 | Do guests buy in same as members? | Money | Need to ask |
-| Q13 | What does SWAT stand for? | SWAT | Need to ask |
-| Q14 | SWAT scoring rules | SWAT | Need to ask |
-| Q15 | How often SWAT vs. regular format? | SWAT | Need to ask |
-| Q16 | What is a SWAT Scramble? | SWAT | Need to ask |
-| Q17 | Official course rating + slope for White/Yellow Combo tee | Tees | Need to ask pro shop |
-| Q18 | Tiebreaker preference for best-2 net ties | Scoring | Need to ask |
-| Q19 | Do they ever play 9 holes instead of 18? | Format | Need to ask |
-| Q20 | Do they ever do shotgun starts? | Format | Need to ask |
-| Q21 | What defines a season — calendar year or manual? | Scoring | Need to ask |
+| Q1 | "Use handicaps for first 8 holes" — what does this mean exactly? | Affects every round's net calc | Rules doc Section 2 |
+| Q2 | Who wins the team pot? 1st place only or top 2? | G2, G6 | Rules doc Section 8 |
+| Q3 | Gross or net for team pot winner? | G2, G6 | Rules doc Section 8 |
+| Q4 | How does winning team split the pot? | G2 | Rules doc Section 8 |
+| Q5 | Does the pot carry over on ties? | G2 | Rules doc Section 8 |
+| Q6 | What happens to buy-in if player leaves mid-round? | G1 | Rules doc Section 8 |
+| Q7 | Do guests buy in same as members? | G1 | Rules doc Section 8 |
+| Q8 | Partial round (under 9 holes) — discard or save separately? | H4 | Rules doc Section 7 |
+| Q9 | Handicap data for 4 missing players (DeWaal S, Gary T, Gerry H, Norm C) | Phase A onwards | Players Reference sheet |
+| Q10 | What does SWAT stand for? Rules? | I9 | Rules doc Section 10 |
+| Q11 | What is a SWAT Scramble? | I9 | Rules doc Section 10 |
+| Q12 | How do combo tees work? | I10 | Original feedback |
 
 ---
 
 ## Open Design / Technical Decisions
 
+*Things we've parked but not lost.*
+
 | # | Decision | Status |
 | --- | --- | --- |
-| D1 | Admin access protection — URL-only vs. real login | Undecided |
-| D2 | Can non-admin scorekeepers edit scores after submission? | Undecided |
-| D3 | Historical data import — import all past seasons or start fresh? | Undecided |
-| D4 | Leaderboard scope — all-time vs. current season vs. toggle | Undecided |
-| D5 | Deactivated players — show or hide in played-with matrix and history? | Undecided |
-| D6 | Homepage scorecard persistence window — 24hrs after round date? | Undecided |
-| D7 | If player removed mid-round, do partial scores count toward team total? | Decided: no, scores preserved but excluded from team totals going forward |
-| D8 | Recommendation engine team balancing — HC, played-with, or both? | Undecided — shelved |
-| D9 | Maximum team size enforcement | Undecided |
+| D1 | Admin access protection — URL-only vs. real login | URL-only for now. PIN gate logged for future. |
+| D2 | Default-to-par scorecard alternative | Logged. May revisit if dash interaction confuses players. |
+| D3 | Pre-format-lock scoring (Option B) | Rejected. Logged in case Option A creates friction. |
+| D4 | Multiple short teams in one round | Independent draws. Watch for edge cases. |
+| D5 | Compare-two-players feature | Not in current scope. Logged. |
+| D6 | Played-with season scope toggle | In Phase E. Default to "this season." |
 
 ---
 
-## Parking Lot (Not Scoped Yet)
+## Decisions Locked
 
-* Custom domain ([gobsgolf.com](http://gobsgolf.com))
-* PWA "Add to Home Screen" polish
-* Push notifications for round reminders
-* Tournament bracket logic
-* Handicap calculation engine (beyond simple CH — track differentials, rolling average)
-* Multiple courses (if they ever play somewhere besides Semiahmoo)
-* Player photos / avatars
-* Dark mode
-* Season start/end controls for admin
+*Everything below is settled. Don't relitigate without explicit conversation.*
+
+- **Format gate:** Admin must pick fresh every round. No defaults, no persistence between rounds. Forced choice prevents wrong-format scoring.
+- **Format authority:** Admin only. Players cannot pick or change.
+- **Scorecard pre-format:** Locked until format chosen. Display "Waiting for format" message.
+- **Stat display drop:** Gross removed from scorecard top pill. Kept everywhere else.
+- **Strokes terminology:** Replaces all "CH" / "HC" / "HCP" labels app-wide.
+- **Strokes display:** Dots, no number, above +/− buttons.
+- **Default scorecard value:** Dash with par-anchored +/−. Database null until first tap.
+- **Blind draw timing:** Resolves after round finalized, not at start.
+- **Blind draw eligibility:** Random pick from any other team's player.
+- **Blind draw drawn-player effect:** Original team unaffected; scores copied to short team only.
+- **9-hole minimum:** Round official at 9. Sub-9 saved as partial.
+- **One format per day, league-wide:** Different foursomes don't play different formats simultaneously.
+- **Money allocation:** $1 HiO + $2 BFB + $7 team pot (default $10 buy-in).
+- **BFB:** Blaine Food Bank, donated yearly at season end.
+- **History/Betting tab split:** Two tabs. History = game performance. Betting = financial.
+- **Played-with primary view:** Egocentric (one player at a time) on mobile + desktop. Improved grid as desktop secondary.
+- **Pair-level handicap balance:** Not a thing. Balance is team-level. Belongs in team recommendation engine (I6), not played-with.
+- **Player money on profile:** Deferred. Don't want it competitive.
+- **Admin button on homepage:** Hide for launch. URL `/admin` still works.
 
 ---
 
 ## Session Log
 
+*High-level milestones for context.*
+
 | Date | What got done |
 | --- | --- |
-| Apr 21 | Phase 0 complete — accounts, tools, deploy |
-| Apr 21-27 | Schema, seed data, core app with Gemini |
-| Apr 27 (evening) | Fixed tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary, nav cleanup |
-| May 1 | Admin panel redesign (navy/green design system), 2-ball indicator, tie handling, dangerous action pattern, played-with matrix, history tab, player management, 7 new players added, 46 HC indexes updated, Yellow tee yardages corrected, White/Yellow Combo tee added, date picker UTC bug fixed, toggle double-fire bug fixed, Claude Code workflow established |
+| Apr 21 | Phase 0 — accounts, tools, deploy infrastructure |
+| Apr 21–27 | Schema, seed data, core app with Gemini |
+| Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
+| May 1 | Updated rosters, mobile redesign, dangerous-action pattern, played-with v1, history tab v1 |
+| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. |
+
+---
+
+*This roadmap is the canonical "what to build" document. Companion file `GOBS_Game_Rules_v1.docx` is the canonical "how scoring works" document. When in doubt about scope, check this file. When in doubt about scoring logic, check that one.*
