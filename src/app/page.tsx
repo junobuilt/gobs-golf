@@ -77,8 +77,9 @@ export default function HomePage() {
             rps?.forEach((rp: any) => {
               const tNum = rp.team_number;
               if (!tNum) return;
+              const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
               if (!teamMap[tNum]) teamMap[tNum] = { players: [], hasScores: false };
-              teamMap[tNum].players.push(rp.players?.display_name || rp.players?.full_name || "?");
+              teamMap[tNum].players.push(playerRow?.display_name || playerRow?.full_name || "?");
               if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
             });
 
