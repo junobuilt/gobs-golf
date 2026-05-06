@@ -27,7 +27,7 @@ Consult these at the start of any session:
 - **[GOBS_Game_Rules_v1.pdf](./GOBS_Game_Rules_v1.pdf)** — source of truth for
   *how* scoring works. Game formats, handicap application, blind draw,
   money allocation. Read before changing scoring logic or display.
-
+- **CLAUDE_PROMPT_TEMPLATE.md — boilerplate for Claude Code prompts. Use this structure for any non-trivial task. Adapt the specifics, keep the gates.
 ---
 
 ## Working principles for this project
