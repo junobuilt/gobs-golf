@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "snapshot:b2": "tsx tests/snapshots/snapshot-b2.mjs",
     "snapshot:b3": "tsx tests/snapshots/snapshot-b3.mjs",
-    "snapshot:b4": "tsx tests/snapshots/snapshot-b4.mjs"
+    "snapshot:b4": "tsx tests/snapshots/snapshot-b4.mjs",
+    "snapshot:b5": "tsx tests/snapshots/snapshot-b5.mjs"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.15.0",

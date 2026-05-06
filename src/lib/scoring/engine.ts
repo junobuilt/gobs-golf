@@ -17,8 +17,8 @@ function defaultBestN(format: Format): number {
 
 function computeBestNHole(input: HoleInput): HoleResult {
   const { hole, players, formatConfig, manualContributors } = input;
-  const bestN = formatConfig.best_n ?? defaultBestN(input.format);
   const basis = formatConfig.basis;
+  const isOverrideHole = (formatConfig.override_holes ?? []).includes(hole.holeNumber);
 
   const perPlayer: PlayerHoleResult[] = players.map(p => {
     const handicapStrokes = getHandicapStrokes(p.courseHandicap, hole.strokeIndex);
@@ -33,52 +33,63 @@ function computeBestNHole(input: HoleInput): HoleResult {
     };
   });
 
+  const valueOf = (pp: PlayerHoleResult) =>
+    basis === "gross" ? pp.grossScore : pp.netScore;
+
   let contributingPlayerIds: string[] = [];
+  let countIsValid = false;
 
-  if (manualContributors) {
-    contributingPlayerIds = manualContributors;
+  if (isOverrideHole) {
+    // Override wins over manualContributors. Every player with a non-null
+    // score on the chosen basis contributes — reduces best-N to "best-all"
+    // for this hole. format_config.override_holes is a per-round admin
+    // decision (e.g., "all scores count on holes 9 and 18").
+    contributingPlayerIds = perPlayer
+      .filter(p => valueOf(p) != null)
+      .map(p => p.playerId);
+    countIsValid = contributingPlayerIds.length > 0;
   } else {
-    // Tie-breaking rule: when player scores tie for a contributing position, the
-    // player passed first in input order is chosen. Callers must pass players in
-    // their preferred tie-resolution order. Stable sort preserves input order
-    // for equal compare values.
-    const candidates = perPlayer
-      .map((pp, idx) => ({
-        playerId: pp.playerId,
-        sortValue: basis === "gross" ? pp.grossScore : pp.netScore,
-        idx,
-      }))
-      .filter(c => c.sortValue != null) as Array<{
-        playerId: string;
-        sortValue: number;
-        idx: number;
-      }>;
-
-    candidates.sort((a, b) => a.sortValue - b.sortValue || a.idx - b.idx);
-
-    if (candidates.length >= bestN) {
-      contributingPlayerIds = candidates.slice(0, bestN).map(c => c.playerId);
+    // bestN is computed lazily here so it isn't evaluated on override holes
+    // (defaultBestN throws for non-best-N formats; we don't want a dead call).
+    const bestN = formatConfig.best_n ?? defaultBestN(input.format);
+    if (manualContributors) {
+      contributingPlayerIds = manualContributors;
+    } else {
+      // Tie-breaking rule: when player scores tie for a contributing
+      // position, the player passed first in input order is chosen.
+      // Callers must pass players in their preferred tie-resolution order.
+      // Stable sort preserves input order for equal compare values.
+      const candidates = perPlayer
+        .map((pp, idx) => ({ playerId: pp.playerId, sortValue: valueOf(pp), idx }))
+        .filter(c => c.sortValue != null) as Array<{
+          playerId: string;
+          sortValue: number;
+          idx: number;
+        }>;
+      candidates.sort((a, b) => a.sortValue - b.sortValue || a.idx - b.idx);
+      if (candidates.length >= bestN) {
+        contributingPlayerIds = candidates.slice(0, bestN).map(c => c.playerId);
+      }
     }
+    countIsValid = contributingPlayerIds.length === bestN;
   }
 
   let teamScore: number | null = null;
-  if (contributingPlayerIds.length === bestN) {
+  if (countIsValid) {
     const vals = contributingPlayerIds.map(id => {
       const pp = perPlayer.find(p => p.playerId === id);
-      if (!pp) return null;
-      return basis === "gross" ? pp.grossScore : pp.netScore;
+      return pp ? valueOf(pp) : null;
     });
     if (vals.every(v => v != null)) {
       teamScore = (vals as number[]).reduce((sum, v) => sum + v, 0);
-    } else {
-      teamScore = null;
-      // Manual override pointed at a player without a score; team score not
-      // computable for this hole.
     }
+    // else: a contributor's score is null (manual override pointed at an
+    // unscored player) — team score not computable.
   }
 
   for (const pp of perPlayer) {
-    pp.isContributing = contributingPlayerIds.includes(pp.playerId);
+    pp.isContributing =
+      teamScore != null && contributingPlayerIds.includes(pp.playerId);
   }
 
   return {
@@ -153,6 +164,9 @@ function computeStablefordHole(input: HoleInput, table: StablefordPointTable): H
   const { hole, players } = input;
   // manualContributors is ignored for Stableford — every player who scored
   // contributes to the team total; there is no Ball-1/Ball-2 selection.
+  // format_config.override_holes is also a no-op for Stableford: every
+  // player already contributes, so an "all scores count" override changes
+  // nothing. The override only affects best-N format selection.
 
   const perPlayer: PlayerHoleResult[] = players.map(p => {
     const handicapStrokes = getHandicapStrokes(p.courseHandicap, hole.strokeIndex);
@@ -207,11 +221,10 @@ export function computeRoundResult(input: RoundInput): RoundResult {
   let holesScored = 0;
   let anyTeamScore = false;
 
-  // teamParAtScored is a stroke-play concept (par × best_n contributing scores).
-  // It's meaningful for 2-Ball / 3-Ball and stays at 0 for Stableford formats,
-  // which are points-based and have no team-level "par" reference.
+  // teamParAtScored is a stroke-play concept (par × number of contributing
+  // scores). It's meaningful for 2-Ball / 3-Ball and stays at 0 for Stableford
+  // formats, which are points-based and have no team-level "par" reference.
   const isBestN = format === "2_ball" || format === "3_ball";
-  const bestN = isBestN ? (formatConfig.best_n ?? defaultBestN(format)) : 0;
 
   for (const hole of holes) {
     const holeInput: HoleInput = {
@@ -230,7 +243,11 @@ export function computeRoundResult(input: RoundInput): RoundResult {
 
     if (result.teamScore != null) {
       teamScoreTotal += result.teamScore;
-      if (isBestN) teamParAtScored += hole.par * bestN;
+      // par × number of contributing scores. Equals par × bestN on normal
+      // holes (where contributingPlayerIds.length === bestN by construction)
+      // and par × (count of non-null scorers) on override holes — the par
+      // reference scales with the number of scores actually counting.
+      if (isBestN) teamParAtScored += hole.par * result.contributingPlayerIds.length;
       holesScored++;
       anyTeamScore = true;
     }
