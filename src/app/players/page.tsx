@@ -87,11 +87,11 @@ export default function PlayersPage() {
                 {player.handicap_index !== null ? (
                   <>
                     <strong>{player.handicap_index}</strong>
-                    HCP
+                    Strokes
                   </>
                 ) : (
                   <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                    No HCP
+                    No Strokes
                   </span>
                 )}
               </div>

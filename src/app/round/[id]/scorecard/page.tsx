@@ -408,11 +408,11 @@ export default function ScorecardPage() {
                 <div>
                   <span style={{ fontWeight: 900, fontSize: "1.2rem", color: "#1e293b" }}>{rp.display_name}</span>
                   <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>
-                    HCP Index: {rp.handicap_index ?? "Not on file"}
+                    Handicap Index: {rp.handicap_index ?? "Not on file"}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>CH</span>
+                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>Strokes</span>
                   <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#0c3057" }}>
                     {rp.course_handicap !== null ? rp.course_handicap : "?"}
                   </span>
@@ -432,7 +432,7 @@ export default function ScorecardPage() {
                     <input
                       type="number"
                       step="0.1"
-                      placeholder="Enter HC index"
+                      placeholder="Enter Strokes index"
                       value={tempHandicaps[rp.id] ?? ""}
                       onChange={e => setTempHandicaps(prev => ({ ...prev, [rp.id]: e.target.value }))}
                       style={{
@@ -523,27 +523,14 @@ export default function ScorecardPage() {
       {/* Team score summary bar */}
       {scoredHoles > 0 && (
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          <div style={{ flex: 1, background: "#0c3057", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
-            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Gross</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 900 }}>
-              {teamGross}
-              <span style={{ fontSize: "0.7rem", fontWeight: 600, opacity: 0.7, marginLeft: "4px" }}>
-                ({teamGross - teamPar >= 0 ? "+" : ""}{teamGross - teamPar})
-              </span>
-            </div>
-          </div>
           <div style={{ flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
             <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Net</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 900 }}>
+            <div style={{ fontSize: "2rem", fontWeight: 900 }}>
               {teamNet}
-              <span style={{ fontSize: "0.7rem", fontWeight: 600, opacity: 0.7, marginLeft: "4px" }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, opacity: 0.7, marginLeft: "6px" }}>
                 ({teamNet - teamPar >= 0 ? "+" : ""}{teamNet - teamPar})
               </span>
             </div>
-          </div>
-          <div style={{ background: "#f8fafc", borderRadius: "12px", padding: "10px 14px", textAlign: "center", border: "1px solid #e2e8f0", minWidth: "60px" }}>
-            <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>Holes</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 900, color: "#1e293b" }}>{scoredHoles}</div>
           </div>
         </div>
       )}
@@ -638,12 +625,9 @@ export default function ScorecardPage() {
                 )}
               </div>
               <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                <span>CH: {rp.course_handicap ?? "?"}</span>
+                <span>Strokes: {rp.course_handicap ?? "?"}</span>
                 {teeColor && (
                   <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
-                )}
-                {hcpStrokes > 0 && (
-                  <span style={{ color: "#1e40af" }}>({hcpStrokes} stroke{hcpStrokes > 1 ? "s" : ""})</span>
                 )}
                 {gross != null && net != null && net !== gross && (
                   <span style={{ color: "#0c3057" }}>Net: {net}</span>
@@ -655,16 +639,23 @@ export default function ScorecardPage() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "15px" }} onClick={e => e.stopPropagation()}>
               <button
-                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) - 1)}
+                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || (holeInfo?.par ?? 4)) - 1)}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
               >
                 −
               </button>
-              <div style={{ fontSize: "1.8rem", fontWeight: 900, minWidth: "35px", textAlign: "center" }}>
-                {scores[rp.id]?.[currentHole] || "—"}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: "35px" }}>
+                <div style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center", marginBottom: "2px" }}>
+                  {Array.from({ length: hcpStrokes }).map((_, i) => (
+                    <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
+                  ))}
+                </div>
+                <div style={{ fontSize: "1.8rem", fontWeight: 900, textAlign: "center" }}>
+                  {scores[rp.id]?.[currentHole] || "—"}
+                </div>
               </div>
               <button
-                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || 4) + 1)}
+                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || (holeInfo?.par ?? 4)) + 1)}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
               >
                 +
@@ -673,34 +664,6 @@ export default function ScorecardPage() {
           </div>
         );
       })}
-
-      {/* Best 2 for this hole */}
-      {(() => {
-        const best2Gross = getBest2ForHole(currentHole, "gross");
-        const best2Net = getBest2ForHole(currentHole, "net");
-        if (best2Gross === null) return null;
-        const holePar = (currentHoleInfo?.par || 4) * 2;
-        return (
-          <div style={{
-            background: "#f0f9ff", borderRadius: "12px", padding: "10px 14px",
-            border: "1px solid #bae6fd", marginTop: "4px", marginBottom: "4px",
-            display: "flex", justifyContent: "space-around", textAlign: "center",
-          }}>
-            <div>
-              <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#0c3057", textTransform: "uppercase" }}>Best 2 Gross</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 900, color: "#0c3057" }}>
-                {best2Gross} <span style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.7 }}>({best2Gross - holePar >= 0 ? "+" : ""}{best2Gross - holePar})</span>
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: "0.6rem", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Best 2 Net</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 900, color: "#1e40af" }}>
-                {best2Net} <span style={{ fontSize: "0.75rem", fontWeight: 600, opacity: 0.7 }}>({(best2Net || 0) - holePar >= 0 ? "+" : ""}{(best2Net || 0) - holePar})</span>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Tap hint when scores are entered */}
       {countingIds.length >= 2 && !tiedForBall1 && !tiedForBall2 && (

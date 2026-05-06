@@ -248,7 +248,7 @@ export default function Players({ players, onRefresh }: Props) {
                   ) : (
                     <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
                       {p.display_name ? `${p.display_name} · ` : ""}
-                      {p.handicap_index != null ? `HC ${p.handicap_index}` : "No HC"}
+                      {p.handicap_index != null ? `Strokes ${p.handicap_index}` : "No Strokes"}
                     </div>
                   )}
                 </div>
@@ -268,7 +268,7 @@ export default function Players({ players, onRefresh }: Props) {
                       onClick={() => startEditHC(p)}
                       style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.navy, fontWeight: 600, textDecoration: "underline" }}
                     >
-                      {p.handicap_index == null ? "Add HC" : "Edit HC"}
+                      {p.handicap_index == null ? "Add Strokes" : "Edit Strokes"}
                     </button>
                   )}
                   {p.is_active ? (
@@ -333,7 +333,7 @@ export default function Players({ players, onRefresh }: Props) {
                     display: "inline-block", padding: "2px 8px", borderRadius: "999px",
                     background: "#fef3c7", color: "#92400e",
                     fontSize: "0.72rem", fontWeight: 700,
-                  }}>No HC</span>
+                  }}>No Strokes</span>
                 )}
               </div>
 
@@ -355,7 +355,7 @@ export default function Players({ players, onRefresh }: Props) {
                   onClick={() => isEditing ? cancelEditHC(p.id) : startEditHC(p)}
                   style={actionBtnStyle(C.navy)}
                 >
-                  {p.handicap_index == null && !isEditing ? "Add HC" : isEditing ? "Cancel" : "Edit HC"}
+                  {p.handicap_index == null && !isEditing ? "Add Strokes" : isEditing ? "Cancel" : "Edit Strokes"}
                 </button>
                 {p.is_active ? (
                   <button
