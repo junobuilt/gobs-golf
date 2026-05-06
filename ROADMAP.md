@@ -25,14 +25,14 @@
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| A1 | Remove duplicate team gross/net at bottom of scorecard | 📋 | Keep only the top scorecard pill. Drop gross from the top pill entirely; show only net. |
-| A2 | Score format: big number + small `(+/−N)` | 📋 | Big number = team net score, parenthetical delta to the right |
-| A3 | Remove duplicate "Hole 1" indicator | 📋 | Hole label appears once, not twice |
-| A4 | Rename "CH" / "HC" / "HCP" → "Strokes" | 📋 | Apply across scorecard, player tab, profile, admin players tab |
-| A5 | Show handicap strokes as dots | 📋 | One dot per stroke that player gets on current hole, above +/− buttons. No number, dots only. |
-| A6 | Default scorecard value = dash, anchored to par | 📋 | Display starts as `—`. First +/− tap moves to par+1 or par−1. Database stores nothing until tap. |
+| A1 | Remove duplicate team gross/net at bottom of scorecard | ✅ | Keep only the top scorecard pill. Drop gross from the top pill entirely; show only net. |
+| A2 | Score format: big number + small `(+/−N)` | ✅ | Big number = team net score, parenthetical delta to the right |
+| A3 | Remove duplicate "Hole 1" indicator | ✅ | Hole label appears once, not twice |
+| A4 | Rename "CH" / "HC" / "HCP" → "Strokes" | ✅ | Apply across scorecard, player tab, profile, admin players tab |
+| A5 | Show handicap strokes as dots | ✅ | One dot per stroke that player gets on current hole, above +/− buttons. No number, dots only. |
+| A6 | Default scorecard value = dash, anchored to par | ✅ | Display starts as `—`. First +/− tap moves to par+1 or par−1. Database stores nothing until tap. |
 | A7 | Bug: admin-created scorecards not showing player names | ✅ | Currently in production. Fix in next code push. |
-| A8 | Keep gross score on round summary + history detail pages | 📋 | Drop from scorecard pill only; preserve elsewhere for "I'm curious" lookups |
+| A8 | Keep gross score on round summary + history detail pages | ✅ | Drop from scorecard pill only; preserve elsewhere for "I'm curious" lookups |
 
 **Phase A exit criteria:** Scorecard reads cleaner, no duplicate displays, "Strokes" terminology consistent everywhere.
 
@@ -298,7 +298,7 @@
 | Apr 21–27 | Schema, seed data, core app with Gemini |
 | Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
 | May 1 | Updated rosters, mobile redesign, dangerous-action pattern, played-with v1, history tab v1 |
-| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. Fixed navigation trap on empty/abandoned rounds in admin RoundSetup. Follow-up: RoundSetup useEffect dep on `allPlayers` reference re-runs `loadRoundForDate` unnecessarily when parent re-creates the array — minor perf, separate ticket. Follow-up: `goToTeams` does delete-then-insert on `round_players` without a transaction — failed insert loses all team assignments, separate ticket. |
+| May 5 | Major feedback consolidation. Locked decisions on game format engine, blind draw, leaderboard rework, history/betting split, played-with redesign. Rules doc + historical data spreadsheet drafted. Roadmap rebuilt. Fixed A7 home-page team-card names — follow-up: same Supabase array-vs-object pattern likely affects History.tsx, scorecard/page.tsx, summary/page.tsx; needs its own ticket. Fixed navigation trap on empty/abandoned rounds in admin RoundSetup. Follow-up: RoundSetup useEffect dep on `allPlayers` reference re-runs `loadRoundForDate` unnecessarily when parent re-creates the array — minor perf, separate ticket. Follow-up: `goToTeams` does delete-then-insert on `round_players` without a transaction — failed insert loses all team assignments, separate ticket. Shipped Phase A scorecard UI cleanup: A1, A2, A3, A4, A5, A6, A8. Follow-up A4-extended: leftover CH/HC/HCP instances on leaderboard, round/new, summary, and admin RoundSetup tab — separate ticket. |
 
 ---
 
