@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { roundNeedsFormat, defaultConfigFor } from "@/lib/format/helpers";
+import { roundNeedsFormat, isFormatLocked, defaultConfigFor } from "@/lib/format/helpers";
 import { FORMAT_ORDER } from "@/lib/format/copy";
 
 describe("roundNeedsFormat", () => {
@@ -17,6 +17,16 @@ describe("roundNeedsFormat", () => {
 
   it("returns false when round is complete (even with null format)", () => {
     expect(roundNeedsFormat({ format: null, is_complete: true })).toBe(false);
+  });
+});
+
+describe("isFormatLocked", () => {
+  it("returns false when round has null format_locked_at", () => {
+    expect(isFormatLocked({ format_locked_at: null })).toBe(false);
+  });
+
+  it("returns true when format_locked_at holds a timestamp", () => {
+    expect(isFormatLocked({ format_locked_at: "2026-05-07T17:00:00Z" })).toBe(true);
   });
 });
 

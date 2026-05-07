@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { computeRoundResult, computePlayerRoundTotal } from "@/lib/scoring";
-import type { HoleInfo } from "@/lib/scoring";
+import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
 
 interface PlayerResult {
   display_name: string;
@@ -39,13 +39,24 @@ export default function RoundSummaryPage() {
       // Get round info
       const { data: round } = await supabase
         .from("rounds")
-        .select("played_on, is_complete")
+        .select("played_on, is_complete, format, format_config")
         .eq("id", roundId)
         .single();
 
       if (round) {
         setRoundDate(round.played_on);
         setIsComplete(round.is_complete);
+      }
+
+      // TD6: read format from rounds.format / rounds.format_config rather
+      // than hardcoding 2-Ball. Display labels in this view still say
+      // "Best 2" — accurate for 2_ball/3_ball, less so for stableford
+      // formats; that's a separate display ticket.
+      const roundFormat = (round?.format ?? null) as Format | null;
+      const roundFormatConfig = (round?.format_config ?? null) as FormatConfig | null;
+      if (!roundFormat || !roundFormatConfig) {
+        setLoading(false);
+        return;
       }
 
       // Get all players in this round with their data
@@ -141,14 +152,14 @@ export default function RoundSummaryPage() {
         }));
 
         const grossResult = computeRoundResult({
-          format: "2_ball",
-          formatConfig: { basis: "gross", best_n: 2, override_holes: [] },
+          format: roundFormat,
+          formatConfig: { ...roundFormatConfig, basis: "gross" },
           holes,
           players: playersForEngine,
         });
         const netResult = computeRoundResult({
-          format: "2_ball",
-          formatConfig: { basis: "net", best_n: 2, override_holes: [] },
+          format: roundFormat,
+          formatConfig: { ...roundFormatConfig, basis: "net" },
           holes,
           players: playersForEngine,
         });

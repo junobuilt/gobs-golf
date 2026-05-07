@@ -7,6 +7,7 @@ import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatNotSetBanner from "@/components/format/FormatNotSetBanner";
+import FormatChip from "@/components/format/FormatChip";
 import { roundNeedsFormat } from "@/lib/format/helpers";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format } from "@/lib/scoring/types";
@@ -41,6 +42,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [existingRoundId, setExistingRoundId] = useState<number | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [roundFormat, setRoundFormat] = useState<Format | null>(null);
+  const [roundFormatLockedAt, setRoundFormatLockedAt] = useState<string | null>(null);
   const [teamScoreStatus, setTeamScoreStatus] = useState<Record<number, TeamScoreStatus>>({});
   const [maxTeams, setMaxTeams] = useState(8);
   const [viewMode, setViewMode] = useState<ViewMode>("none");
@@ -77,6 +79,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     setExistingRoundId(null);
     setIsRoundComplete(false);
     setRoundFormat(null);
+    setRoundFormatLockedAt(null);
     setRoster([]);
     setTeams({});
     setMaxTeams(8);
@@ -88,7 +91,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
     const { data: rounds } = await supabase
-      .from("rounds").select("id, is_complete, format").eq("played_on", date)
+      .from("rounds").select("id, is_complete, format, format_locked_at").eq("played_on", date)
       .order("created_at", { ascending: false }).limit(1);
 
     if (!rounds || rounds.length === 0) return;
@@ -97,6 +100,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     setExistingRoundId(round.id);
     setIsRoundComplete(round.is_complete);
     setRoundFormat((round.format ?? null) as Format | null);
+    setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
 
     const { data: rps } = await supabase
       .from("round_players").select("player_id, team_number").eq("round_id", round.id);
@@ -483,6 +487,17 @@ export default function RoundSetup({ allPlayers }: Props) {
               roundId={existingRoundId}
               onChosen={() => loadRoundForDate(selectedDate)}
             />
+          )}
+
+          {existingRoundId && roundFormat !== null && (
+            <div style={{ marginBottom: 16 }}>
+              <FormatChip
+                roundId={existingRoundId}
+                currentFormat={roundFormat}
+                formatLocked={roundFormatLockedAt !== null}
+                onChange={() => loadRoundForDate(selectedDate)}
+              />
+            </div>
           )}
 
           <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "14px" }}>

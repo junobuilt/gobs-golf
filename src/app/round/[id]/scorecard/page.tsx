@@ -10,7 +10,7 @@ import {
   computeRoundResult,
   getHandicapStrokes,
 } from "@/lib/scoring";
-import type { HoleInfo as EngineHoleInfo, Format } from "@/lib/scoring";
+import type { HoleInfo as EngineHoleInfo, Format, FormatConfig } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 
 // --- TYPES ---
@@ -57,6 +57,8 @@ export default function ScorecardPage() {
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(true);
   const [roundFormat, setRoundFormat] = useState<Format | null>(null);
+  const [roundFormatConfig, setRoundFormatConfig] = useState<FormatConfig | null>(null);
+  const [roundFormatLockedAt, setRoundFormatLockedAt] = useState<string | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [saving, setSaving] = useState(false);
   const [endRoundModal, setEndRoundModal] = useState(false);
@@ -75,11 +77,13 @@ export default function ScorecardPage() {
     async function load() {
       const { data: roundRow } = await supabase
         .from("rounds")
-        .select("format, is_complete")
+        .select("format, format_config, format_locked_at, is_complete")
         .eq("id", roundId)
         .maybeSingle();
       if (roundRow) {
         setRoundFormat((roundRow.format ?? null) as Format | null);
+        setRoundFormatConfig((roundRow.format_config ?? null) as FormatConfig | null);
+        setRoundFormatLockedAt((roundRow.format_locked_at ?? null) as string | null);
         setIsRoundComplete(!!roundRow.is_complete);
       }
 
@@ -198,6 +202,20 @@ export default function ScorecardPage() {
     }
   };
 
+  const ensureFormatLocked = async () => {
+    if (roundFormatLockedAt !== null) return;
+    const { data } = await supabase
+      .from("rounds")
+      .update({ format_locked_at: new Date().toISOString() })
+      .eq("id", roundId)
+      .is("format_locked_at", null)
+      .select("format_locked_at")
+      .maybeSingle();
+    if (data?.format_locked_at) {
+      setRoundFormatLockedAt(data.format_locked_at as string);
+    }
+  };
+
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
@@ -216,6 +234,11 @@ export default function ScorecardPage() {
     } else {
       await supabase.from("scores").insert({ round_player_id: rpId, hole_number: hole, strokes });
     }
+
+    // First successful score for this round locks the format. Idempotent:
+    // skipped on subsequent calls via the local short-circuit, and the DB
+    // UPDATE guards with `WHERE format_locked_at IS NULL` as a safety net.
+    void ensureFormatLocked();
   };
 
   const removePlayer = async (rpId: number) => {
@@ -235,10 +258,11 @@ export default function ScorecardPage() {
   const computeHoleFor = (holeNumber: number, mode: "gross" | "net") => {
     const hole = engineHole(holeNumber);
     if (!hole) return null;
+    if (!roundFormat || !roundFormatConfig) return null;
     const override = countingOverrides[holeNumber];
     return computeHoleResult({
-      format: "2_ball",
-      formatConfig: { basis: mode, best_n: 2, override_holes: [] },
+      format: roundFormat,
+      formatConfig: { ...roundFormatConfig, basis: mode },
       hole,
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
@@ -297,8 +321,8 @@ export default function ScorecardPage() {
       manualContributors[Number(hn)] = ids.map(String);
     }
     return computeRoundResult({
-      format: "2_ball",
-      formatConfig: { basis: mode, best_n: 2, override_holes: [] },
+      format: roundFormat!,
+      formatConfig: { ...roundFormatConfig!, basis: mode },
       holes,
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),

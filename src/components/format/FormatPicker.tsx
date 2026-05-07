@@ -10,6 +10,7 @@ import { defaultConfigFor } from "@/lib/format/helpers";
 interface FormatPickerProps {
   open: boolean;
   roundId: number;
+  currentFormat?: Format | null;
   onClose: () => void;
   onSaved: (chosen: Format) => void;
 }
@@ -29,7 +30,7 @@ const C = {
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
 
-export default function FormatPicker({ open, roundId, onClose, onSaved }: FormatPickerProps) {
+export default function FormatPicker({ open, roundId, currentFormat, onClose, onSaved }: FormatPickerProps) {
   const isMobile = useIsMobile();
   const [savingFormat, setSavingFormat] = useState<Format | null>(null);
   const [errorFormat, setErrorFormat] = useState<Format | null>(null);
@@ -153,6 +154,7 @@ export default function FormatPicker({ open, roundId, onClose, onSaved }: Format
             const isSaving = savingFormat === f;
             const hasError = errorFormat === f;
             const otherSaving = savingFormat !== null && savingFormat !== f;
+            const isCurrent = currentFormat === f;
             return (
               <button
                 key={f}
@@ -164,7 +166,9 @@ export default function FormatPicker({ open, roundId, onClose, onSaved }: Format
                   padding: "14px 16px",
                   border: hasError
                     ? `1.5px solid ${C.errorBorder}`
-                    : `0.5px solid ${C.cardBorder}`,
+                    : isCurrent
+                      ? `1.5px solid ${C.navy}`
+                      : `0.5px solid ${C.cardBorder}`,
                   borderRadius: 10,
                   background: hasError ? C.errorBg : "#fff",
                   textAlign: "left",
@@ -182,6 +186,18 @@ export default function FormatPicker({ open, roundId, onClose, onSaved }: Format
                     marginBottom: 2,
                   }}>
                     {title}
+                    {isCurrent && (
+                      <span style={{
+                        marginLeft: 8,
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        color: C.navy,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}>
+                        · current
+                      </span>
+                    )}
                   </div>
                   <div style={{
                     fontSize: "0.8rem",
