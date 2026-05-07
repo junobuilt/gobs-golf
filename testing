@@ -1,0 +1,105 @@
+# GOBS Golf — Manual Test Tracker
+
+*Living document for verifying ship deploys on the live app. Update statuses as features land.*
+
+*Last updated: May 7, 2026*
+
+---
+
+## How to use this doc
+
+- Tests run on the deployed app (gobs-golf.vercel.app) on a real phone after Vercel finishes deploying
+- Mark each test:
+  - **✅ Pass** with date
+  - **❌ Fail** with date and short note (paste back to Claude for triage)
+  - **⏳ Pending** if not yet run
+- Sections are organized by phase and batch — append new sections at the bottom as work ships
+- When a phase is fully verified, the section can collapse to a single "✅ Verified [date]" summary line if you want to keep this doc lean
+
+---
+
+## Phase A — Scorecard UI Cleanup
+
+✅ **Verified May 1, 2026** — All A1–A8 items confirmed on live app.
+
+### A6 revision (par on first tap) — May 7, 2026
+
+| # | Test | Steps | Expected | Status |
+| --- | --- | --- | --- | --- |
+| A6.1 | First tap of `+` → par | Fresh round, navigate to hole 2 (par 4), tap `+` once on any player | Score displays `4` | ✅ May 7 |
+| A6.2 | First tap of `−` → par | Fresh round, hole 2 (par 4), tap `−` once on any player | Score displays `4` | ✅ May 7 |
+| A6.3 | Subsequent taps adjust normally | After first tap shows par, tap `+` → par+1; tap `−` twice → par−1 | Tap counts adjust correctly | ⏳ Sanity check on next round |
+
+### A9 — Hide BALL/Tied affordances in Stableford-family
+
+| # | Test | Steps | Expected | Status |
+| --- | --- | --- | --- | --- |
+| A9.1 | No BALL badges in Stableford | Open Stableford Standard round, view scorecard | No "BALL 1 / BALL 2" badges next to player names | ✅ May 7 |
+| A9.2 | No "Tied" badges in Stableford | Same setup, look for tie indicators | No "Tied" badges visible | ✅ May 7 |
+| A9.3 | No tie banner in Stableford | Same setup | No tie banner above player rows | ✅ May 7 |
+| A9.4 | No "tap a card to override" footer | Same setup, scroll to bottom of scorecard | Footer hint not visible | ✅ May 7 |
+| A9.5 | BALL badges still visible in 2-Ball/3-Ball | Open a 2-Ball round, view scorecard | "BALL 1 / BALL 2" badges still appear correctly | ✅ May 7 |
+
+---
+
+## Phase B — Game Format Engine
+
+### B1.6 + TD9 — Format chip on scorecard — May 7, 2026
+
+| # | Test | Steps | Expected | Status |
+| --- | --- | --- | --- | --- |
+| TD9.1 | FormatChip visible in scorecard header | Open any round with format set | Read-only chip showing format name (e.g., "Stableford Standard") above the "Hole N" header | ✅ May 7 |
+
+### B.3 — Override holes admin UI
+
+⏳ **Pending verification — Phase B.3 just shipped May 7.**
+
+| # | Test | Steps | Expected | Status |
+| --- | --- | --- | --- | --- |
+| B3.2.1 | Net default on fresh rounds | Start fresh round, open format picker after picking a format | "Net" segmented option highlighted by default | ⏳ |
+| B3.2.2 | Net mode produces normal scoring | Score a hole where a player has handicap strokes (dots visible). Confirm dots show. Note team total. | Engine subtracts handicap strokes from gross to compute net (existing behavior, unchanged) | ⏳ |
+| B3.2.3 | Gross mode toggle | Open picker, toggle to "Gross", save. Score same hole as B3.2.2. | Engine treats handicap strokes as zero. Team total may differ from net mode if any player has strokes on that hole. | ⏳ |
+| B3.2.4 | Mid-round basis change triggers modal | Lock a round (enter any score), reopen picker, change Net→Gross, tap Save | Dangerous-action modal appears: "Change scoring rules mid-round?" / "Scores will be re-totaled under the new rules." | ⏳ |
+| B3.1.1 | Override grid renders | Open picker on a 2-Ball round | 18-button grid (1–18) with hole numbers, untapped state outlined, tap turns solid blue | ⏳ |
+| B3.1.2 | "9 & 18" preset works | Tap the "9 & 18" button | Holes 9 and 18 highlight; other holes unchanged | ⏳ |
+| B3.1.3 | "Clear all" works | After selecting some holes, tap "Clear all" | All holes deselected | ⏳ |
+| B3.1.4 | Multi-select works | Tap holes 3, 7, 12 individually | All three highlight independently | ⏳ |
+| B3.1.5 | Stableford grey-out | Open picker on a Stableford Standard round | Override section renders muted/disabled with "(no effect on Stableford formats)" inline note | ⏳ |
+| B3.3.1 | Override banner on flagged hole | Set hole 9 as override on a 2-Ball round, save, navigate to hole 9 on scorecard | Yellow banner "All scores count on this hole" appears between hole header and team net pill | ⏳ |
+| B3.3.2 | No banner on non-flagged holes | From B3.3.1 setup, navigate to hole 8 or 10 | No banner visible | ⏳ |
+| B3.3.3 | No banner in Stableford even if flagged | Set hole 9 as override on a Stableford round, navigate to hole 9 | No banner appears (CC's drift decision: banner is no-op in Stableford, would mislead) | ⏳ |
+| B3.GUARD.1 | Mid-round override change triggers modal | Lock a round, reopen picker, change override holes, tap Save | Same dangerous-action modal as B3.2.4 | ⏳ |
+| B3.GUARD.2 | Modal cancel preserves state | Trigger modal as in B3.GUARD.1, tap Cancel | No changes saved; picker stays open with attempted changes intact (or closes — either is fine) | ⏳ |
+
+---
+
+## Section template for future phases
+
+Copy this block when starting a new phase verification:
+
+```markdown
+### Phase X — [name]
+
+⏳ **Pending verification — shipped [date].**
+
+| # | Test | Steps | Expected | Status |
+| --- | --- | --- | --- | --- |
+| X.1 | ... | ... | ... | ⏳ |
+```
+
+---
+
+## Failure log
+
+Track any tests that came back ❌ here, with brief notes. Once resolved, move the entry up to its phase section as ✅ with date.
+
+| Date | Test ID | Issue | Resolution |
+| --- | --- | --- | --- |
+| — | — | No failures logged yet | — |
+
+---
+
+*This is the canonical "did it actually work on the deployed app" tracker.*
+*Companion: `ROADMAP.md` — what to build.*
+*Companion: `BETTING_RULES.md` — money rules.*
+*Companion: `GOBS_Game_Rules_v1.docx` — scoring rules.*
