@@ -221,6 +221,7 @@
 | TD4 | `goToTeams` non-transactional delete-insert | 📋 | **High** | `round_players` does delete-then-insert without a transaction. Failed insert mid-flow loses all team assignments. Real data-loss risk — should be promoted to next sprint. |
 | TD6 | Hardcoded `format: "2_ball"` in scorecard / summary engine calls | 📋 | Medium | `src/app/round/[id]/scorecard/page.tsx` (lines ~227, 287) and `src/app/round/[id]/summary/page.tsx` (lines ~144, 150) pass `format: "2_ball"` and a synthetic `formatConfig` to the scoring engine. Should read from `rounds.format` / `rounds.format_config`. Currently masked because the only shipped format is 2-Ball-equivalent at the engine level; will visibly diverge once admins start picking other formats. |
 | TD7 | Stableford Modified point values edit UI | 📋 | Medium | Engine reads `format_config.point_values` (B2.4 ✅), but no admin surface exists to set them per round. Currently defaults to Stableford Standard values. Likely a small dedicated ticket — bottom sheet/modal post-pick, similar pattern to FormatPicker. |
+| TD8 | Banner button clipping on narrow phones (<414px) | 📋 | Medium | The "Choose Format" CTA inside `FormatNotSetBanner` is clipped at 375px (iPhone SE) and similar small-phone widths. Surfaced during B1.5 screenshot capture. League demographic includes older players on smaller/older phones, and the banner is the admin's primary entry point. Likely fix: stack banner contents vertically below ~414px, or shrink CTA padding. Visual-only change, no logic. |
 
 ---
 
