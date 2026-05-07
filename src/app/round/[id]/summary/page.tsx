@@ -7,6 +7,7 @@ import Link from "next/link";
 import { computeRoundResult, computePlayerRoundTotal } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
 import { getScoringBasis } from "@/lib/format/helpers";
+import { formatTeamTotal } from "@/lib/format/copy";
 
 interface PlayerResult {
   display_name: string;
@@ -34,6 +35,7 @@ export default function RoundSummaryPage() {
   const [teams, setTeams] = useState<TeamResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"gross" | "net">("gross");
+  const [roundFormat, setRoundFormat] = useState<Format | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -53,9 +55,10 @@ export default function RoundSummaryPage() {
       // than hardcoding 2-Ball. Display labels in this view still say
       // "Best 2" — accurate for 2_ball/3_ball, less so for stableford
       // formats; that's a separate display ticket.
-      const roundFormat = (round?.format ?? null) as Format | null;
+      const roundFormatLocal = (round?.format ?? null) as Format | null;
       const roundFormatConfig = (round?.format_config ?? null) as FormatConfig | null;
-      if (!roundFormat || !roundFormatConfig) {
+      setRoundFormat(roundFormatLocal);
+      if (!roundFormatLocal || !roundFormatConfig) {
         setLoading(false);
         return;
       }
@@ -164,13 +167,13 @@ export default function RoundSummaryPage() {
         }));
 
         const grossResult = computeRoundResult({
-          format: roundFormat,
+          format: roundFormatLocal,
           formatConfig: { ...roundFormatConfig, basis: "gross" },
           holes,
           players: playersForGross,
         });
         const netResult = computeRoundResult({
-          format: roundFormat,
+          format: roundFormatLocal,
           formatConfig: { ...roundFormatConfig, basis: "net" },
           holes,
           players: playersForNet,
@@ -278,7 +281,19 @@ export default function RoundSummaryPage() {
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: "1.5rem", fontWeight: 900 }}>{teamScore}</div>
+                <div style={{ fontSize: "1.5rem", fontWeight: 900 }}>
+                  {/* C3: Stableford-family gets "X pts" via helper (helper
+                      expects absolute points for these formats). Best-N
+                      (2-Ball / 3-Ball) keeps its raw absolute total — the
+                      helper's best-N mode would interpret the input as a
+                      delta vs par and render "+37" / "−5", which is NOT the
+                      summary's existing display behavior. Preserve. */}
+                  {roundFormat === "stableford_standard" ||
+                   roundFormat === "stableford_modified" ||
+                   roundFormat === "gobs_house"
+                    ? formatTeamTotal(teamScore, roundFormat)
+                    : teamScore}
+                </div>
                 <div style={{ fontSize: "0.7rem", opacity: 0.7 }}>
                   {viewMode === "gross" ? "Gross" : "Net"} (Best 2)
                 </div>

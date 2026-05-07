@@ -14,6 +14,7 @@ import type { HoleInfo as EngineHoleInfo, Format, FormatConfig } from "@/lib/sco
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
+import { formatTeamTotal } from "@/lib/format/copy";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -614,7 +615,12 @@ export default function ScorecardPage() {
           <div style={{ flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
             <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Net</div>
             <div style={{ fontSize: "2rem", fontWeight: 900 }}>
-              {teamNet === teamPar ? "E" : teamNet > teamPar ? `+${teamNet - teamPar}` : `−${teamPar - teamNet}`}
+              {/* C3: helper handles both stroke delta and Stableford "X pts".
+                  For Stableford, teamPar (teamParAtScored) is 0 by engine
+                  contract, so teamNet - teamPar collapses to teamNet (the
+                  absolute points total) — the helper's Stableford branch
+                  expects an absolute value, and this naturally provides it. */}
+              {roundFormat ? formatTeamTotal(teamNet - teamPar, roundFormat) : ""}
             </div>
           </div>
         </div>

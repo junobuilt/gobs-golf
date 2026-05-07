@@ -40,6 +40,33 @@ const STABLEFORD_STANDARD_POINTS: Record<string, number> = {
   "albatross": 5,
 };
 
+// Format-aware team total display (C3). Caller passes the natural value for
+// the format:
+//   - best-N (2_ball / 3_ball): `total` is the delta vs par. Renders "E"
+//     when zero, "+N" when positive, "−N" (Unicode U+2212) when negative.
+//   - Stableford-family: `total` is absolute team points (engine teamScore).
+//     Renders "${total} pts" with Unicode minus on negative GOBS House totals.
+//
+// Stableford and best-N have intentionally different input semantics — the
+// helper does not compute deltas, it formats them. Callers decide which value
+// is meaningful for the format and pass it in.
+export function formatTeamTotal(total: number, format: Format): string {
+  const isStableford =
+    format === "stableford_standard" ||
+    format === "stableford_modified" ||
+    format === "gobs_house";
+
+  if (isStableford) {
+    if (total < 0) return `−${-total} pts`;
+    return `${total} pts`;
+  }
+
+  // best-N stroke-delta
+  if (total === 0) return "E";
+  if (total > 0) return `+${total}`;
+  return `−${-total}`;
+}
+
 export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
   "2_ball": { basis: "net", scoring_basis: "net", best_n: 2, override_holes: [] },
   "3_ball": { basis: "net", scoring_basis: "net", best_n: 3, override_holes: [] },
