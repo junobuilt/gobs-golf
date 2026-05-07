@@ -56,7 +56,7 @@ export default function ScorecardLockNotice({ adminName = "admin" }: ScorecardLo
         lineHeight: 1.5,
         maxWidth: 320, marginLeft: "auto", marginRight: "auto",
       }}>
-        Waiting for {adminName} to pick today&apos;s format. Scoring will unlock once a format is chosen.
+        {`Waiting for ${adminName} to pick today’s format. Scoring will unlock once a format is chosen.`}
       </p>
     </div>
   );

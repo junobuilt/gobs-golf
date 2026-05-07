@@ -227,7 +227,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     setSaving(true);
     const { data: round, error } = await supabase
       .from("rounds")
-      .insert({ played_on: selectedDate, course_id: 1, format: null, format_config: null })
+      .insert({ played_on: selectedDate, course_id: 1, format: null })
       .select().single();
     if (error || !round) {
       alert("Error creating round: " + error?.message);

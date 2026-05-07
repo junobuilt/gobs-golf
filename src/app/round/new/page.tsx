@@ -147,7 +147,7 @@ export default function NewRoundPage() {
       const today = new Date().toISOString().split("T")[0];
       const { data: round, error: roundError } = await supabase
         .from("rounds")
-        .insert({ course_id: 1, played_on: today, is_complete: false, format: null, format_config: null })
+        .insert({ course_id: 1, played_on: today, is_complete: false, format: null })
         .select("id")
         .single();
 
