@@ -41,13 +41,14 @@ const STABLEFORD_STANDARD_POINTS: Record<string, number> = {
 };
 
 export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
-  "2_ball": { basis: "net", best_n: 2, override_holes: [] },
-  "3_ball": { basis: "net", best_n: 3, override_holes: [] },
-  "stableford_standard": { basis: "net", override_holes: [] },
+  "2_ball": { basis: "net", scoring_basis: "net", best_n: 2, override_holes: [] },
+  "3_ball": { basis: "net", scoring_basis: "net", best_n: 3, override_holes: [] },
+  "stableford_standard": { basis: "net", scoring_basis: "net", override_holes: [] },
   "stableford_modified": {
     basis: "net",
+    scoring_basis: "net",
     point_values: { ...STABLEFORD_STANDARD_POINTS },
     override_holes: [],
   },
-  "gobs_house": { basis: "net", override_holes: [] },
+  "gobs_house": { basis: "net", scoring_basis: "net", override_holes: [] },
 };

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { computeRoundResult, computePlayerRoundTotal } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
+import { getScoringBasis } from "@/lib/format/helpers";
 
 interface PlayerResult {
   display_name: string;
@@ -145,9 +146,20 @@ export default function RoundSummaryPage() {
         // applied per-player inside the engine via courseHandicap mapping).
         const firstTee = teamPlayers[0]?.tee_id;
         const holes = holesByTeeForEngine[firstTee] || [];
-        const playersForEngine = teamPlayers.map((rp: any) => ({
+
+        // B3.2: persistent admin scoring basis. When "gross", zero out
+        // handicaps so net == gross uniformly across formats (Stableford in
+        // particular has no internal `basis` branch — the engine always uses
+        // net there). This mirrors the same trick used in the scorecard.
+        const useGross = getScoringBasis(roundFormatConfig) === "gross";
+        const playersForGross = teamPlayers.map((rp: any) => ({
           playerId: String(rp.id),
-          courseHandicap: rp.course_handicap,
+          courseHandicap: 0,
+          grossScores: scoreMap[rp.id] || {},
+        }));
+        const playersForNet = teamPlayers.map((rp: any) => ({
+          playerId: String(rp.id),
+          courseHandicap: useGross ? 0 : rp.course_handicap,
           grossScores: scoreMap[rp.id] || {},
         }));
 
@@ -155,13 +167,13 @@ export default function RoundSummaryPage() {
           format: roundFormat,
           formatConfig: { ...roundFormatConfig, basis: "gross" },
           holes,
-          players: playersForEngine,
+          players: playersForGross,
         });
         const netResult = computeRoundResult({
           format: roundFormat,
           formatConfig: { ...roundFormatConfig, basis: "net" },
           holes,
-          players: playersForEngine,
+          players: playersForNet,
         });
 
         return {

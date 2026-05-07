@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { Format } from "@/lib/scoring/types";
+import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import FormatPicker from "./FormatPicker";
-import DangerModal from "@/app/thomas-admin/components/DangerModal";
 
 interface FormatChipProps {
   roundId: number;
   currentFormat: Format;
+  currentConfig?: FormatConfig | null;
   formatLocked: boolean;
   onChange?: () => void;
 }
@@ -24,24 +24,20 @@ const C = {
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
 
-export default function FormatChip({ roundId, currentFormat, formatLocked, onChange }: FormatChipProps) {
+export default function FormatChip({
+  roundId,
+  currentFormat,
+  currentConfig,
+  formatLocked,
+  onChange,
+}: FormatChipProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [dangerOpen, setDangerOpen] = useState(false);
 
   const editable = typeof onChange === "function";
   const { title } = FORMAT_LABELS[currentFormat];
 
   function handleTap() {
     if (!editable) return;
-    if (formatLocked) {
-      setDangerOpen(true);
-    } else {
-      setPickerOpen(true);
-    }
-  }
-
-  function handleConfirmChange() {
-    setDangerOpen(false);
     setPickerOpen(true);
   }
 
@@ -103,20 +99,12 @@ export default function FormatChip({ roundId, currentFormat, formatLocked, onCha
         )}
       </div>
 
-      {dangerOpen && (
-        <DangerModal
-          title="Change format mid-round?"
-          description={`Scores will be re-totaled under the new format.`}
-          confirmLabel="Change format"
-          onConfirm={handleConfirmChange}
-          onCancel={() => setDangerOpen(false)}
-        />
-      )}
-
       <FormatPicker
         open={pickerOpen}
         roundId={roundId}
         currentFormat={currentFormat}
+        currentConfig={currentConfig}
+        formatLocked={formatLocked}
         onClose={() => setPickerOpen(false)}
         onSaved={handlePickerSaved}
       />

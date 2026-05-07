@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { roundNeedsFormat, isFormatLocked, defaultConfigFor } from "@/lib/format/helpers";
+import {
+  roundNeedsFormat,
+  isFormatLocked,
+  defaultConfigFor,
+  getScoringBasis,
+  getOverrideHoles,
+} from "@/lib/format/helpers";
 import { FORMAT_ORDER } from "@/lib/format/copy";
 
 describe("roundNeedsFormat", () => {
@@ -67,5 +73,48 @@ describe("defaultConfigFor", () => {
     expect(a).not.toBe(b);
     a.best_n = 99;
     expect(b.best_n).toBe(2);
+  });
+
+  it("seeds scoring_basis to 'net' for every format", () => {
+    for (const f of FORMAT_ORDER) {
+      expect(defaultConfigFor(f).scoring_basis).toBe("net");
+    }
+  });
+});
+
+describe("getScoringBasis", () => {
+  it("returns 'net' for null config (backward compat for pre-B3.2 rounds)", () => {
+    expect(getScoringBasis(null)).toBe("net");
+  });
+
+  it("returns 'net' for undefined config", () => {
+    expect(getScoringBasis(undefined)).toBe("net");
+  });
+
+  it("returns 'net' when scoring_basis key is missing from config", () => {
+    expect(getScoringBasis({ basis: "net", override_holes: [] })).toBe("net");
+  });
+
+  it("returns 'gross' when scoring_basis is set to 'gross'", () => {
+    expect(getScoringBasis({ basis: "net", scoring_basis: "gross", override_holes: [] })).toBe("gross");
+  });
+
+  it("returns 'net' when scoring_basis is explicitly 'net'", () => {
+    expect(getScoringBasis({ basis: "net", scoring_basis: "net", override_holes: [] })).toBe("net");
+  });
+});
+
+describe("getOverrideHoles", () => {
+  it("returns [] for null/undefined config", () => {
+    expect(getOverrideHoles(null)).toEqual([]);
+    expect(getOverrideHoles(undefined)).toEqual([]);
+  });
+
+  it("returns [] when override_holes key is missing", () => {
+    expect(getOverrideHoles({ basis: "net" })).toEqual([]);
+  });
+
+  it("returns the array as-is when present", () => {
+    expect(getOverrideHoles({ basis: "net", override_holes: [9, 18] })).toEqual([9, 18]);
   });
 });

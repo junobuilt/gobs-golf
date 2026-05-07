@@ -7,6 +7,11 @@ export type Format =
 
 export type FormatConfig = {
   basis: "net" | "gross";
+  // Persistent admin choice for net vs gross scoring. Optional for backward
+  // compatibility with rounds saved before B3.2; treat null/undefined as "net"
+  // at read time via getScoringBasis(). The legacy `basis` field above is a
+  // per-call display switch used internally by the engine and is unrelated.
+  scoring_basis?: "net" | "gross";
   best_n?: number;
   point_values?: Record<string, number>;
   override_holes?: number[];

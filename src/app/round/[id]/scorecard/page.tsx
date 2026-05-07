@@ -13,6 +13,7 @@ import {
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
+import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -261,6 +262,10 @@ export default function ScorecardPage() {
     if (!hole) return null;
     if (!roundFormat || !roundFormatConfig) return null;
     const override = countingOverrides[holeNumber];
+    // B3.2 trick: when admin selected "gross" as the persistent scoring basis,
+    // zero out handicaps before passing to the engine. Net == gross for every
+    // format including Stableford (which has no internal `basis` branch).
+    const useGross = getScoringBasis(roundFormatConfig) === "gross";
     return computeHoleResult({
       format: roundFormat,
       formatConfig: { ...roundFormatConfig, basis: mode },
@@ -268,7 +273,7 @@ export default function ScorecardPage() {
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
         grossScore: scores[rp.id]?.[holeNumber] ?? null,
-        courseHandicap: rp.course_handicap,
+        courseHandicap: useGross ? 0 : rp.course_handicap,
       })),
       manualContributors: override ? override.map(String) : undefined,
     });
@@ -321,13 +326,14 @@ export default function ScorecardPage() {
     for (const [hn, ids] of Object.entries(countingOverrides)) {
       manualContributors[Number(hn)] = ids.map(String);
     }
+    const useGross = getScoringBasis(roundFormatConfig) === "gross";
     return computeRoundResult({
       format: roundFormat!,
       formatConfig: { ...roundFormatConfig!, basis: mode },
       holes,
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
-        courseHandicap: rp.course_handicap,
+        courseHandicap: useGross ? 0 : rp.course_handicap,
         grossScores: scores[rp.id] || {},
       })),
       manualContributors,
@@ -558,6 +564,7 @@ export default function ScorecardPage() {
   const countingIds = getCountingPlayerIds(currentHole);
   const { tiedForBall1, tiedForBall2 } = getTieInfo(currentHole);
   const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball";
+  const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
   return (
@@ -572,6 +579,7 @@ export default function ScorecardPage() {
             <FormatChip
               roundId={Number(roundId)}
               currentFormat={roundFormat}
+              currentConfig={roundFormatConfig}
               formatLocked={roundFormatLockedAt !== null}
             />
           </div>
@@ -581,6 +589,24 @@ export default function ScorecardPage() {
           PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS
         </p>
       </div>
+
+      {/* B3.3: All-scores-count banner — only fires for best-N formats since
+          Stableford ignores override_holes (every player already contributes). */}
+      {isOverrideHole && isBestNFormat && (
+        <div style={{
+          background: "#fef9e7",
+          border: "1px solid #f7e3a3",
+          borderRadius: 8,
+          padding: "8px 12px",
+          marginBottom: "12px",
+          fontSize: "0.78rem",
+          color: "#7a5a14",
+          fontWeight: 600,
+          textAlign: "center",
+        }}>
+          All scores count on this hole
+        </div>
+      )}
 
       {/* Team score summary bar */}
       {scoredHoles > 0 && (
