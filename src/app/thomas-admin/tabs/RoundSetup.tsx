@@ -6,6 +6,10 @@ import Link from "next/link";
 import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
+import FormatNotSetBanner from "@/components/format/FormatNotSetBanner";
+import { roundNeedsFormat } from "@/lib/format/helpers";
+import { useIsMobile } from "@/lib/useIsMobile";
+import type { Format } from "@/lib/scoring/types";
 
 interface Props {
   allPlayers: Player[];
@@ -25,17 +29,6 @@ const C = {
 type ViewMode = "none" | "active" | "edit";
 type TeamScoreStatus = "not_started" | "in_progress";
 
-function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    const check = () => setMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-  return mobile;
-}
-
 export default function RoundSetup({ allPlayers }: Props) {
   const isMobile = useIsMobile();
 
@@ -47,6 +40,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [teams, setTeams] = useState<Record<number, Player[]>>({});
   const [existingRoundId, setExistingRoundId] = useState<number | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
+  const [roundFormat, setRoundFormat] = useState<Format | null>(null);
   const [teamScoreStatus, setTeamScoreStatus] = useState<Record<number, TeamScoreStatus>>({});
   const [maxTeams, setMaxTeams] = useState(8);
   const [viewMode, setViewMode] = useState<ViewMode>("none");
@@ -82,6 +76,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   const loadRoundForDate = useCallback(async (date: string) => {
     setExistingRoundId(null);
     setIsRoundComplete(false);
+    setRoundFormat(null);
     setRoster([]);
     setTeams({});
     setMaxTeams(8);
@@ -93,7 +88,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
     const { data: rounds } = await supabase
-      .from("rounds").select("id, is_complete").eq("played_on", date)
+      .from("rounds").select("id, is_complete, format").eq("played_on", date)
       .order("created_at", { ascending: false }).limit(1);
 
     if (!rounds || rounds.length === 0) return;
@@ -101,6 +96,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     const round = rounds[0];
     setExistingRoundId(round.id);
     setIsRoundComplete(round.is_complete);
+    setRoundFormat((round.format ?? null) as Format | null);
 
     const { data: rps } = await supabase
       .from("round_players").select("player_id, team_number").eq("round_id", round.id);
@@ -230,7 +226,9 @@ export default function RoundSetup({ allPlayers }: Props) {
   const createRound = async () => {
     setSaving(true);
     const { data: round, error } = await supabase
-      .from("rounds").insert({ played_on: selectedDate, course_id: 1 }).select().single();
+      .from("rounds")
+      .insert({ played_on: selectedDate, course_id: 1, format: null, format_config: null })
+      .select().single();
     if (error || !round) {
       alert("Error creating round: " + error?.message);
       setSaving(false);
@@ -480,6 +478,13 @@ export default function RoundSetup({ allPlayers }: Props) {
         {statsRow}
 
         <div style={{ padding: "16px", maxWidth: "700px", margin: "0 auto", paddingBottom: "100px" }}>
+          {existingRoundId && roundNeedsFormat({ format: roundFormat, is_complete: isRoundComplete }) && (
+            <FormatNotSetBanner
+              roundId={existingRoundId}
+              onChosen={() => loadRoundForDate(selectedDate)}
+            />
+          )}
+
           <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "14px" }}>
             Today's scorecards
           </div>

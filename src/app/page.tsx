@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { getTeamColor } from "@/lib/teamColors";
+import FormatNotSetBanner from "@/components/format/FormatNotSetBanner";
+import { roundNeedsFormat } from "@/lib/format/helpers";
+import type { Format } from "@/lib/scoring/types";
 
 type TeamInfo = {
   number: number;
@@ -15,6 +18,7 @@ type RecentRound = {
   id: number;
   played_on: string;
   is_complete: boolean;
+  format: Format | null;
   isYesterday: boolean;
   teams: TeamInfo[];
   hasAnyScores: boolean;
@@ -35,74 +39,75 @@ export default function HomePage() {
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      const { count } = await supabase
-        .from("players")
-        .select("*", { count: "exact", head: true })
-        .eq("is_active", true);
-      setPlayerCount(count || 0);
+  const load = useCallback(async () => {
+    const { count } = await supabase
+      .from("players")
+      .select("*", { count: "exact", head: true })
+      .eq("is_active", true);
+    setPlayerCount(count || 0);
 
-      const today = todayStr();
-      const yesterday = yesterdayStr();
+    const today = todayStr();
+    const yesterday = yesterdayStr();
 
-      const { data: rounds } = await supabase
-        .from("rounds")
-        .select("id, played_on, is_complete")
-        .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
-        .order("played_on", { ascending: false });
+    const { data: rounds } = await supabase
+      .from("rounds")
+      .select("id, played_on, is_complete, format")
+      .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
+      .order("played_on", { ascending: false });
 
-      if (rounds) {
-        const roundsWithTeams = await Promise.all(
-          rounds.map(async (round) => {
-            // Fetch round_players including id for score lookup
-            const { data: rps } = await supabase
-              .from("round_players")
-              .select("id, team_number, players ( display_name, full_name )")
-              .eq("round_id", round.id);
+    if (rounds) {
+      const roundsWithTeams = await Promise.all(
+        rounds.map(async (round) => {
+          // Fetch round_players including id for score lookup
+          const { data: rps } = await supabase
+            .from("round_players")
+            .select("id, team_number, players ( display_name, full_name )")
+            .eq("round_id", round.id);
 
-            // Get which round_player_ids have any scores
-            const rpIds = rps?.map((rp: any) => rp.id) || [];
-            const rpIdsWithScores = new Set<number>();
-            if (rpIds.length > 0) {
-              const { data: scoreData } = await supabase
-                .from("scores")
-                .select("round_player_id")
-                .in("round_player_id", rpIds);
-              scoreData?.forEach((s: any) => rpIdsWithScores.add(s.round_player_id));
-            }
+          // Get which round_player_ids have any scores
+          const rpIds = rps?.map((rp: any) => rp.id) || [];
+          const rpIdsWithScores = new Set<number>();
+          if (rpIds.length > 0) {
+            const { data: scoreData } = await supabase
+              .from("scores")
+              .select("round_player_id")
+              .in("round_player_id", rpIds);
+            scoreData?.forEach((s: any) => rpIdsWithScores.add(s.round_player_id));
+          }
 
-            // Build team map with per-team hasScores flag
-            const teamMap: Record<number, { players: string[]; hasScores: boolean }> = {};
-            rps?.forEach((rp: any) => {
-              const tNum = rp.team_number;
-              if (!tNum) return;
-              const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
-              if (!teamMap[tNum]) teamMap[tNum] = { players: [], hasScores: false };
-              teamMap[tNum].players.push(playerRow?.display_name || playerRow?.full_name || "?");
-              if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
-            });
+          // Build team map with per-team hasScores flag
+          const teamMap: Record<number, { players: string[]; hasScores: boolean }> = {};
+          rps?.forEach((rp: any) => {
+            const tNum = rp.team_number;
+            if (!tNum) return;
+            const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+            if (!teamMap[tNum]) teamMap[tNum] = { players: [], hasScores: false };
+            teamMap[tNum].players.push(playerRow?.display_name || playerRow?.full_name || "?");
+            if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
+          });
 
-            const teamList: TeamInfo[] = Object.entries(teamMap)
-              .map(([num, info]) => ({ number: parseInt(num), players: info.players, hasScores: info.hasScores }))
-              .sort((a, b) => a.number - b.number);
+          const teamList: TeamInfo[] = Object.entries(teamMap)
+            .map(([num, info]) => ({ number: parseInt(num), players: info.players, hasScores: info.hasScores }))
+            .sort((a, b) => a.number - b.number);
 
-            const hasAnyScores = teamList.some(t => t.hasScores);
+          const hasAnyScores = teamList.some(t => t.hasScores);
 
-            return {
-              ...round,
-              isYesterday: round.played_on === yesterday,
-              teams: teamList,
-              hasAnyScores,
-            };
-          })
-        );
-        setRecentRounds(roundsWithTeams);
-      }
-      setLoading(false);
+          return {
+            ...round,
+            isYesterday: round.played_on === yesterday,
+            teams: teamList,
+            hasAnyScores,
+          };
+        })
+      );
+      setRecentRounds(roundsWithTeams);
     }
-    load();
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   function formatDate(dateStr: string) {
     const date = new Date(dateStr + "T12:00:00");
@@ -156,6 +161,11 @@ export default function HomePage() {
               : round.hasAnyScores ? "#166534"
               : "#92400e";
 
+            const needsFormat = !round.isYesterday && roundNeedsFormat({
+              format: round.format,
+              is_complete: round.is_complete,
+            });
+
             return (
               <div key={round.id} style={{ background: "white", borderRadius: "14px", border: "1px solid rgba(0,0,0,0.07)", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px", alignItems: "center" }}>
@@ -168,6 +178,13 @@ export default function HomePage() {
                     {status}
                   </span>
                 </div>
+
+                {needsFormat && (
+                  <FormatNotSetBanner
+                    roundId={round.id}
+                    onChosen={load}
+                  />
+                )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
                   {round.teams.map((team) => {

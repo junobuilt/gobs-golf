@@ -10,7 +10,8 @@ import {
   computeRoundResult,
   getHandicapStrokes,
 } from "@/lib/scoring";
-import type { HoleInfo as EngineHoleInfo } from "@/lib/scoring";
+import type { HoleInfo as EngineHoleInfo, Format } from "@/lib/scoring";
+import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -55,6 +56,8 @@ export default function ScorecardPage() {
   const [currentHole, setCurrentHole] = useState(1);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(true);
+  const [roundFormat, setRoundFormat] = useState<Format | null>(null);
+  const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [saving, setSaving] = useState(false);
   const [endRoundModal, setEndRoundModal] = useState(false);
   const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
@@ -70,6 +73,16 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
+      const { data: roundRow } = await supabase
+        .from("rounds")
+        .select("format, is_complete")
+        .eq("id", roundId)
+        .maybeSingle();
+      if (roundRow) {
+        setRoundFormat((roundRow.format ?? null) as Format | null);
+        setIsRoundComplete(!!roundRow.is_complete);
+      }
+
       const { data: teesData } = await supabase
         .from("tees")
         .select("id, color, slope_rating, course_rating, par")
@@ -382,6 +395,20 @@ export default function ScorecardPage() {
   // --- LOADING ---
   if (loading) {
     return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
+  }
+
+  // --- LOCKED: format not yet picked ---
+  if (roundFormat === null && !isRoundComplete) {
+    return (
+      <div style={{ padding: "20px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif" }}>
+        <div style={{ textAlign: "center", marginBottom: "8px" }}>
+          {teamFilter && (
+            <p style={{ margin: 0, fontSize: "0.7rem", fontWeight: 900, color: "#0c3057" }}>TEAM {teamFilter}</p>
+          )}
+        </div>
+        <ScorecardLockNotice />
+      </div>
+    );
   }
 
   // --- TEE SELECTION SCREEN ---
