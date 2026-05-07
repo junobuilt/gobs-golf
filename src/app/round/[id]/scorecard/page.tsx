@@ -12,6 +12,7 @@ import {
 } from "@/lib/scoring";
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
+import FormatChip from "@/components/format/FormatChip";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -556,6 +557,7 @@ export default function ScorecardPage() {
   const scoredHoles = holesWithTeamScores();
   const countingIds = getCountingPlayerIds(currentHole);
   const { tiedForBall1, tiedForBall2 } = getTieInfo(currentHole);
+  const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball";
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
   return (
@@ -564,6 +566,15 @@ export default function ScorecardPage() {
       <div style={{ textAlign: "center", marginBottom: "15px" }}>
         {teamFilter && (
           <p style={{ margin: 0, fontSize: "0.7rem", fontWeight: 900, color: "#0c3057" }}>TEAM {teamFilter}</p>
+        )}
+        {roundFormat && (
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: "10px" }}>
+            <FormatChip
+              roundId={Number(roundId)}
+              currentFormat={roundFormat}
+              formatLocked={roundFormatLockedAt !== null}
+            />
+          </div>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
@@ -603,7 +614,7 @@ export default function ScorecardPage() {
       </div>
 
       {/* Tie notices */}
-      {(tiedForBall1 || tiedForBall2) && (
+      {isBestNFormat && (tiedForBall1 || tiedForBall2) && (
         <div style={{
           background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "10px",
           padding: "8px 12px", marginBottom: "10px", fontSize: "0.75rem",
@@ -655,7 +666,7 @@ export default function ScorecardPage() {
                 >
                   {rp.display_name}
                 </span>
-                {isCounting && !isTied && (
+                {isBestNFormat && isCounting && !isTied && (
                   <span style={{
                     fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
                     background: countingBorderColor, color: "white", textTransform: "uppercase",
@@ -663,7 +674,7 @@ export default function ScorecardPage() {
                     {countingRank === 0 ? "Ball 1" : "Ball 2"}
                   </span>
                 )}
-                {isTied && (
+                {isBestNFormat && isTied && (
                   <span style={{
                     fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
                     background: "#f59e0b", color: "white", textTransform: "uppercase",
@@ -687,7 +698,11 @@ export default function ScorecardPage() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "15px" }} onClick={e => e.stopPropagation()}>
               <button
-                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || (holeInfo?.par ?? 4)) - 1)}
+                onClick={() => {
+                  const par = holeInfo?.par ?? 4;
+                  const current = scores[rp.id]?.[currentHole];
+                  setScore(rp.id, currentHole, current == null ? par : current - 1);
+                }}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
               >
                 −
@@ -703,7 +718,11 @@ export default function ScorecardPage() {
                 </div>
               </div>
               <button
-                onClick={() => setScore(rp.id, currentHole, (scores[rp.id]?.[currentHole] || (holeInfo?.par ?? 4)) + 1)}
+                onClick={() => {
+                  const par = holeInfo?.par ?? 4;
+                  const current = scores[rp.id]?.[currentHole];
+                  setScore(rp.id, currentHole, current == null ? par : current + 1);
+                }}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
               >
                 +
@@ -714,7 +733,7 @@ export default function ScorecardPage() {
       })}
 
       {/* Tap hint when scores are entered */}
-      {countingIds.length >= 2 && !tiedForBall1 && !tiedForBall2 && (
+      {isBestNFormat && countingIds.length >= 2 && !tiedForBall1 && !tiedForBall2 && (
         <p style={{ textAlign: "center", fontSize: "0.68rem", color: "#94a3b8", margin: "6px 0 0" }}>
           Tap a player card to override which balls count
         </p>
