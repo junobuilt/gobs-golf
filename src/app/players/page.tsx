@@ -64,40 +64,52 @@ export default function PlayersPage() {
           </div>
         </div>
       ) : (
-        <div style={{
-          background: "var(--white)",
-          borderRadius: "var(--card-radius)",
-          overflow: "hidden",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-          border: "1px solid rgba(0,0,0,0.04)",
-        }}>
-          {filtered.map((player) => (
-            <Link
-              key={player.id}
-              href={`/player/${player.id}`}
-              className="player-row"
-            >
-              <div>
-                <div className="player-name">{player.full_name}</div>
-                <div className="player-meta">
-                  {player.display_name || "—"}
+        <>
+          {/* Column header — right-aligned over the handicap-index numbers
+              below. Uses the small-caps muted-gray pattern shared with other
+              section labels in the app. */}
+          <div style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            padding: "0 16px 8px",
+            fontSize: "0.7rem",
+            fontWeight: 700,
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.07em",
+          }}>
+            Handicap Index
+          </div>
+          <div style={{
+            background: "var(--white)",
+            borderRadius: "var(--card-radius)",
+            overflow: "hidden",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+            border: "1px solid rgba(0,0,0,0.04)",
+          }}>
+            {filtered.map((player) => (
+              <Link
+                key={player.id}
+                href={`/player/${player.id}`}
+                className="player-row"
+              >
+                <div>
+                  <div className="player-name">{player.full_name}</div>
+                  <div className="player-meta">
+                    {player.display_name || "—"}
+                  </div>
                 </div>
-              </div>
-              <div className="player-handicap">
-                {player.handicap_index !== null ? (
-                  <>
+                <div className="player-handicap">
+                  {player.handicap_index !== null ? (
                     <strong>{player.handicap_index}</strong>
-                    Strokes
-                  </>
-                ) : (
-                  <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                    No Strokes
-                  </span>
-                )}
-              </div>
-            </Link>
-          ))}
-        </div>
+                  ) : (
+                    <span style={{ color: "var(--text-muted)" }}>—</span>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
       )}
 
       <p style={{
