@@ -215,7 +215,7 @@ export default function PlayerProfilePage() {
                 <div className="player-meta">
                   {round.tee_color} tees
                   {round.course_handicap !== null &&
-                    ` · Strokes: ${round.course_handicap}`}
+                    ` · Course Handicap: ${round.course_handicap}`}
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>

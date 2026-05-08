@@ -153,7 +153,7 @@ export default function Players({ players, onRefresh }: Props) {
               style={inputStyle}
             />
             <input
-              placeholder="Handicap"
+              placeholder="Handicap Index"
               type="number"
               step="0.1"
               value={newPlayer.handicap_index}
@@ -195,7 +195,7 @@ export default function Players({ players, onRefresh }: Props) {
           }}>
             <span>Full Name</span>
             <span>Display Name</span>
-            <span>Handicap</span>
+            <span>Handicap Index</span>
             <span>Status</span>
             <span>Actions</span>
           </div>
@@ -248,7 +248,7 @@ export default function Players({ players, onRefresh }: Props) {
                   ) : (
                     <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>
                       {p.display_name ? `${p.display_name} · ` : ""}
-                      {p.handicap_index != null ? `Strokes ${p.handicap_index}` : "No Strokes"}
+                      {p.handicap_index != null ? `Handicap Index: ${p.handicap_index}` : "No Handicap Index"}
                     </div>
                   )}
                 </div>
@@ -268,7 +268,7 @@ export default function Players({ players, onRefresh }: Props) {
                       onClick={() => startEditHC(p)}
                       style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.navy, fontWeight: 600, textDecoration: "underline" }}
                     >
-                      {p.handicap_index == null ? "Add Strokes" : "Edit Strokes"}
+                      {p.handicap_index == null ? "Add HI" : "Edit HI"}
                     </button>
                   )}
                   {p.is_active ? (
@@ -333,7 +333,7 @@ export default function Players({ players, onRefresh }: Props) {
                     display: "inline-block", padding: "2px 8px", borderRadius: "999px",
                     background: "#fef3c7", color: "#92400e",
                     fontSize: "0.72rem", fontWeight: 700,
-                  }}>No Strokes</span>
+                  }}>Not on file</span>
                 )}
               </div>
 
@@ -355,7 +355,7 @@ export default function Players({ players, onRefresh }: Props) {
                   onClick={() => isEditing ? cancelEditHC(p.id) : startEditHC(p)}
                   style={actionBtnStyle(C.navy)}
                 >
-                  {p.handicap_index == null && !isEditing ? "Add Strokes" : isEditing ? "Cancel" : "Edit Strokes"}
+                  {p.handicap_index == null && !isEditing ? "Add HI" : isEditing ? "Cancel" : "Edit HI"}
                 </button>
                 {p.is_active ? (
                   <button

@@ -471,7 +471,7 @@ export default function ScorecardPage() {
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>Strokes</span>
+                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>Course Handicap</span>
                   <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#0c3057" }}>
                     {rp.course_handicap !== null ? rp.course_handicap : "?"}
                   </span>
@@ -491,7 +491,7 @@ export default function ScorecardPage() {
                     <input
                       type="number"
                       step="0.1"
-                      placeholder="Enter Strokes index"
+                      placeholder="Enter Handicap Index"
                       value={tempHandicaps[rp.id] ?? ""}
                       onChange={e => setTempHandicaps(prev => ({ ...prev, [rp.id]: e.target.value }))}
                       style={{
@@ -716,7 +716,9 @@ export default function ScorecardPage() {
                 )}
               </div>
               <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                <span>Strokes: {rp.course_handicap ?? "?"}</span>
+                <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
+                <span>·</span>
+                <span>Handicap Index: {rp.handicap_index != null ? rp.handicap_index.toFixed(1) : "?"}</span>
                 {teeColor && (
                   <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
                 )}
