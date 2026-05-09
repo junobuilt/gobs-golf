@@ -1,6 +1,6 @@
 # GOBS Golf — Feature Roadmap
 
-*Last updated: May 5, 2026 — major revision after feedback consolidation and flow design*
+*Last updated: May 9, 2026 — post-live-test reprioritization (LT1/LT2 critical fixes, format consolidation, blind draw bumped ahead of Phase C PR 3)*
 
 ---
 
@@ -15,7 +15,22 @@
 
 **Phases are ordered by dependency.** Phase A unblocks Phase B, etc. Items within a phase can usually be built in parallel.
 
+**Active priority order (post-May 9, 2026):** Phase 0.5 → Phase A.1 → Phase D.1 → Phase H.2 → Phase C PR 3 → Phase E onward. Phases are listed below in dependency order, but next-up work follows this priority list. Reset by the May 8 first-live-course test and May 9 admin consultation.
+
 **One source of truth.** The companion document `GOBS_Game_Rules_v1.docx` defines all scoring logic. This roadmap covers what to build; that document covers how scoring works.
+
+---
+
+## Phase 0.5 — Live-Test Critical Fixes
+
+*Surfaced from the May 8 first-live-course test. Both items block real-round use. Ships before any other Phase work.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| LT1 | Course Handicap display mismatch on scorecard | 📋 | DB calculates correct CH per tee (verified live: Kevin 12.5 HI → 9 CH white/yellow; Wayne 20.1 → 17). Scorecard displays wrong value (6 and 14 respectively). Stroke-allocation dots use the same wrong number. Likely stale snapshot on `round_players.course_handicap` (captured at round-creation time, before Dad corrected HI values in admin) or wrong tee_id in the join. Must fix end-to-end: row CH display, dots logic, engine calls — all read from the same corrected source. |
+| LT2 | Scores reverting to par on hole navigation | 📋 | Reproduced live by two independent testers in same round. Enter score, navigate to a later hole, return — score shows par. Suspect A6 first-tap-lands-on-par regression: hole-component re-mount may treat saved score as null and re-trigger the par-anchor on display. Investigation: hydrate-before-render check on hole nav; git blame May 7 PM A6 change. |
+
+**Phase 0.5 exit criteria:** Both bugs unreproducible in a back-to-back live round. CH on the scorecard matches the DB for every player. Scores persist across hole navigation for all players. Vercel preview deployed for Dad to verify on his phone before merging to master.
 
 ---
 
@@ -33,9 +48,27 @@
 | A6 | Default scorecard value = dash, anchored to par | ✅ | Display starts as `—`. First +/− tap lands on par for the hole; subsequent taps increment/decrement normally. Database stores nothing until tap. |
 | A7 | Bug: admin-created scorecards not showing player names | ✅ | Currently in production. Fix in next code push. |
 | A8 | Keep gross score on round summary + history detail pages | ✅ | Drop from scorecard pill only; preserve elsewhere for "I'm curious" lookups |
-| A9 | Hide BALL / Tied badges + override hint in Stableford-family formats | ✅ | Best-N "BALL 1"/"BALL 2"/"Tied" pills, the tied-for-Ball banner, and the "tap a card to override which balls count" footer only show when format is `2_ball` or `3_ball`. In Stableford Standard / Modified / GOBS House every player's score contributes, so those affordances are misleading and now hidden. |
+| A9 | Hide BALL / Tied badges + override hint in Stableford-family formats | ✅ | Best-N "BALL 1"/"BALL 2"/"Tied" pills, the tied-for-Ball banner, and the "tap a card to override which balls count" footer only show in best-N formats (2-Ball, 3-Ball; Best Ball is best-1 and gets a single-ball UX in Phase A.1 / A1.4). In Stableford Standard / GOBS Stableford every player's score contributes, so those affordances are misleading and now hidden. (Stableford Modified / GOBS House dropped 2026-05-09; gating logic in code rewires under A1.3.) |
 
 **Phase A exit criteria:** Scorecard reads cleaner, no duplicate displays, "Strokes" terminology consistent everywhere.
+
+---
+
+## Phase A.1 — Pre-Monday Stableford & Format Cleanup
+
+*Targeted at the next round (Monday May 11). Ships after Phase 0.5; bundles the format-set rebalance from the May 9 session plus two scorecard polish items that share the same "live during round" surface.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| A1.1 | Verify Stableford Standard USGA values | 📋 | Canonical USGA table: Bogey 1, Par 2, Birdie 3, Eagle 4, Albatross 5, Double Bogey or worse 0. Verify `STABLEFORD_STANDARD_POINTS` in `src/lib/scoring/engine.ts` and the copy in `src/lib/format/copy.ts` match. Quick check 2026-05-09 against current code shows correct values; expected to ship as a no-fix verification with a dated comment anchor at the constant. |
+| A1.2 | Add GOBS Stableford as a new format | 📋 | New enum value `gobs_stableford`. New point table: Albatross +8, Eagle +5, Birdie +2, Par 0, Bogey −1, Double Bogey or worse −2. Engine dispatcher branch reusing `computeStablefordHole` with the new table. New unit tests + snapshot script update. New FORMAT_LABELS entry. Behavioral note: par-flat hole = 0 (not 1 like Standard); par-flat round = 0 (not 18). |
+| A1.3 | Drop Stableford Modified + GOBS House | 📋 | Remove enum values `stableford_modified` and `gobs_house`. Remove engine dispatcher branches (`mergePointTable`, `GOBS_HOUSE_POINTS`). Remove FORMAT_LABELS / FORMAT_ORDER / DEFAULT_FORMAT_CONFIG entries. Remove `STABLEFORD_FORMATS` array entries in FormatPicker. Update snapshot scripts (drop `snapshot-b4` Modified + GOBS House synthetic cases). Drop tech debt TD7 (Stableford Modified edit UI) — voided. Migration plan for any existing rounds in either format: convert to GOBS Stableford or Standard (none expected — Phase B was shipped 2026-05-07 and no live rounds have used these formats). |
+| A1.4 | Add Best Ball as the 5th format | 📋 | New enum value `best_ball`. Engine dispatcher → `computeBestNHole` with N=1 via `defaultBestN("best_ball") === 1`. Strict best-1 net per hole regardless of team size (2/3/4 players). Net only — net/gross toggle pinned to net in FormatPicker (greyed control + "Best Ball is always net" caption). Override-holes section a documented no-op (single-ball-by-definition); render muted with the existing Stableford-style "no effect on Best Ball" caption. UI: single "BALL" pill on the contributing player (no BALL 1 / BALL 2 split). New unit tests + snapshot script. |
+| A1.5 | Move format picker into admin Round Setup tab | 📋 | "Choose Format" CTA visible on `RoundSetup.tsx` from round creation onward, not gated behind scorecard creation. Format locks at round level → all subsequent scorecards inherit. Yellow "Waiting for format" banner remains for any team that builds a scorecard before format is set. UI/flow change only, no schema work. Implements the May 9 locked decision on format selection entry point. |
+| A1.6 | F9 / B9 / Total on scorecard team-net pill | 📋 | Three cumulative-net numbers on the big blue team pill (F9, B9, Total). Simple numbers, no per-hole breakdown. Drives Nassau bet payouts for the league. Layout test required at iPhone SE width (375px) — pill currently shows a single delta and the three-number layout will be tight. |
+| A1.7 | Tap player row → expand hole-by-hole on scorecard | 📋 | On the scorecard, tap player row to reveal that player's gross scores per hole, plus F9 row + B9 row with F9/B9 totals. Same data shape as Phase C drill-in (C4/C5/C6); helper code can be shared. Distinct surface from C4/C5/C6 though — this is the live scorecard, those are the post-round/leaderboard summary. |
+
+**Phase A.1 exit criteria:** GOBS Stableford selectable and scoring correctly. Stableford Standard verified against USGA. Best Ball selectable, net-locked, single-ball UX. Format pickable from Round Setup tab. F9/B9/Total visible on scorecard. Tap player row expands. Stableford Modified / GOBS House fully removed from codebase, enum, UI, tests, and snapshots. All snapshots clean; `tsc --noEmit` clean.
 
 ---
 
@@ -58,19 +91,21 @@
 
 ### B.2 — The five formats
 
+*Format set rebalanced 2026-05-09. Stableford Modified and GOBS House dropped (see Phase A.1 / A1.3). Best Ball and GOBS Stableford added (A1.2 / A1.4).*
+
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | B2.1 | 2-Ball | ✅ | Existing logic. Best 2 net per hole. |
 | B2.2 | 3-Ball | ✅ | Best 3 net per hole. 4-player teams drop worst; 3-player teams all count. |
-| B2.3 | Stableford Standard | ✅ | Net-based: DB+/Bogey/Par/Birdie/Eagle/Albatross = 0/1/2/3/4/5. Team total = sum across all members. |
-| B2.4 | Stableford Modified | ✅ | Same as Standard but admin can edit point values. Saved per-round (snapshot). |
-| B2.5 | GOBS House | ✅ | Standard + −1 deduction for net double bogey or worse. |
+| B2.3 | Stableford Standard | ✅ | Net-based USGA table: Bogey 1, Par 2, Birdie 3, Eagle 4, Albatross 5, Double Bogey or worse 0. Team total = sum across all members. Verify in Phase A.1 / A1.1; expected no fix needed. |
+| B2.4 | GOBS Stableford | 📋 | New format added in Phase A.1 / A1.2. League-specific point table: Albatross +8, Eagle +5, Birdie +2, Par 0, Bogey −1, Double Bogey or worse −2. Net-based, sum across all members. Negative team totals possible. |
+| B2.5 | Best Ball | 📋 | New format added in Phase A.1 / A1.4. Strict best-1 net per hole regardless of team size (2/3/4 players). Net only — net/gross toggle disabled in picker with caption "Best Ball is always net." Override-holes section a documented no-op. |
 
 ### B.3 — Per-hole overrides
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B3.1 | "All scores count" hole multi-select | ✅ | 18-button grid (6×3) inside the FormatPicker, plus "9 & 18" preset and "Clear all" utility. Stored at `format_config.override_holes`. Engine applies overrides to best-N formats; Stableford / GOBS House are documented no-ops (every player already contributes), so the picker section renders muted with an inline "(no effect on Stableford formats)" note. |
+| B3.1 | "All scores count" hole multi-select | ✅ | 18-button grid (6×3) inside the FormatPicker, plus "9 & 18" preset and "Clear all" utility. Stored at `format_config.override_holes`. Engine applies overrides to 2-Ball and 3-Ball; Stableford Standard / GOBS Stableford / Best Ball are documented no-ops (every player already contributes in Stableford-family; Best Ball is single-ball-by-definition). Picker section renders muted with an inline "(no effect on Stableford or Best Ball)" caption. |
 | B3.2 | Net vs gross toggle | ✅ | Segmented control inside FormatPicker, stored at `format_config.scoring_basis` ("net" \| "gross"). Default "net" via `getScoringBasis()` helper for backward compat with pre-B3.2 rounds. Engine integration uses the zero-handicap trick at the call sites (scorecard + summary): when scoring_basis is "gross", every `courseHandicap` is passed as 0 so the engine's net pathway returns gross-equivalent values uniformly across all formats — Stableford included, since it has no internal `basis` branch. |
 | B3.3 | Override visibility on scorecard | ✅ | Soft yellow banner ("All scores count on this hole") rendered between the "Hole N / PAR / YDS" header and the team net pill when the active hole is in `format_config.override_holes`. Visible to all users. Banner is gated on best-N formats since override_holes is an engine no-op for Stableford. |
 
@@ -78,13 +113,13 @@
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| B4.1 | Add `format` column to rounds table | ✅ | Enum: `2_ball`, `3_ball`, `stableford_standard`, `stableford_modified`, `gobs_house` |
+| B4.1 | Add `format` column to rounds table | ✅ | Enum after 2026-05-09 rebalance: `2_ball`, `3_ball`, `best_ball`, `stableford_standard`, `gobs_stableford`. Original enum (B-phase ship): `2_ball`, `3_ball`, `stableford_standard`, `stableford_modified`, `gobs_house`. Migration handled in Phase A.1 / A1.3 + A1.2 + A1.4. |
 | B4.2 | Add `format_config` JSON column | ✅ | Stores point values, override holes, net/gross |
 | B4.3 | Add `format_locked_at` timestamp | ✅ | Records when first score was entered |
 | B4.4 | Backfill existing rounds as `2_ball` | ✅ | One-time migration. Database is being cleared anyway, so trivial. |
 | B4.5 | Update scoring engine to switch on format | ✅ | Single function takes (format, scores, handicaps, overrides) → team score. Each format is its own pure function. |
 
-**Phase B exit criteria:** Admin can pick any of 5 formats, scorecards behave correctly for each, scores calculate correctly, format is locked once scoring starts.
+**Phase B exit criteria:** Admin can pick any of the 5 formats (2-Ball, 3-Ball, Best Ball, Stableford Standard, GOBS Stableford), scorecards behave correctly for each, scores calculate correctly, format is locked once scoring starts. Format set rebalanced 2026-05-09 — see Phase A.1.
 
 ---
 
@@ -98,7 +133,7 @@
 | --- | --- | --- | --- |
 | C1 | Team-only display during live rounds | ✅ | Existing season-individual leaderboard relocated to `/season` (verbatim, no refactor). New `/leaderboard` is a team-focused live view with four states (no round today / no format yet / live mid-round / completed). Empty state includes a small "View season stats →" link to `/season`. Bottom nav unchanged — still points to `/leaderboard`, now the team view. |
 | C2 | Row format: team name + cumulative score + "thru N" | ✅ | Per-row: rank badge (gold for 1st, navy otherwise) → team name + dot-separated roster → score block (24px, color-coded: green under par / red over par / black even / blue Stableford points) → "thru N" (live) or "Final" (complete). Format-aware ranking via pure helper `src/lib/leaderboard/rank.ts` — ascending for best-N, descending for Stableford-family, ties share rank with the next position skipped. "thru N" = count of holes where every required team player has entered a score. Whole row taps through to `/round/[id]/summary` (PR 3 will rebuild that drill-in). |
-| C3 | Format-aware score display | ✅ | Format-aware team total display via `formatTeamTotal` helper in `src/lib/format/copy.ts`. Best-N: stroke delta `+N` / `−N` / `E`. Stableford-family: `${total} pts` with Unicode minus on negative GOBS House totals. Applied at scorecard team pill and round summary (Stableford branch only — best-N summary preserves existing absolute-total display; PR 3 will conform summary to delta convention). |
+| C3 | Format-aware score display | ✅ | Format-aware team total display via `formatTeamTotal` helper in `src/lib/format/copy.ts`. Best-N: stroke delta `+N` / `−N` / `E`. Stableford-family: `${total} pts` with Unicode minus on negative totals (originally GOBS House; post-2026-05-09 rebalance, GOBS Stableford carries the negative-going values via Phase A.1 / A1.2). Helper logic continues to handle Stableford-family negatives uniformly after format-set rebalance. Applied at scorecard team pill and round summary (Stableford branch only — best-N summary preserves existing absolute-total display; PR 3 will conform summary to delta convention). |
 | C4 | Tap row → round summary view | 📋 | Read-only, anyone can view. Mirrors the round summary page. |
 | C5 | Per-player dropdown in summary | 📋 | Click to expand individual hole-by-hole scores |
 | C6 | Front 9 / Back 9 / Total 18 breakdown | 📋 | Standard golf split visible in summary |
@@ -109,9 +144,9 @@
 
 ---
 
-## Phase D — Blind Draw & Rainout
+## Phase D — Blind Draw
 
-*Depends on Phase B. Touches scoring engine.*
+*Depends on Phase B. Touches scoring engine. Reprioritized ahead of Phase C PR 3 on 2026-05-09 — Dad: blind draw applies roughly every other round due to typical odd-player counts, needs real-round testing before more leaderboard polish.*
 
 ### D.1 — Blind draw
 
@@ -124,14 +159,9 @@
 | D1.5 | Randomizer engine | 📋 | At round-end, randomly select a player from any other team. Copy their actual scores onto short team's missing slot for affected holes. |
 | D1.6 | Multiple short teams | 📋 | Each gets independent draw. Logged note in case it becomes a problem (e.g., short team draws from another short team). |
 
-### D.2 — Rainout
+**Phase D exit criteria:** Short teams handled gracefully on both ends, randomizer works.
 
-| # | Item | Status | Notes |
-| --- | --- | --- | --- |
-| D2.1 | 9-hole official threshold | 📋 | Round becomes "official" when any team completes 9 holes |
-| D2.2 | Sub-9 partial round handling | 📋 | Save with `partial: true` flag. Don't roll up to season stats. Decision on display/discard parked. |
-
-**Phase D exit criteria:** Short teams handled gracefully on both ends, randomizer works, partial rounds preserved without polluting stats.
+(Phase D.2 / Rainout deleted 2026-05-09 — league rule: if play stops, no payouts, round doesn't count. No app-side partial-round handling needed. See Decisions Locked.)
 
 ---
 
@@ -176,6 +206,7 @@
 | F2.5 | Buy-in snapshot per round | 📋 | Default $10, but stored on round (not global setting) so historical rounds preserve their amount even if defaults change later |
 | F2.6 | Manual edits with dangerous-action modal | 📋 | Admin-only. Money disputes need fast resolution path. |
 | F2.7 | Admin-only access | 📋 | Players don't see betting tab. Don't want it getting competitive. |
+| F2.8 | BFB Fund visibility on home page | 📋 | Surface running BFB total on the home page so league sees the charity element. Annual donation drive is in July. Possible future addition: drive-specific tracking, contribution nudges. Added 2026-05-09. |
 
 **Phase F exit criteria:** Dad can answer "how much has Bill won this season?" and "what's the BFB fund at?" without opening a spreadsheet.
 
@@ -205,10 +236,14 @@
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | H1 | Hide admin button from homepage | 📋 | URL `/admin` still accessible to those who know it. Cleaner UX, prevents players from poking admin buttons. |
-| H2 | Database backup strategy | 📋 | Daily Supabase backups. Manual export option for end-of-season snapshot. **Treated as launch-blocker for full production use.** |
+| H2 | Database backup strategy | 📋 | Daily Supabase backups. Manual export option for end-of-season snapshot. **Treated as blocker for historical data import and full production use.** Severity bumped 2026-05-09 — Dad asked May 9 if he could enter all 2026 historical rounds; answer is no until backup + partial-reset workflow is in place. Should ship after Phase A.1 / Phase D.1, before Phase E. |
 | H3 | Season open/close flow | 📋 | Admin manually closes season in Settings. Reminder banner appears as season-end approaches (Sept/Oct). Closes the BFB fund for donation. |
-| H4 | Partial round long-term decision | ❓ | Blocked on Dad's input. Display in separate section? Discard? Convert to practice? |
-| H5 | Data import for 4 weeks of historical rounds | 📋 | Once Dad fills in the spreadsheet, import script reads it and writes to Supabase. One-time job. |
+| H5 | Data import for 4 weeks of historical rounds | 📋 | Once Dad fills in the spreadsheet, import script reads it and writes to Supabase. One-time job. Gated on H2 partial-reset workflow. |
+| H6 | QR code for current URL | 📋 | One-time deliverable. Regenerate when custom domain ships. Added 2026-05-09. |
+| H7 | "Add to Home Screen" instructions doc | 📋 | Short numbered guide (iOS Safari Share → Add to Home Screen, Android Chrome equivalent). For Dad to forward to league. Doc deliverable, not code. Added 2026-05-09. |
+| H8 | One-shot DB export for Dad's manual verification | 📋 | Export per-player handicap config, per-tee data, hole yardages as screenshots/CSV. Dad will manually verify end-to-end. Added 2026-05-09. |
+
+(H4 — Partial round long-term decision — deleted 2026-05-09. Rainout-cancellation rule moots the decision. See Decisions Locked.)
 
 **Phase H exit criteria:** Dad can switch to the app exclusively without fear of data loss. League can play indefinitely without intervention.
 
@@ -225,7 +260,7 @@
 | TD3 | RoundSetup useEffect dep on `allPlayers` | 📋 | Low | Parent re-creating the array re-runs `loadRoundForDate` unnecessarily. Minor perf, no correctness issue. |
 | TD4 | `goToTeams` non-transactional delete-insert | 📋 | **High** | `round_players` does delete-then-insert without a transaction. Failed insert mid-flow loses all team assignments. Real data-loss risk — should be promoted to next sprint. |
 | TD6 | Hardcoded `format: "2_ball"` in scorecard / summary engine calls | ✅ (resolved 2026-05-07) | Medium | `src/app/round/[id]/scorecard/page.tsx` (lines ~227, 287) and `src/app/round/[id]/summary/page.tsx` (lines ~144, 150) pass `format: "2_ball"` and a synthetic `formatConfig` to the scoring engine. Should read from `rounds.format` / `rounds.format_config`. Currently masked because the only shipped format is 2-Ball-equivalent at the engine level; will visibly diverge once admins start picking other formats. |
-| TD7 | Stableford Modified point values edit UI | 📋 | Medium | Engine reads `format_config.point_values` (B2.4 ✅), but no admin surface exists to set them per round. Currently defaults to Stableford Standard values. Likely a small dedicated ticket — bottom sheet/modal post-pick, similar pattern to FormatPicker. |
+| TD7 | ~~Stableford Modified point values edit UI~~ | ❌ Voided 2026-05-09 | — | Stableford Modified format dropped 2026-05-09 (see Phase A.1 / A1.3). No edit UI needed. |
 | TD8 | Banner button clipping on narrow phones (<414px) | 📋 | Medium | The "Choose Format" CTA inside `FormatNotSetBanner` is clipped at 375px (iPhone SE) and similar small-phone widths. Surfaced during B1.5 screenshot capture. League demographic includes older players on smaller/older phones, and the banner is the admin's primary entry point. Likely fix: stack banner contents vertically below ~414px, or shrink CTA padding. Visual-only change, no logic. |
 | TD9 | Player-visible format display on scorecard | ✅ (resolved 2026-05-07) | Low-Medium | Read-only `FormatChip` rendered in the scorecard header (above "Hole N" / par-yardage caption) once a format is locked. Visible to all users, not admin-only. No `onChange` prop, so the chip is non-interactive on the player surface — admins still change format from the chip on `/thomas-admin`. |
 | TD10 | Remove stale "2-ball" toggle in admin > Settings | 📋 | Low-Medium | Pre-Phase B legacy from v1 app. Now superseded by per-round format picker (B1.4). Toggle is no-op or worse — confusing surface that implies league-level format setting when format is per-round. Cosmetic + confusing, not data-breaking. Likely fix: delete the toggle, audit Settings tab for any other v1 leftovers in the same pass. |
@@ -270,11 +305,12 @@
 | Q5 | Does the pot carry over on ties? | G2 | Rules doc Section 8 |
 | Q6 | What happens to buy-in if player leaves mid-round? | G1 | Rules doc Section 8 |
 | Q7 | Do guests buy in same as members? | G1 | Rules doc Section 8 |
-| Q8 | Partial round (under 9 holes) — discard or save separately? | H4 | Rules doc Section 7 |
 | Q9 | Handicap data for 4 missing players (DeWaal S, Gary T, Gerry H, Norm C) | Phase A onwards | Players Reference sheet |
 | Q10 | What does SWAT stand for? Rules? | I9 | Rules doc Section 10 |
 | Q11 | What is a SWAT Scramble? | I9 | Rules doc Section 10 |
 | Q12 | How do combo tees work? | I10 | Original feedback |
+
+*(Q8 deleted 2026-05-09 — rainout cancellation rule moots partial-round handling. See Decisions Locked.)*
 
 ---
 
@@ -316,7 +352,7 @@
 - **Blind draw timing:** Resolves after round finalized, not at start.
 - **Blind draw eligibility:** Random pick from any other team's player.
 - **Blind draw drawn-player effect:** Original team unaffected; scores copied to short team only.
-- **9-hole minimum:** Round official at 9. Sub-9 saved as partial.
+- **Rainout / partial rounds (locked 2026-05-09):** League rule — if play stops, no payouts, round doesn't count. No app-side partial-round handling. Supersedes the prior "9-hole minimum / sub-9 saved as partial" decision.
 - **One format per day, league-wide:** Different foursomes don't play different formats simultaneously.
 - **Money allocation:** $1 HiO + $2 BFB + $7 team pot (default $10 buy-in).
 - **BFB:** Blaine Food Bank, donated yearly at season end.
@@ -325,6 +361,47 @@
 - **Pair-level handicap balance:** Not a thing. Balance is team-level. Belongs in team recommendation engine (I6), not played-with.
 - **Player money on profile:** Deferred. Don't want it competitive.
 - **Admin button on homepage:** Hide for launch. URL `/admin` still works.
+
+### Format set (locked 2026-05-09)
+
+Five formats: **2-Ball, 3-Ball, Best Ball, Stableford Standard, GOBS Stableford**. Stableford Modified and GOBS House dropped from codebase, format enum, UI, tests, snapshots, and roadmap. Migration handled in Phase A.1 / A1.3.
+
+### Stableford point values (locked 2026-05-09)
+
+Two distinct Stableford formats with separate point tables:
+
+**Stableford Standard** (USGA values, unchanged):
+- Albatross: 5
+- Eagle: 4
+- Birdie: 3
+- Par: 2
+- Bogey: 1
+- Double Bogey or worse: 0
+
+**GOBS Stableford** (league-specific values, new):
+- Albatross: +8
+- Eagle: +5
+- Birdie: +2
+- Par: 0
+- Bogey: −1
+- Double Bogey or worse: −2
+
+Implication for GOBS Stableford: par-flat round scores 0 (not 18). Negative-going points possible per hole. Affects all leaderboard math, snapshot baselines, and any historical GOBS Stableford rounds (none exist as of 2026-05-09).
+
+### Best Ball format (locked 2026-05-09)
+
+- **Selection rule:** strict best-1 — exactly one player's score counts per hole, regardless of team size.
+- **Scoring basis:** net only. Format's purpose is handicap equalization; gross best ball undermines the equalizer in a mixed-handicap league. Net/gross toggle disabled in the picker for this format and labeled "Best Ball is always net."
+- **Override-holes:** documented no-op. Best Ball is single-ball-by-definition; "all scores count" would change the identity of the format.
+- **Engine:** `computeBestNHole` with N=1 via dispatcher.
+
+### Format selection entry point (locked 2026-05-09)
+
+Format chosen by admin on the Round Setup tab, before any scorecard is built. The yellow "Waiting for format" banner remains for any team that builds a scorecard pre-format. Earlier flow (format-picker gated behind scorecard creation) deprecated. Implementation in Phase A.1 / A1.5.
+
+### Non-paying player handling (locked 2026-05-09)
+
+Players who opt out of betting are not put on a scorecard. Their team plays as a blind-draw team. No app-side toggle needed for "exclude from betting but keep scoring."
 
 ---
 
@@ -343,6 +420,7 @@
 | May 7 | **Phase B.1 complete.** Shipped B1.6: format locks at first score, dangerous-action modal for post-lock change, plus TD6 hardcode cleanup. New `FormatChip` component (read-only or editable via `onChange` prop) wired into admin RoundSetup. `FormatPicker` accepts `currentFormat` prop and highlights the existing pick. Score-write path in `scorecard/page.tsx` `setScore` now calls `ensureFormatLocked()` after a successful insert/update; idempotent via local short-circuit (`roundFormatLockedAt` state) plus DB-side `WHERE format_locked_at IS NULL` guard. Helper `isFormatLocked` added to `src/lib/format/helpers.ts`. Scorecard and summary engine calls now read `rounds.format` and `rounds.format_config` dynamically (TD6 ✅ resolved). Editable chip on `/thomas-admin` opens `DangerModal` ("Change format mid-round?" / "Scores will be re-totaled under the new format.") before the picker when locked; opens picker directly when unlocked. `format_locked_at` is **not** changed when admin swaps format — semantically still "first score entered at this timestamp." 2 new helper tests; 122 total. All four snapshots pass. No new migrations required (B4.3 already added the column nullable). |
 | May 8 (afternoon) | **Milestone rollup ahead of first live golf-course test.** Phase B fully shipped (B3.1 + B3.2 + B3.3 landed May 7 late). Phase C PR 1 (C3, format-aware team total via `formatTeamTotal` helper) and PR 2 (C1 + C2, live team leaderboard rebuild + `/leaderboard` ↔ `/season` route shuffle) both shipped. Terminology lockdown: new `### Terminology` subsection at the top of Decisions Locked codifies Handicap Index (HI, on `players.handicap_index`) vs Course Handicap (CH, on `player_course_handicaps.course_handicap`); UI display rule "no bare 'Strokes' or 'Handicap' alone" applied across scorecard, admin Players tab, player profile, and the player-facing players list. Players-list cleanup: per-row "Strokes" labels removed, single right-aligned "Handicap Index" column header added at top of list (matches small-caps muted-gray section header pattern used elsewhere). Tech debt logged this run: TD11 (snapshot scripts need format-filter guard in live-data regression loop), TD12 (FormatPicker now requires explicit Save even for fresh rounds — quick-save affordance deferred), TD13 (`show_leaderboard` admin toggle now gates `/season` rather than the new live `/leaderboard` after the route rename). All TDs sized as Low–Medium, none launch-blocking. **Live golf-course testing started today** — feedback expected to drive the next session's priorities. PR 3 (C4 + C5 + C6, drill-in summary with F9 / B9 / Total) is next up and will incorporate live-test feedback. No code changes in this entry — ROADMAP-only housekeeping pass. |
 | May 8 (label clarity) | Pre-live-test label sweep. Database fields stay (`handicap_index` on `players`, `course_handicap` on `player_course_handicaps`); UI labels disambiguated ahead of first golf-course test. **Scorecard (`src/app/round/[id]/scorecard/page.tsx`):** tee-selection card header `Strokes` → `Course Handicap`; no-HI inline-input placeholder `Enter Strokes index` → `Enter Handicap Index`; per-player row metadata strip `Strokes: N` → `Course Handicap: N · Handicap Index: M.M` (decimal preserved via `.toFixed(1)`; `handicap_index` was already in the scorecard fetch shape so no query change needed). Container has `flexWrap: "wrap"` so the longer label gracefully wraps to a second line on narrow phones. **Admin Players (`src/app/thomas-admin/tabs/Players.tsx`):** new-player form input placeholder `Handicap` → `Handicap Index`; desktop column header `Handicap` → `Handicap Index`; mobile card meta line `Strokes ${HI}` / `No Strokes` → `Handicap Index: ${HI}` / `No Handicap Index`; "No Strokes" amber pill on desktop → `Not on file` (matches existing scorecard tee-selection copy); inline action buttons (mobile + desktop) `Add Strokes` / `Edit Strokes` → `Add HI` / `Edit HI` (compact form for tight 160px desktop action cell and narrow mobile right-column). **Player profile (`src/app/player/[id]/page.tsx`):** per-round meta `Strokes: ${course_handicap}` → `Course Handicap: ${course_handicap}`. Profile header at line 153 already read `Handicap Index` correctly — left alone. **Decisions Locked:** new `### Terminology` subsection at the top of Decisions Locked codifies HI vs CH and the "no bare Strokes/Handicap" display rule. Old "Strokes terminology" Phase A bullet removed (superseded). "Strokes display" bullet renamed to "Stroke-allocation dots" to clarify it's about the per-hole stroke indicator, not the disallowed bare label. **Option C chosen for the scorecard player row:** show both Course Handicap and Handicap Index side-by-side. Reasoning: during early league use the league members are still building intuition about the two quantities, and surfacing both makes the slope adjustment visible per round. May revert to Option A (CH only on scorecard) once the league has settled if the row reads cluttered in real-world use. No math changes, no engine changes, no schema changes. 151/151 tests pass; all four snapshots clean; `tsc --noEmit` clean. |
+| May 9 | First live-course feedback session. Phone consultation with Dad covering the May 8 round. **Two critical bugs identified:** scorecard CH displaying wrong values vs DB (Kevin/Wayne examples confirmed live), and scores reverting to par on hole navigation (reproduced by two testers same round). New **Phase 0.5** created for these — investigation + fixes ship before any other phase work, with Vercel preview deployed for Dad to verify on his phone before merging to master. **Format set rebalanced:** Stableford Modified and GOBS House dropped from codebase, format enum, UI, tests, snapshots, and roadmap. **GOBS Stableford** added as a new format with league-specific point table (Albatross/Eagle/Birdie/Par/Bogey/DB+ = +8/+5/+2/0/−1/−2). **Stableford Standard** retains canonical USGA values (Bogey 1, Par 2, Birdie 3, Eagle 4, Albatross 5, DB+ 0); verified against current code as part of A1.1, expected to ship as a no-fix verification. **Best Ball** added as the 5th format, locked to net-only with strict best-1 selection regardless of team size; net/gross toggle disabled in picker; override-holes a documented no-op. **Format picker entry point** moved from scorecard-gated to admin Round Setup tab to match Dad's actual workflow (admin picks format before pairings are drawn). **Blind Draw work (Phase D.1) reprioritized ahead of Phase C PR 3** per Dad's request — blind draw applies roughly every other round due to typical odd-player counts, needs real-round testing. **Phase D.2 (rainout) deleted** — league rule: if play stops, no payouts, round doesn't count, no app-side partial-round handling. **Phase H.4 deleted** (dependent on D.2). **Open Question Q8 deleted** (answered by deletion of D.2). **Phase H.2 (DB backup) elevated:** now also blocks historical data import — Dad wants to enter 2026 historical rounds and needs partial-reset workflow first. New scorecard items in Phase A.1: F9/B9/Total on team-net pill (drives Nassau bet payouts), tap-player-row expand hole-by-hole. New Phase H deliverables: H6 QR code, H7 Add-to-Home-Screen instructions doc, H8 one-shot DB export for Dad's manual verification. **BFB fund visibility on home page** added to Phase F.2 (F2.8). New Decisions Locked: Stableford point values (Standard USGA + GOBS values), Best Ball spec, rainout cancellation, non-paying player handling, format selection entry point, format set (5 formats). TD7 (Stableford Modified edit UI) voided. **Active priority order (post-May 9):** Phase 0.5 → Phase A.1 → Phase D.1 → Phase H.2 → Phase C PR 3 → Phase E onward. Roadmap-only commit; investigation diagnostics for LT1 + LT2 and subsequent fixes follow as separate commits. |
 | May 8 | Phase C, PR 2 — C1 + C2: live team leaderboard rebuild. **Route shuffle:** `git mv`'d `src/app/leaderboard/page.tsx` → `src/app/season/page.tsx` verbatim (preserves the existing per-player season stats page exactly as-is, including the `show_leaderboard` admin gate behavior). Bottom nav in `layout.tsx` unchanged — still routes to `/leaderboard`, now the team view. **New page:** `src/app/leaderboard/page.tsx`. Four state branches: (a) `no_round` — no row in `rounds` for today's date; (b) `no_format` — round exists but `format` is null; (c) `live` — round exists with format, `is_complete` false; (d) `complete` — `is_complete` true. States (a) and (b) render the same dashed-border empty card + "View season stats →" link to `/season`; the only differences are the in-page navy state strip's subtitle ("No round today" vs "Round in progress") and whether the format chip appears below the date. **Engine reuse:** scoring-engine `computeRoundResult` called once per team with `getScoringBasis` → `useGross` → zero-handicap trick already established in scorecard/summary. Display value passed to `formatTeamTotal` is `teamScore - teamPar`, which collapses to absolute team points for Stableford (engine returns `teamPar = 0` there). **Color coding:** Stableford-family score → blue (`#2563eb`) regardless of sign; best-N score → green (under par) / red (over par) / black (even). 1st-place rank circle is `#d4a017` gold, others navy. **Pure helpers** in new `src/lib/leaderboard/rank.ts`: `rankTeams<T>(teams, format)` (decorate-sort-undecorate, format-aware direction, stable on ties, "skip" tie-rank semantics) and `holesCompleteForTeam(scoresByPlayer, requiredPlayerIds)` ("thru N" = hole counts only when every required player has a non-null score). Both pure, no DB. **Tests:** 13 new in `tests/lib/leaderboard/rank.test.ts` covering best-N ascending, Stableford descending, two-team tie at 1st (next is rank 3), three-way tie, all-tied, single team, GOBS House negatives, immutability, plus three thru-N edge cases (basic, empty required list, null/undefined treated identically). **Out of scope deliberately:** state-aware GLOBAL app-header subtitle from the mockup; instead, an in-page navy strip on the leaderboard page only. The global header in `layout.tsx` stays "Semiahmoo Golf & Country Club" — a per-page dynamic subtitle would require a layout-level prop drill or context. Easy follow-up if Dad wants. **Drill-in routing:** rows tap through to existing `/round/[id]/summary` page; PR 3 rebuilds that. **Verification:** 151/151 unit tests pass; all four snapshots clean (no engine math touched); `tsc --noEmit` clean. **Tech debt logged:** TD13 — the `show_leaderboard` admin setting now gates the relocated `/season` page rather than the new live `/leaderboard`; label intent no longer matches; resolve during Settings tab polish (alongside TD10). |
 | May 7 (night) | Phase C, PR 1 — C3: Format-aware team total display. New `formatTeamTotal(total, format)` helper in `src/lib/format/copy.ts`. Best-N input is interpreted as a stroke delta vs par → `+N` / `−N` / `E`. Stableford-family input is interpreted as absolute team points → `${total} pts`. Both branches use Unicode minus (U+2212) for negatives — matters for GOBS House where `−1` deductions can drop a team's points total below zero. **Sites swapped:** scorecard team net pill (`src/app/round/[id]/scorecard/page.tsx:617`) — passes `teamNet - teamPar`; for Stableford, `teamPar` (= `teamParAtScored`) is 0 by engine contract, so the delta naturally collapses to the absolute points total and the helper's Stableford branch renders correctly. Round summary (`src/app/round/[id]/summary/page.tsx:281`) — gated branch: Stableford-family routes through helper for "X pts"; best-N keeps the existing raw absolute display (e.g. `37` not `+5`) since the summary never used the delta convention pre-PR. **Sites NOT swapped:** `src/app/leaderboard/page.tsx` is the season-level individual leaderboard, no team totals — no swap; live in-round team leaderboard belongs to C1/C2 which are still 📋. Player profile's `scoreLabel` is per-player vs par 72 — explicitly out of scope per user. **Tests:** 5 new in new file `tests/lib/format/copy.test.ts` covering 2_ball positive/negative/zero, stableford_standard positive, gobs_house negative. **138/138 tests pass; all four snapshots clean** (no engine math touched). C1, C2, C4–C6 still 📋. Note: the helper has asymmetric input semantics (delta for best-N, absolute for Stableford); the contract is documented inline at the helper's definition. **Phase C follow-up logged:** scorecard pill (delta) and summary (raw absolute) currently disagree on stroke convention; resolve uniformly to delta during PR 2/3 leaderboard/drill-in work — see Phase C section's follow-up note for the design call. |
 | May 7 (late) | **Phase B fully complete.** Shipped B3.1 + B3.2 + B3.3: per-round override holes admin UI + persistent net/gross toggle + on-scorecard override banner. **Type / helpers:** `FormatConfig.scoring_basis?: "net" \| "gross"` added (optional for backward compat). New helpers in `src/lib/format/helpers.ts`: `getScoringBasis(config)` (defaults to "net" for null/undefined/missing-key configs) and `getOverrideHoles(config)` (defensive [] fallback). `DEFAULT_FORMAT_CONFIG` seeds `scoring_basis: "net"` for every format. **FormatPicker rewrite:** two-step flow — pick format → reveal Scoring basis segmented control (Net / Gross) + 6×3 hole grid for override_holes with "9 & 18" preset and "Clear all" utility → Save commits everything in a single update. Stableford / Stableford Modified / GOBS House render the override section at 0.55 opacity with an inline "(no effect on Stableford formats)" caption — admin can still tap, but engine treats override_holes as a no-op there. Save button disabled until something differs from current config. **Mid-round guard (Change 3):** moved out of FormatChip and into FormatPicker's Save click. Single DangerModal ("Change scoring rules mid-round?" / "Scores will be re-totaled under the new rules.") fires when `format_locked_at` is set AND any of (format, scoring_basis, override_holes) differ from saved. FormatChip simplified — taps now open the picker directly; the chip's old format-only DangerModal is gone. `format_locked_at` is **not** modified during a rules edit (semantics preserved). **Engine integration trick:** zero-handicap-on-gross applied at both call sites (`src/app/round/[id]/scorecard/page.tsx` `computeHoleFor` + `buildRoundInput`, and `src/app/round/[id]/summary/page.tsx` `computeRoundResult` calls). When `getScoringBasis(config) === "gross"`, every player's `courseHandicap` is passed as 0; engine net pathway returns gross-equivalent values uniformly. Works for Stableford too (no engine change needed — Stableford has no internal `basis` branch). Note: this means Stableford summary's gross/net view toggle now shows divergent numbers on net-mode rounds (was identical pre-PR — the gross column was effectively dead) — a strict improvement, but a quiet behavior change for any Stableford round already in the DB. **Scorecard override banner (B3.3):** soft yellow banner ("All scores count on this hole") rendered between hole header and team-net pill when current hole is in override_holes. Gated on `isBestNFormat` since the override has no effect in Stableford and showing the banner there would mislead. Visible to all users (no admin gate). **Tests:** 11 new — 9 helper tests in `tests/lib/format/helpers.test.ts` (getScoringBasis, getOverrideHoles, scoring_basis seed in defaults), 2 engine tests in new file `tests/lib/scoring/engine-gross.test.ts` confirming zero-handicap collapses Stableford net to gross and 2-Ball gross == net under the same trick. **133/133 tests pass.** All four snapshots clean — round 47 (which was driving the 8 TD11 false-positives this morning) now produces no mismatches in any of b2/b3/b4/b5, suggesting it was either deleted or converted to 2_ball between sessions. TD11 stays open until the snapshot scripts get the format-filter guard regardless. No new migrations required (`scoring_basis` is optional and read with a "net" fallback). Out of scope / deferred: TD7 Stableford Modified per-round point-value edit UI; the summary page's gross/net view toggle UX in admin-gross-mode rounds (where both columns now show the same number — Phase C concern); cleanup of the legacy `FormatConfig.basis` field which is now a per-call display switch only and could be removed/renamed in a separate refactor. New tech debt logged: **TD12** — the picker's two-step flow adds friction to the previously one-tap fresh-round save path; add a "Quick Save" affordance only if real admin use surfaces the friction. |
