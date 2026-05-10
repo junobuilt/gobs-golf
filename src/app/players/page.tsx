@@ -193,8 +193,8 @@ export default function PlayersPage() {
                             marginBottom: "12px",
                           }}>
                             <StatTile label="Rounds" value={stats.roundsPlayed} />
-                            <StatTile label="Avg Score" value={stats.avgScore ?? "—"} />
-                            <StatTile label="Best" value={stats.bestScore ?? "—"} />
+                            <StatTile label="Avg Score" value={stats.avgGross ?? "—"} />
+                            <StatTile label="Best" value={stats.best ?? "—"} />
                           </div>
                           {stats.lastRound && (
                             <div style={{

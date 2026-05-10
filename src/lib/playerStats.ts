@@ -7,17 +7,33 @@ export type PlayerStatsFilter = {
 
 export type PlayerStats = {
   roundsPlayed: number;
-  avgScore: number | null;
-  bestScore: number | null;
+  avgGross: number | null;
+  avgNet: number | null;
+  best: number | null;
+  worst: number | null;
+  /** Last 5 round totals, newest-first. */
+  recent5: number[];
+  recent5AvgGross: number | null;
+  /** All round totals, oldest-first (chronological — sparkline reads left-to-right). */
+  allTotals: number[];
   lastRound: { playedOn: string; totalStrokes: number } | null;
 };
 
 const EMPTY_STATS: PlayerStats = {
   roundsPlayed: 0,
-  avgScore: null,
-  bestScore: null,
+  avgGross: null,
+  avgNet: null,
+  best: null,
+  worst: null,
+  recent5: [],
+  recent5AvgGross: null,
+  allTotals: [],
   lastRound: null,
 };
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
 
 export async function fetchPlayerStats(
   playerId: number,
@@ -28,6 +44,7 @@ export async function fetchPlayerStats(
     .select(
       `
         round_id,
+        course_handicap,
         rounds!inner ( played_on, is_complete ),
         scores ( strokes )
       `,
@@ -49,6 +66,7 @@ export async function fetchPlayerStats(
   type RoundRow = { played_on: string | null; is_complete: boolean | null };
   type Row = {
     round_id: number;
+    course_handicap: number | null;
     rounds: RoundRow | RoundRow[] | null;
     scores: ScoreRow[] | null;
   };
@@ -62,26 +80,63 @@ export async function fetchPlayerStats(
         (sum, s) => sum + (s?.strokes ?? 0),
         0,
       );
-      return { playedOn, totalStrokes, scoreCount: scores.length };
+      return {
+        playedOn,
+        totalStrokes,
+        scoreCount: scores.length,
+        courseHandicap: rp.course_handicap,
+      };
     })
     .filter((r) => r.scoreCount > 0 && r.playedOn !== "");
 
   if (rounds.length === 0) return EMPTY_STATS;
 
-  const totalStrokesSum = rounds.reduce((sum, r) => sum + r.totalStrokes, 0);
-  const avgScore = Math.round((totalStrokesSum / rounds.length) * 10) / 10;
-  const bestScore = Math.min(...rounds.map((r) => r.totalStrokes));
+  const sortedAsc = [...rounds].sort((a, b) =>
+    a.playedOn.localeCompare(b.playedOn),
+  );
+  const sortedDesc = [...rounds].sort((a, b) =>
+    b.playedOn.localeCompare(a.playedOn),
+  );
 
-  const sorted = [...rounds].sort((a, b) => b.playedOn.localeCompare(a.playedOn));
+  const allTotals = sortedAsc.map((r) => r.totalStrokes);
+
+  const totalSum = allTotals.reduce((s, n) => s + n, 0);
+  const avgGross = round1(totalSum / allTotals.length);
+  const best = Math.min(...allTotals);
+  const worst = Math.max(...allTotals);
+
+  const withCH = rounds.filter((r) => r.courseHandicap != null);
+  const avgNet =
+    withCH.length > 0
+      ? round1(
+          withCH.reduce(
+            (sum, r) => sum + (r.totalStrokes - (r.courseHandicap as number)),
+            0,
+          ) / withCH.length,
+        )
+      : null;
+
+  const recent5Rounds = sortedDesc.slice(0, 5);
+  const recent5 = recent5Rounds.map((r) => r.totalStrokes);
+  const recent5AvgGross =
+    recent5.length > 0
+      ? round1(recent5.reduce((s, n) => s + n, 0) / recent5.length)
+      : null;
+
   const lastRound = {
-    playedOn: sorted[0].playedOn,
-    totalStrokes: sorted[0].totalStrokes,
+    playedOn: sortedDesc[0].playedOn,
+    totalStrokes: sortedDesc[0].totalStrokes,
   };
 
   return {
     roundsPlayed: rounds.length,
-    avgScore,
-    bestScore,
+    avgGross,
+    avgNet,
+    best,
+    worst,
+    recent5,
+    recent5AvgGross,
+    allTotals,
     lastRound,
   };
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
 
 type Player = {
   id: number;
@@ -26,11 +27,13 @@ export default function PlayerProfilePage() {
 
   const [player, setPlayer] = useState<Player | null>(null);
   const [rounds, setRounds] = useState<RoundResult[]>([]);
+  const [stats, setStats] = useState<PlayerStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   useEffect(() => {
     async function load() {
-      // Fetch player info
       const { data: playerData } = await supabase
         .from("players")
         .select("id, full_name, display_name, handicap_index")
@@ -40,7 +43,6 @@ export default function PlayerProfilePage() {
       if (playerData) {
         setPlayer(playerData);
 
-        // Fetch their rounds with scores
         const { data: roundPlayers } = await supabase
           .from("round_players")
           .select(`
@@ -70,6 +72,9 @@ export default function PlayerProfilePage() {
             }));
           setRounds(results);
         }
+
+        const s = await fetchPlayerStats(Number(playerId));
+        setStats(s);
       }
       setLoading(false);
     }
@@ -100,15 +105,6 @@ export default function PlayerProfilePage() {
       </div>
     );
   }
-
-  const avgScore =
-    rounds.length > 0
-      ? Math.round(
-          (rounds.reduce((sum, r) => sum + r.total_strokes, 0) / rounds.length) * 10
-        ) / 10
-      : null;
-  const bestScore =
-    rounds.length > 0 ? Math.min(...rounds.map((r) => r.total_strokes)) : null;
 
   function formatDate(dateStr: string) {
     const date = new Date(dateStr + "T12:00:00");
@@ -156,90 +152,309 @@ export default function PlayerProfilePage() {
         )}
       </div>
 
-      {/* Stats cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "20px" }}>
-        <div className="card" style={{ textAlign: "center", padding: "14px 8px" }}>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--green-700)" }}>
-            {rounds.length}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Rounds</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "14px 8px" }}>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--green-700)" }}>
-            {avgScore ?? "—"}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Avg Score</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "14px 8px" }}>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--green-700)" }}>
-            {bestScore ?? "—"}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Best</div>
-        </div>
-      </div>
+      {/* I3 — Season Stats accordion */}
+      <AccordionSection
+        title="Season Stats"
+        open={statsOpen}
+        onToggle={() => setStatsOpen((v) => !v)}
+      >
+        <SeasonStatsPanel stats={stats} />
+      </AccordionSection>
 
-      {/* Round history */}
-      <h3 style={{
-        fontFamily: "var(--font-display)",
-        fontSize: "1.1rem",
-        color: "var(--green-900)",
-        marginBottom: "10px",
-      }}>
-        Round History
-      </h3>
-
-      {rounds.length === 0 ? (
-        <div className="card">
-          <div className="empty-state">
+      {/* I1 — Round History accordion */}
+      <AccordionSection
+        title={`Round History (${rounds.length})`}
+        open={historyOpen}
+        onToggle={() => setHistoryOpen((v) => !v)}
+      >
+        {rounds.length === 0 ? (
+          <div className="empty-state" style={{ padding: "12px 0" }}>
             <p style={{ fontWeight: 600 }}>No rounds recorded yet</p>
             <p style={{ fontSize: "0.85rem" }}>
               Scores will appear here after the first round
             </p>
           </div>
-        </div>
-      ) : (
-        <div style={{
-          background: "var(--white)",
-          borderRadius: "var(--card-radius)",
-          overflow: "hidden",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-          border: "1px solid rgba(0,0,0,0.04)",
+        ) : (
+          <div style={{
+            background: "var(--white)",
+            borderRadius: "var(--card-radius)",
+            overflow: "hidden",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+            border: "1px solid rgba(0,0,0,0.04)",
+          }}>
+            {rounds.map((round) => (
+              <Link
+                key={round.round_id}
+                href={`/round/${round.round_id}/scorecard`}
+                className="player-row"
+              >
+                <div>
+                  <div className="player-name">{formatDate(round.played_on)}</div>
+                  <div className="player-meta">
+                    {round.tee_color} tees
+                    {round.course_handicap !== null &&
+                      ` · Course Handicap: ${round.course_handicap}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{
+                    fontSize: "1.3rem",
+                    fontWeight: 700,
+                    color: "var(--green-900)",
+                  }}>
+                    {round.total_strokes}
+                  </div>
+                  <div style={{
+                    fontSize: "0.8rem",
+                    color: round.total_strokes <= 72
+                      ? "var(--green-600)"
+                      : "var(--text-muted)",
+                  }}>
+                    {scoreLabel(round.total_strokes)}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </AccordionSection>
+    </div>
+  );
+}
+
+function AccordionSection({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{
+      marginBottom: "12px",
+      background: "var(--white)",
+      borderRadius: "var(--card-radius)",
+      overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+      border: "1px solid rgba(0,0,0,0.04)",
+    }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          padding: "14px 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          cursor: "pointer",
+          font: "inherit",
+          textAlign: "left",
+        }}
+      >
+        <span style={{
+          fontFamily: "var(--font-display)",
+          fontSize: "1.05rem",
+          fontWeight: 700,
+          color: "var(--green-900)",
         }}>
-          {rounds.map((round) => (
-            <Link
-              key={round.round_id}
-              href={`/round/${round.round_id}/scorecard`}
-              className="player-row"
-            >
-              <div>
-                <div className="player-name">{formatDate(round.played_on)}</div>
-                <div className="player-meta">
-                  {round.tee_color} tees
-                  {round.course_handicap !== null &&
-                    ` · Course Handicap: ${round.course_handicap}`}
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{
-                  fontSize: "1.3rem",
-                  fontWeight: 700,
-                  color: "var(--green-900)",
-                }}>
-                  {round.total_strokes}
-                </div>
-                <div style={{
-                  fontSize: "0.8rem",
-                  color: round.total_strokes <= 72
-                    ? "var(--green-600)"
-                    : "var(--text-muted)",
-                }}>
-                  {scoreLabel(round.total_strokes)}
-                </div>
-              </div>
-            </Link>
-          ))}
+          {title}
+        </span>
+        <svg
+          width="16" height="16" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth={2}
+          style={{
+            color: "var(--text-muted)",
+            transition: "transform 150ms ease",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          }}
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div style={{
+          padding: "0 16px 16px",
+          borderTop: "1px solid rgba(0,0,0,0.04)",
+          paddingTop: "12px",
+        }}>
+          {children}
         </div>
       )}
     </div>
+  );
+}
+
+function SeasonStatsPanel({ stats }: { stats: PlayerStats | null }) {
+  if (!stats || stats.roundsPlayed === 0) {
+    return (
+      <div className="empty-state" style={{ padding: "12px 0" }}>
+        <p style={{ fontWeight: 600 }}>No rounds yet</p>
+      </div>
+    );
+  }
+
+  const showComparison =
+    stats.recent5AvgGross != null &&
+    stats.avgGross != null &&
+    stats.roundsPlayed > 1;
+
+  let trendLabel: string | null = null;
+  let trendDelta: string | null = null;
+  if (showComparison) {
+    const delta = (stats.recent5AvgGross as number) - (stats.avgGross as number);
+    if (Math.abs(delta) < 0.1) {
+      trendLabel = "trending steady";
+    } else if (delta < 0) {
+      trendLabel = "trending better";
+      trendDelta = `↓ ${Math.abs(delta).toFixed(1)}`;
+    } else {
+      trendLabel = "trending worse";
+      trendDelta = `↑ ${delta.toFixed(1)}`;
+    }
+  }
+
+  const recentN = Math.min(5, stats.recent5.length);
+
+  return (
+    <div>
+      {/* Base stats line */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(5, 1fr)",
+        gap: "6px",
+        marginBottom: "12px",
+      }}>
+        <StatTile label="Rounds" value={stats.roundsPlayed} />
+        <StatTile label="Avg Gross" value={stats.avgGross ?? "—"} />
+        <StatTile label="Avg Net" value={stats.avgNet ?? "—"} />
+        <StatTile label="Best" value={stats.best ?? "—"} />
+        <StatTile label="Worst" value={stats.worst ?? "—"} />
+      </div>
+
+      {/* Comparison + trend */}
+      {showComparison && (
+        <div style={{
+          fontSize: "0.85rem",
+          color: "var(--text-secondary)",
+          marginBottom: "8px",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flexWrap: "wrap",
+        }}>
+          <span>
+            Last {recentN}: <strong>{stats.recent5AvgGross?.toFixed(1)}</strong>
+          </span>
+          <span>·</span>
+          <span>
+            all-time: <strong>{stats.avgGross?.toFixed(1)}</strong>
+          </span>
+          {trendDelta && (
+            <>
+              <span>·</span>
+              <span style={{
+                color: trendLabel === "trending better"
+                  ? "var(--green-600)"
+                  : "var(--text-secondary)",
+                fontWeight: 600,
+              }}>
+                {trendDelta}
+              </span>
+            </>
+          )}
+          {trendLabel && (
+            <>
+              <span>·</span>
+              <span style={{
+                fontStyle: "italic",
+                color: "var(--text-muted)",
+              }}>
+                {trendLabel}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Sparkline */}
+      <Sparkline totals={stats.allTotals} />
+
+      {/* Recent scores list */}
+      {stats.recent5.length > 0 && (
+        <div style={{
+          fontSize: "0.85rem",
+          color: "var(--text-secondary)",
+          marginTop: "10px",
+        }}>
+          Recent: {stats.recent5.join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatTile({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div style={{
+      background: "var(--bg-warm, #f2f1ed)",
+      border: "1px solid rgba(0,0,0,0.04)",
+      borderRadius: "8px",
+      padding: "8px 4px",
+      textAlign: "center",
+    }}>
+      <div style={{
+        fontSize: "1.05rem",
+        fontWeight: 700,
+        color: "var(--green-900)",
+      }}>
+        {value}
+      </div>
+      <div style={{
+        fontSize: "0.65rem",
+        color: "var(--text-muted)",
+        marginTop: "2px",
+      }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function Sparkline({ totals }: { totals: number[] }) {
+  if (totals.length < 2) return null;
+  const W = 320;
+  const H = 50;
+  const PAD = 4;
+  const min = Math.min(...totals);
+  const max = Math.max(...totals);
+  const range = max - min || 1;
+  const xStep = (W - 2 * PAD) / (totals.length - 1);
+  const pts = totals.map((t, i) => ({
+    x: PAD + i * xStep,
+    y: PAD + ((max - t) / range) * (H - 2 * PAD),
+  }));
+  const d = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(" ");
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", height: "50px", display: "block", marginTop: "4px" }}
+      aria-hidden
+    >
+      <path d={d} fill="none" stroke="var(--green-700)" strokeWidth={1.5} />
+      {pts.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r={2} fill="var(--green-700)" />
+      ))}
+    </svg>
   );
 }
