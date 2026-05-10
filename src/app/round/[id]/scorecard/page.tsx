@@ -83,11 +83,12 @@ export default function ScorecardPage() {
         .select("format, format_config, format_locked_at, is_complete")
         .eq("id", roundId)
         .maybeSingle();
+      const roundIsComplete = !!roundRow?.is_complete;
       if (roundRow) {
         setRoundFormat((roundRow.format ?? null) as Format | null);
         setRoundFormatConfig((roundRow.format_config ?? null) as FormatConfig | null);
         setRoundFormatLockedAt((roundRow.format_locked_at ?? null) as string | null);
-        setIsRoundComplete(!!roundRow.is_complete);
+        setIsRoundComplete(roundIsComplete);
       }
 
       const { data: teesData } = await supabase
@@ -114,13 +115,46 @@ export default function ScorecardPage() {
       const { data: rp } = await query.order("id");
 
       if (rp && rp.length > 0) {
-        const playersData: RoundPlayer[] = rp.map((r: any) => ({
+        let playersData: RoundPlayer[] = rp.map((r: any) => ({
           id: r.id,
           tee_id: r.tee_id,
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
         }));
+
+        // LT1 fix (2026-05-09): recompute Course Handicap on every load from
+        // the player's current handicap_index + selected tee. The stored
+        // round_players.course_handicap is a snapshot captured at round-
+        // creation and goes stale if admin edits HI after the round is
+        // created (the original LT1 symptom on Kevin/Wayne, May 8 round).
+        // Self-healing per page load. Single source of truth in this file:
+        // row CH display, dots, and engine all read rp.course_handicap from
+        // state, so updating playersData here corrects all three sites.
+        // Skip on completed rounds (frozen historical data) and on players
+        // missing HI or tee. DB writeback is fire-and-forget so downstream
+        // consumers (summary, leaderboard, season) read the corrected value
+        // on their next load — they don't currently recompute themselves.
+        if (!roundIsComplete) {
+          playersData = playersData.map(p => {
+            if (p.handicap_index == null || p.tee_id == null) return p;
+            const tee = formattedTees.find(t => t.id === p.tee_id);
+            if (!tee) return p;
+            const expected = computeCourseHandicap(
+              p.handicap_index, tee.slope_rating, tee.course_rating, tee.par,
+            );
+            if (expected === p.course_handicap) return p;
+            // Fire-and-forget DB writeback. Local state already corrected
+            // above; the write is for downstream consumers (summary,
+            // leaderboard, season) that read the cached value directly.
+            void supabase.from("round_players")
+              .update({ course_handicap: expected })
+              .eq("id", p.id)
+              .then(() => { /* swallow; reload will retry on next mount */ });
+            return { ...p, course_handicap: expected };
+          });
+        }
+
         setRoundPlayers(playersData);
 
         const allSet = playersData.every(p => p.tee_id !== null && p.tee_id !== 0);

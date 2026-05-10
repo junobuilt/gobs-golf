@@ -45,4 +45,18 @@ describe("computeCourseHandicap", () => {
   it("scales by slope/113", () => {
     expect(computeCourseHandicap(10, 130, 72, 72)).toBe(Math.round(10 * 130 / 113));
   });
+
+  // LT1 regression anchors (2026-05-09). Documented values from the May 8
+  // first-live-course test: Semiahmoo white/yellow combo tee uses estimated
+  // slope 120 and rating 67.6 (par 72) until pro shop confirms. Kevin's
+  // current HI is 12.5 → 9; Wayne's is 20.1 → 17. The scorecard previously
+  // displayed cached values (6 and 14) computed from older HIs before
+  // admin updates. Recompute-on-load now produces these values directly.
+  it("matches Kevin's documented Course Handicap on the white/yellow combo", () => {
+    expect(computeCourseHandicap(12.5, 120, 67.6, 72)).toBe(9);
+  });
+
+  it("matches Wayne's documented Course Handicap on the white/yellow combo", () => {
+    expect(computeCourseHandicap(20.1, 120, 67.6, 72)).toBe(17);
+  });
 });
