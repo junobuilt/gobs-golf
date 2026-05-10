@@ -48,10 +48,11 @@ export default function PlayerProfilePage() {
             round_id,
             course_handicap,
             tees ( color ),
-            rounds ( played_on ),
+            rounds!inner ( played_on, is_complete ),
             scores ( strokes )
           `)
           .eq("player_id", playerId)
+          .eq("rounds.is_complete", true)
           .order("round_id", { ascending: false });
 
         if (roundPlayers) {
