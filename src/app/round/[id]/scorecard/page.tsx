@@ -221,6 +221,18 @@ export default function ScorecardPage() {
 
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
+    // LT2 instrumentation (lt2-repro branch only — remove before merge).
+    // Logs every score write with caller stack so we can tell apart
+    // intentional +/- taps from phantom invocations.
+    if (typeof window !== "undefined") {
+      // eslint-disable-next-line no-console
+      console.log("[LT2][setScore]", {
+        rpId, hole, strokes,
+        prevValue: scores[rpId]?.[hole] ?? null,
+        ts: new Date().toISOString(),
+        stack: new Error().stack?.split("\n").slice(1, 6).join(" | "),
+      });
+    }
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
     // Clear manual override so best-2 recalculates from the new score
     setCountingOverrides(prev => {
@@ -568,6 +580,33 @@ export default function ScorecardPage() {
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
+  // LT2 instrumentation (lt2-repro branch only — remove before merge).
+  // Render-time mirror of the cumulative-pill inputs and per-player nets to
+  // a window global, so DevTools console can `__LT2()` between taps and
+  // capture before/after snapshots without lifting state into useState.
+  // Side effect in render is fine for an ephemeral debug build.
+  if (typeof window !== "undefined") {
+    const perPlayerSnapshot = roundPlayers.map(rp => ({
+      id: rp.id,
+      name: rp.display_name,
+      ch: rp.course_handicap,
+      hi: rp.handicap_index,
+      grossThisHole: scores[rp.id]?.[currentHole] ?? null,
+      netThisHole: getNetScore(rp, currentHole),
+    }));
+    (window as unknown as { __LT2: () => unknown }).__LT2 = () => ({
+      currentHole,
+      pill: { teamNet, teamGross, teamPar, displayValue: teamNet - teamPar, scoredHoles },
+      countingIds,
+      tiedForBall1, tiedForBall2,
+      isBestNFormat, isOverrideHole,
+      perPlayer: perPlayerSnapshot,
+      scoresByPlayer: scores,
+      countingOverridesByHole: countingOverrides,
+      capturedAt: new Date().toISOString(),
+    });
+  }
+
   return (
     <div style={{ padding: "15px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif", paddingBottom: "160px" }}>
       {/* Header */}
@@ -632,7 +671,13 @@ export default function ScorecardPage() {
           const hasScores = roundPlayers.some(rp => scores[rp.id]?.[h] != null);
           const hasOverride = !!countingOverrides[h];
           return (
-            <button key={h} onClick={() => setCurrentHole(h)} style={{
+            <button key={h} onClick={() => {
+              if (typeof window !== "undefined") {
+                // eslint-disable-next-line no-console
+                console.log("[LT2][nav-dot]", { from: currentHole, to: h, ts: new Date().toISOString() });
+              }
+              setCurrentHole(h);
+            }} style={{
               minWidth: "35px", height: "35px", borderRadius: "50%",
               border: h === currentHole ? "2px solid #0c3057" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
               background: h === currentHole ? "#0c3057" : hasScores ? "#dbeafe" : "white",
@@ -735,6 +780,14 @@ export default function ScorecardPage() {
                 onClick={() => {
                   const par = holeInfo?.par ?? 4;
                   const current = scores[rp.id]?.[currentHole];
+                  if (typeof window !== "undefined") {
+                    // eslint-disable-next-line no-console
+                    console.log("[LT2][btn-minus]", {
+                      rpId: rp.id, hole: currentHole, current, par,
+                      branch: current == null ? "land-on-par" : "decrement",
+                      ts: new Date().toISOString(),
+                    });
+                  }
                   setScore(rp.id, currentHole, current == null ? par : current - 1);
                 }}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
@@ -755,6 +808,14 @@ export default function ScorecardPage() {
                 onClick={() => {
                   const par = holeInfo?.par ?? 4;
                   const current = scores[rp.id]?.[currentHole];
+                  if (typeof window !== "undefined") {
+                    // eslint-disable-next-line no-console
+                    console.log("[LT2][btn-plus]", {
+                      rpId: rp.id, hole: currentHole, current, par,
+                      branch: current == null ? "land-on-par" : "increment",
+                      ts: new Date().toISOString(),
+                    });
+                  }
                   setScore(rp.id, currentHole, current == null ? par : current + 1);
                 }}
                 style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
@@ -775,7 +836,13 @@ export default function ScorecardPage() {
 
       {/* Navigation buttons */}
       <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-        <button onClick={() => setCurrentHole(h => Math.max(1, h - 1))} disabled={currentHole === 1}
+        <button onClick={() => {
+            if (typeof window !== "undefined") {
+              // eslint-disable-next-line no-console
+              console.log("[LT2][nav-back]", { from: currentHole, to: Math.max(1, currentHole - 1), ts: new Date().toISOString() });
+            }
+            setCurrentHole(h => Math.max(1, h - 1));
+          }} disabled={currentHole === 1}
           style={{
             flex: 1, padding: "18px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "white",
             cursor: currentHole === 1 ? "default" : "pointer", opacity: currentHole === 1 ? 0.4 : 1,
@@ -784,7 +851,13 @@ export default function ScorecardPage() {
           ← Back
         </button>
         {currentHole < 18 ? (
-          <button onClick={() => setCurrentHole(h => h + 1)} style={{
+          <button onClick={() => {
+            if (typeof window !== "undefined") {
+              // eslint-disable-next-line no-console
+              console.log("[LT2][nav-next]", { from: currentHole, to: currentHole + 1, ts: new Date().toISOString() });
+            }
+            setCurrentHole(h => h + 1);
+          }} style={{
             flex: 2, padding: "18px", borderRadius: "12px", background: "#0c3057",
             color: "white", border: "none", fontWeight: 900, cursor: "pointer", fontFamily: "sans-serif",
           }}>
