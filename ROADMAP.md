@@ -279,9 +279,9 @@
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| I1 | Player profile — round history accordion | 📋 | Collapsed by default. Tap to expand. Replaces auto-displayed history. |
+| I1 | Player profile — round history accordion | ✅ (2026-05-10) | Collapsed by default. Tap to expand. Replaces auto-displayed history. Title shows rounds-played count when collapsed. |
 | I2 | Player profile — Played With accordion | 📋 | Same pattern. Reuses Egocentric component from Phase E. |
-| I3 | Player profile — season stats summary | 📋 | Rounds played, avg gross, avg net, best/worst, scoring trend |
+| I3 | Player profile — season stats summary | ✅ (2026-05-10) | Rounds played, avg gross, avg net, best/worst, last-5 vs all-time comparison with trend label, inline SVG sparkline of all rounds, recent-5 scores list. |
 | I4 | Player profile — performance chart | 💡 | Line chart of scores over time |
 | I5 | Player profile — winnings/losses | 💡 | Deferred. Don't want it competitive. May add later if Dad asks. |
 | I6 | Team recommendation engine | 💡 | Suggest balanced teams based on handicap spread + played-with history. **This is where pair-balance math lives, not in played-with view.** |
