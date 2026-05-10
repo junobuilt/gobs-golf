@@ -289,8 +289,7 @@ export default function RoundSummaryPage() {
                       delta vs par and render "+37" / "−5", which is NOT the
                       summary's existing display behavior. Preserve. */}
                   {roundFormat === "stableford_standard" ||
-                   roundFormat === "stableford_modified" ||
-                   roundFormat === "gobs_house"
+                   roundFormat === "gobs_stableford"
                     ? formatTeamTotal(teamScore, roundFormat)
                     : teamScore}
                 </div>

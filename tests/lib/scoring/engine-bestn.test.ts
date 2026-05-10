@@ -34,4 +34,19 @@ describe("Best-N format defaults", () => {
     expect(result.teamScore).toBe(9); // 2 best = 4+5
     expect(result.contributingPlayerIds).toHaveLength(2);
   });
+
+  it("best_ball with missing best_n defaults to 1", () => {
+    const result = computeHoleResult({
+      format: "best_ball",
+      formatConfig: { basis: "net", override_holes: [] },
+      hole: { holeNumber: 1, par: 4, strokeIndex: 10 },
+      players: [
+        { playerId: "A", grossScore: 5, courseHandicap: 0 },
+        { playerId: "B", grossScore: 4, courseHandicap: 0 },
+        { playerId: "C", grossScore: 6, courseHandicap: 0 },
+      ],
+    });
+    expect(result.teamScore).toBe(4); // best 1 = 4
+    expect(result.contributingPlayerIds).toEqual(["B"]);
+  });
 });

@@ -12,6 +12,7 @@ import type {
 function defaultBestN(format: Format): number {
   if (format === "2_ball") return 2;
   if (format === "3_ball") return 3;
+  if (format === "best_ball") return 1;
   throw new Error(`Best-N undefined for format ${format}`);
 }
 
@@ -100,13 +101,16 @@ function computeBestNHole(input: HoleInput): HoleResult {
 }
 
 // ─── Stableford formats ─────────────────────────────────────────────────────
-// Standard / Modified / GOBS House are points-based: every player's net score
-// vs par maps to a points bucket; the team's hole score is the sum of all
-// non-null members' points. Higher team scores win.
+// Standard / GOBS Stableford are points-based: every player's net score vs par
+// maps to a points bucket; the team's hole score is the sum of all non-null
+// members' points. Higher team scores win.
 //
-// format_config.point_values (Stableford Modified only) may override any of
-// these keys: doubleBogeyOrWorse, bogey, par, birdie, eagle, albatross.
-// Keys not listed are ignored.
+// Stableford Standard's table is locked (not editable per round). GOBS
+// Stableford's table is editable per round via format_config.point_values —
+// admin overrides any of: doubleBogeyOrWorse, bogey, par, birdie, eagle,
+// albatross. Keys not listed fall through to the GOBS defaults.
+//
+// Both tables locked 2026-05-10. See ROADMAP "Stableford point values".
 
 type StablefordPointTable = {
   doubleBogeyOrWorse: number; // delta >= +2
@@ -117,18 +121,22 @@ type StablefordPointTable = {
   albatross: number;          // delta <= -3 (caps for any score better than albatross)
 };
 
-const STABLEFORD_STANDARD_POINTS: StablefordPointTable = {
+export const STABLEFORD_STANDARD_POINTS: StablefordPointTable = {
   doubleBogeyOrWorse: 0,
   bogey: 1,
   par: 2,
   birdie: 3,
-  eagle: 4,
-  albatross: 5,
+  eagle: 5,
+  albatross: 8,
 };
 
-const GOBS_HOUSE_POINTS: StablefordPointTable = {
-  ...STABLEFORD_STANDARD_POINTS,
+export const GOBS_STABLEFORD_POINTS: StablefordPointTable = {
   doubleBogeyOrWorse: -1,
+  bogey: 0,
+  par: 2,
+  birdie: 3,
+  eagle: 5,
+  albatross: 8,
 };
 
 function mergePointTable(
@@ -199,16 +207,15 @@ export function computeHoleResult(input: HoleInput): HoleResult {
   switch (input.format) {
     case "2_ball":
     case "3_ball":
+    case "best_ball":
       return computeBestNHole(input);
     case "stableford_standard":
       return computeStablefordHole(input, STABLEFORD_STANDARD_POINTS);
-    case "stableford_modified":
+    case "gobs_stableford":
       return computeStablefordHole(
         input,
-        mergePointTable(STABLEFORD_STANDARD_POINTS, input.formatConfig.point_values),
+        mergePointTable(GOBS_STABLEFORD_POINTS, input.formatConfig.point_values),
       );
-    case "gobs_house":
-      return computeStablefordHole(input, GOBS_HOUSE_POINTS);
   }
 }
 
@@ -222,9 +229,10 @@ export function computeRoundResult(input: RoundInput): RoundResult {
   let anyTeamScore = false;
 
   // teamParAtScored is a stroke-play concept (par × number of contributing
-  // scores). It's meaningful for 2-Ball / 3-Ball and stays at 0 for Stableford
-  // formats, which are points-based and have no team-level "par" reference.
-  const isBestN = format === "2_ball" || format === "3_ball";
+  // scores). It's meaningful for 2-Ball / 3-Ball / Best Ball and stays at 0
+  // for Stableford formats, which are points-based and have no team-level
+  // "par" reference.
+  const isBestN = format === "2_ball" || format === "3_ball" || format === "best_ball";
 
   for (const hole of holes) {
     const holeInput: HoleInput = {

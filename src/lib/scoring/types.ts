@@ -1,9 +1,9 @@
 export type Format =
   | "2_ball"
   | "3_ball"
+  | "best_ball"
   | "stableford_standard"
-  | "stableford_modified"
-  | "gobs_house";
+  | "gobs_stableford";
 
 export type FormatConfig = {
   basis: "net" | "gross";

@@ -4,9 +4,46 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
+import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 import { FORMAT_ORDER, FORMAT_LABELS } from "@/lib/format/copy";
 import { defaultConfigFor, getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import DangerModal from "@/app/thomas-admin/components/DangerModal";
+
+// GOBS Stableford editable point-value rows. Order is best-result-first so
+// admins reading the section see albatross → double bogey top-to-bottom.
+const GOBS_STABLEFORD_POINT_KEYS = [
+  { key: "albatross",          label: "Albatross" },
+  { key: "eagle",              label: "Eagle" },
+  { key: "birdie",             label: "Birdie" },
+  { key: "par",                label: "Par" },
+  { key: "bogey",              label: "Bogey" },
+  { key: "doubleBogeyOrWorse", label: "Double Bogey or worse" },
+] as const;
+type GobsPointKey = (typeof GOBS_STABLEFORD_POINT_KEYS)[number]["key"];
+
+const GOBS_STABLEFORD_DEFAULTS: Record<GobsPointKey, number> = {
+  albatross:          GOBS_STABLEFORD_POINTS.albatross,
+  eagle:              GOBS_STABLEFORD_POINTS.eagle,
+  birdie:             GOBS_STABLEFORD_POINTS.birdie,
+  par:                GOBS_STABLEFORD_POINTS.par,
+  bogey:              GOBS_STABLEFORD_POINTS.bogey,
+  doubleBogeyOrWorse: GOBS_STABLEFORD_POINTS.doubleBogeyOrWorse,
+};
+
+const POINT_VALUE_MIN = -10;
+const POINT_VALUE_MAX = 10;
+
+function readGobsPointValues(config: FormatConfig | null | undefined): Record<GobsPointKey, number> {
+  const pv = config?.point_values ?? {};
+  return {
+    albatross:          typeof pv.albatross          === "number" ? pv.albatross          : GOBS_STABLEFORD_DEFAULTS.albatross,
+    eagle:              typeof pv.eagle              === "number" ? pv.eagle              : GOBS_STABLEFORD_DEFAULTS.eagle,
+    birdie:             typeof pv.birdie             === "number" ? pv.birdie             : GOBS_STABLEFORD_DEFAULTS.birdie,
+    par:                typeof pv.par                === "number" ? pv.par                : GOBS_STABLEFORD_DEFAULTS.par,
+    bogey:              typeof pv.bogey              === "number" ? pv.bogey              : GOBS_STABLEFORD_DEFAULTS.bogey,
+    doubleBogeyOrWorse: typeof pv.doubleBogeyOrWorse === "number" ? pv.doubleBogeyOrWorse : GOBS_STABLEFORD_DEFAULTS.doubleBogeyOrWorse,
+  };
+}
 
 interface FormatPickerProps {
   open: boolean;
@@ -35,7 +72,7 @@ const C = {
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
 
-const STABLEFORD_FORMATS: Format[] = ["stableford_standard", "stableford_modified", "gobs_house"];
+const STABLEFORD_FORMATS: Format[] = ["stableford_standard", "gobs_stableford"];
 
 export default function FormatPicker({
   open,
@@ -52,6 +89,9 @@ export default function FormatPicker({
   const [overrideHoles, setOverrideHoles] = useState<number[]>(() =>
     [...getOverrideHoles(currentConfig)].sort((a, b) => a - b),
   );
+  const [pointValues, setPointValues] = useState<Record<GobsPointKey, number>>(() =>
+    readGobsPointValues(currentConfig),
+  );
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dangerOpen, setDangerOpen] = useState(false);
@@ -64,6 +104,7 @@ export default function FormatPicker({
       setSelectedFormat(currentFormat ?? null);
       setScoringBasis(getScoringBasis(currentConfig));
       setOverrideHoles([...getOverrideHoles(currentConfig)].sort((a, b) => a - b));
+      setPointValues(readGobsPointValues(currentConfig));
       setSaving(false);
       setErrorMessage(null);
       setDangerOpen(false);
@@ -78,20 +119,34 @@ export default function FormatPicker({
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  const baseline = useMemo(() => ({
-    format: currentFormat ?? null,
-    basis: getScoringBasis(currentConfig),
-    holes: [...getOverrideHoles(currentConfig)].sort((a, b) => a - b).join(","),
-  }), [currentFormat, currentConfig]);
+  const baseline = useMemo(() => {
+    const baselinePoints = readGobsPointValues(currentConfig);
+    return {
+      format: currentFormat ?? null,
+      basis: getScoringBasis(currentConfig),
+      holes: [...getOverrideHoles(currentConfig)].sort((a, b) => a - b).join(","),
+      pointsKey: GOBS_STABLEFORD_POINT_KEYS.map(k => `${k.key}:${baselinePoints[k.key]}`).join("|"),
+    };
+  }, [currentFormat, currentConfig]);
+
+  const pointsKeyNow = GOBS_STABLEFORD_POINT_KEYS.map(k => `${k.key}:${pointValues[k.key]}`).join("|");
+  const pointsChanged = selectedFormat === "gobs_stableford" && pointsKeyNow !== baseline.pointsKey;
+
+  const isStableford = selectedFormat != null && STABLEFORD_FORMATS.includes(selectedFormat);
+  const isBestBall = selectedFormat === "best_ball";
+  // Best Ball is locked to net per the May 9 decision (handicap equalization).
+  // Use a derived effective basis instead of mutating state in an effect — the
+  // toggle UI reads from this, and commitSave persists this value, so any
+  // stale "gross" choice from a previous format can't leak through.
+  const effectiveScoringBasis: "net" | "gross" = isBestBall ? "net" : scoringBasis;
 
   const hasChanges =
     selectedFormat !== baseline.format ||
-    scoringBasis !== baseline.basis ||
-    [...overrideHoles].sort((a, b) => a - b).join(",") !== baseline.holes;
+    effectiveScoringBasis !== baseline.basis ||
+    [...overrideHoles].sort((a, b) => a - b).join(",") !== baseline.holes ||
+    pointsChanged;
 
   if (!open) return null;
-
-  const isStableford = selectedFormat != null && STABLEFORD_FORMATS.includes(selectedFormat);
 
   function toggleHole(h: number) {
     setOverrideHoles(prev =>
@@ -112,6 +167,25 @@ export default function FormatPicker({
     setOverrideHoles([]);
   }
 
+  function setPointValue(key: GobsPointKey, raw: string) {
+    // Empty / "-" / "+" parsed as 0 — admin can keep typing past the sign.
+    // Caller-side clamp to [MIN, MAX] prevents typo blow-ups (e.g. 100).
+    let next: number;
+    if (raw === "" || raw === "-" || raw === "+") {
+      next = 0;
+    } else {
+      const parsed = Number(raw);
+      next = Number.isFinite(parsed) ? parsed : pointValues[key];
+    }
+    if (next > POINT_VALUE_MAX) next = POINT_VALUE_MAX;
+    if (next < POINT_VALUE_MIN) next = POINT_VALUE_MIN;
+    setPointValues(prev => ({ ...prev, [key]: next }));
+  }
+
+  function resetPointsToDefaults() {
+    setPointValues({ ...GOBS_STABLEFORD_DEFAULTS });
+  }
+
   async function commitSave() {
     if (!selectedFormat) return;
     setSaving(true);
@@ -122,9 +196,16 @@ export default function FormatPicker({
     const baseConfig = defaultConfigFor(selectedFormat);
     const nextConfig: FormatConfig = {
       ...baseConfig,
-      scoring_basis: scoringBasis,
+      scoring_basis: effectiveScoringBasis,
       override_holes: [...overrideHoles].sort((a, b) => a - b),
     };
+
+    // GOBS Stableford carries an editable point table per round. Other formats
+    // ignore point_values entirely — leave them on whatever the format default
+    // is so the engine never sees a stale table from a previous selection.
+    if (selectedFormat === "gobs_stableford") {
+      nextConfig.point_values = { ...pointValues };
+    }
 
     const { error } = await supabase
       .from("rounds")
@@ -281,14 +362,23 @@ export default function FormatPicker({
         {/* Rules sections — only shown after a format is selected. */}
         {selectedFormat && (
           <>
-            {/* Net / Gross segmented control */}
-            <div style={{ marginTop: 20 }}>
+            {/* Net / Gross segmented control. Best Ball is locked to net — UI
+                disables the control and renders a small caption. */}
+            <div style={{ marginTop: 20, opacity: isBestBall ? 0.55 : 1 }}>
               <div style={{
                 fontSize: "0.78rem", fontWeight: 700, color: C.navy,
                 textTransform: "uppercase", letterSpacing: "0.06em",
                 marginBottom: 8,
               }}>
                 Scoring basis
+                {isBestBall && (
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none", letterSpacing: 0,
+                  }}>
+                    (Best Ball is always net)
+                  </span>
+                )}
               </div>
               <div role="group" aria-label="Scoring basis"
                    style={{
@@ -299,12 +389,13 @@ export default function FormatPicker({
                      fontFamily: C.font,
                    }}>
                 {(["net", "gross"] as const).map((opt, idx) => {
-                  const active = scoringBasis === opt;
+                  const active = effectiveScoringBasis === opt;
+                  const disabled = saving || isBestBall;
                   return (
                     <button
                       key={opt}
-                      onClick={() => setScoringBasis(opt)}
-                      disabled={saving}
+                      onClick={() => { if (!isBestBall) setScoringBasis(opt); }}
+                      disabled={disabled}
                       style={{
                         flex: 1,
                         padding: "10px 12px",
@@ -314,7 +405,7 @@ export default function FormatPicker({
                         color: active ? "#fff" : C.text,
                         fontSize: "0.88rem",
                         fontWeight: active ? 700 : 500,
-                        cursor: saving ? "default" : "pointer",
+                        cursor: disabled ? "default" : "pointer",
                         textTransform: "capitalize",
                         fontFamily: C.font,
                       }}
@@ -406,6 +497,82 @@ export default function FormatPicker({
                 </button>
               </div>
             </div>
+
+            {/* GOBS Stableford editable point-values section. Only renders for
+                gobs_stableford — Standard's table is locked at the constant
+                and intentionally has no admin UI. */}
+            {selectedFormat === "gobs_stableford" && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{
+                  fontSize: "0.78rem", fontWeight: 700, color: C.navy,
+                  textTransform: "uppercase", letterSpacing: "0.06em",
+                  marginBottom: 8,
+                }}>
+                  Point values
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none", letterSpacing: 0,
+                  }}>
+                    (per round)
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {GOBS_STABLEFORD_POINT_KEYS.map(({ key, label }) => (
+                    <div
+                      key={key}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "8px 12px",
+                        background: "#fff",
+                        border: `1px solid ${C.cardBorder}`,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <span style={{ fontSize: "0.88rem", fontWeight: 500, color: C.text }}>
+                        {label}
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        value={pointValues[key]}
+                        onChange={e => setPointValue(key, e.target.value)}
+                        disabled={saving}
+                        min={POINT_VALUE_MIN}
+                        max={POINT_VALUE_MAX}
+                        step={1}
+                        aria-label={`${label} points`}
+                        style={{
+                          width: 64, padding: "6px 8px",
+                          border: `1px solid ${C.cardBorder}`, borderRadius: 6,
+                          fontSize: "0.95rem", fontWeight: 600,
+                          color: C.text, background: "#fff",
+                          textAlign: "right",
+                          fontFamily: C.font,
+                          outline: "none",
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={resetPointsToDefaults}
+                  disabled={saving}
+                  type="button"
+                  style={{
+                    marginTop: 10,
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    fontSize: "0.8rem", fontWeight: 600, color: C.navy,
+                    cursor: saving ? "default" : "pointer",
+                    fontFamily: C.font,
+                    textDecoration: "underline",
+                  }}
+                >
+                  Reset to defaults
+                </button>
+              </div>
+            )}
           </>
         )}
 

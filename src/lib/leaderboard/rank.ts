@@ -11,8 +11,7 @@ export type RankedTeam<T> = TeamWithTotal<T> & { rank: number };
 
 const STABLEFORD_FORMATS: Format[] = [
   "stableford_standard",
-  "stableford_modified",
-  "gobs_house",
+  "gobs_stableford",
 ];
 
 export function isStablefordFormat(format: Format): boolean {

@@ -57,9 +57,11 @@ export default function AdminPage() {
         s.forEach((row: { key: string; value: string }) => { map[row.key] = row.value; });
       }
 
-      // Seed any missing defaults — upsert so existing values are never overwritten
+      // Seed any missing defaults — upsert so existing values are never overwritten.
+      // `two_ball_scoring` removed 2026-05-10 (TD10) — superseded by per-round
+      // FormatPicker. Existing rows in league_settings are left untouched so the
+      // column data isn't lost; UI just doesn't surface it anymore.
       const defaults: LeagueSettings = {
-        two_ball_scoring: "true",
         show_leaderboard: "true",
         show_weekly_winners: "true",
         buy_in_amount: "10",

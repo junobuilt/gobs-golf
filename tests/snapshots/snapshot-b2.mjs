@@ -139,6 +139,10 @@ let comparisons = 0;
 const mismatches = [];
 
 for (const round of rounds) {
+  // Part 1 compares engine output against legacy 2-Ball best-2 math, so it
+  // only runs against 2-Ball (or null/legacy) rounds. Non-2-Ball formats
+  // would produce a meaningless mismatch every hole (TD11).
+  if (round.format && round.format !== "2_ball") continue;
   const teamPlayers = rpsByRound.get(round.id) || [];
   if (teamPlayers.length === 0) continue;
 

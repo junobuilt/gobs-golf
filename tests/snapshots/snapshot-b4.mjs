@@ -115,6 +115,9 @@ for (const teeId of teeIds) {
 let comparisons = 0;
 const mismatches = [];
 for (const round of (rounds || [])) {
+  // Part 1 compares engine output against legacy 2-Ball best-2 math, so it
+  // only runs against 2-Ball (or null/legacy) rounds (TD11).
+  if (round.format && round.format !== "2_ball") continue;
   const teamPlayers = rpsByRound.get(round.id) || [];
   if (teamPlayers.length === 0) continue;
 
@@ -213,47 +216,9 @@ if (failures.length === 0) {
   process.exit(1);
 }
 
-// ── PART 3: Synthetic Stableford Modified ──────────────────────────────────
-
-const failuresM = [];
-function checkM(label, actual, expected) {
-  const a = JSON.stringify(actual);
-  const e = JSON.stringify(expected);
-  if (a !== e) failuresM.push({ label, actual: a, expected: e });
-}
-
-// Custom values: birdie=5, eagle=8, others default.
-const modifiedHole = computeHoleResult({
-  format: "stableford_modified",
-  formatConfig: {
-    basis: "net",
-    override_holes: [],
-    point_values: { birdie: 5, eagle: 8 },
-  },
-  hole: { holeNumber: 1, par: 4, strokeIndex: 10 },
-  players: [
-    { playerId: "A", grossScore: 4, courseHandicap: 0 }, // par → 2 (default)
-    { playerId: "B", grossScore: 3, courseHandicap: 0 }, // birdie → 5 (custom)
-    { playerId: "C", grossScore: 2, courseHandicap: 0 }, // eagle → 8 (custom)
-    { playerId: "D", grossScore: 5, courseHandicap: 0 }, // bogey → 1 (default)
-  ],
-});
-checkM("Modified hole teamScore (2+5+8+1)", modifiedHole.teamScore, 16);
-checkM("Modified A points (par default)", modifiedHole.perPlayer.find(p => p.playerId === "A")?.points, 2);
-checkM("Modified B points (birdie custom)", modifiedHole.perPlayer.find(p => p.playerId === "B")?.points, 5);
-checkM("Modified C points (eagle custom)", modifiedHole.perPlayer.find(p => p.playerId === "C")?.points, 8);
-checkM("Modified D points (bogey default)", modifiedHole.perPlayer.find(p => p.playerId === "D")?.points, 1);
-
-console.log();
-if (failuresM.length === 0) {
-  console.log("Part 3 — synthetic Stableford Modified: all assertions pass ✓");
-} else {
-  console.log(`Part 3: ${failuresM.length} FAILURES`);
-  for (const f of failuresM) console.log(JSON.stringify(f));
-  process.exit(1);
-}
-
-// ── PART 4: Synthetic GOBS House ───────────────────────────────────────────
+// ── PART 3: Synthetic GOBS Stableford ──────────────────────────────────────
+// Defaults (Albatross +8, Eagle +5, Birdie +3, Par +2, Bogey 0, DB+ −1) plus
+// admin-overridable point_values that overlay onto the defaults.
 
 const failuresG = [];
 function checkG(label, actual, expected) {
@@ -262,47 +227,67 @@ function checkG(label, actual, expected) {
   if (a !== e) failuresG.push({ label, actual: a, expected: e });
 }
 
-// Mixed team with at least one double-bogey-or-worse to exercise the -1 path.
-const gobsHole = computeHoleResult({
-  format: "gobs_house",
+// Defaults-only hole: par + birdie + bogey + dbl bogey = 2+3+0+(-1) = 4.
+const gobsDefaultHole = computeHoleResult({
+  format: "gobs_stableford",
   formatConfig: { basis: "net", override_holes: [] },
   hole: { holeNumber: 1, par: 4, strokeIndex: 10 },
   players: [
     { playerId: "A", grossScore: 4, courseHandicap: 0 }, // par → 2
     { playerId: "B", grossScore: 3, courseHandicap: 0 }, // birdie → 3
-    { playerId: "C", grossScore: 6, courseHandicap: 0 }, // dbl bogey → -1
-    { playerId: "D", grossScore: 8, courseHandicap: 0 }, // quad+ → -1 (flat)
+    { playerId: "C", grossScore: 5, courseHandicap: 0 }, // bogey → 0
+    { playerId: "D", grossScore: 6, courseHandicap: 0 }, // dbl bogey → -1
   ],
 });
-checkG("GOBS House hole teamScore (2+3-1-1)", gobsHole.teamScore, 3);
-checkG("GOBS House A points (par)", gobsHole.perPlayer.find(p => p.playerId === "A")?.points, 2);
-checkG("GOBS House B points (birdie)", gobsHole.perPlayer.find(p => p.playerId === "B")?.points, 3);
-checkG("GOBS House C points (dbl bogey -1)", gobsHole.perPlayer.find(p => p.playerId === "C")?.points, -1);
-checkG("GOBS House D points (quintuple bogey still -1)", gobsHole.perPlayer.find(p => p.playerId === "D")?.points, -1);
+checkG("GOBS Stableford default hole teamScore (2+3+0-1)", gobsDefaultHole.teamScore, 4);
+checkG("GOBS Stableford C points (bogey default 0)", gobsDefaultHole.perPlayer.find(p => p.playerId === "C")?.points, 0);
+checkG("GOBS Stableford D points (DB+ default -1)", gobsDefaultHole.perPlayer.find(p => p.playerId === "D")?.points, -1);
 
-// Negative round total: 4 players each blow up on 2 holes → -8.
+// Custom values: birdie=6, eagle=9 (others fall through to GOBS defaults).
+const gobsCustomHole = computeHoleResult({
+  format: "gobs_stableford",
+  formatConfig: {
+    basis: "net",
+    override_holes: [],
+    point_values: { birdie: 6, eagle: 9 },
+  },
+  hole: { holeNumber: 1, par: 4, strokeIndex: 10 },
+  players: [
+    { playerId: "A", grossScore: 4, courseHandicap: 0 }, // par → 2 (default)
+    { playerId: "B", grossScore: 3, courseHandicap: 0 }, // birdie → 6 (custom)
+    { playerId: "C", grossScore: 2, courseHandicap: 0 }, // eagle → 9 (custom)
+    { playerId: "D", grossScore: 6, courseHandicap: 0 }, // dbl bogey → -1 (default)
+  ],
+});
+checkG("GOBS Stableford custom hole teamScore (2+6+9-1)", gobsCustomHole.teamScore, 16);
+checkG("GOBS Stableford A custom (par default)", gobsCustomHole.perPlayer.find(p => p.playerId === "A")?.points, 2);
+checkG("GOBS Stableford B custom (birdie custom)", gobsCustomHole.perPlayer.find(p => p.playerId === "B")?.points, 6);
+checkG("GOBS Stableford C custom (eagle custom)", gobsCustomHole.perPlayer.find(p => p.playerId === "C")?.points, 9);
+checkG("GOBS Stableford D custom (DB+ default)", gobsCustomHole.perPlayer.find(p => p.playerId === "D")?.points, -1);
+
+// Round-level: 2 holes, all 4 players double bogey both → -8.
 const gobsRound = computeRoundResult({
-  format: "gobs_house",
+  format: "gobs_stableford",
   formatConfig: { basis: "net", override_holes: [] },
   holes: [
     { holeNumber: 1, par: 4, strokeIndex: 10 },
     { holeNumber: 2, par: 4, strokeIndex: 5 },
   ],
   players: [
-    { playerId: "A", courseHandicap: 0, grossScores: { 1: 6, 2: 7 } }, // -1, -1
-    { playerId: "B", courseHandicap: 0, grossScores: { 1: 7, 2: 8 } }, // -1, -1
-    { playerId: "C", courseHandicap: 0, grossScores: { 1: 8, 2: 9 } }, // -1, -1
-    { playerId: "D", courseHandicap: 0, grossScores: { 1: 9, 2: 10 } }, // -1, -1
+    { playerId: "A", courseHandicap: 0, grossScores: { 1: 6, 2: 7 } },
+    { playerId: "B", courseHandicap: 0, grossScores: { 1: 7, 2: 8 } },
+    { playerId: "C", courseHandicap: 0, grossScores: { 1: 8, 2: 9 } },
+    { playerId: "D", courseHandicap: 0, grossScores: { 1: 9, 2: 10 } },
   ],
 });
-checkG("GOBS House round teamScore (-8)", gobsRound.teamScore, -8);
-checkG("GOBS House round teamParAtScored is 0", gobsRound.teamParAtScored, 0);
+checkG("GOBS Stableford round teamScore (-8)", gobsRound.teamScore, -8);
+checkG("GOBS Stableford round teamParAtScored is 0", gobsRound.teamParAtScored, 0);
 
 console.log();
 if (failuresG.length === 0) {
-  console.log("Part 4 — synthetic GOBS House: all assertions pass ✓");
+  console.log("Part 3 — synthetic GOBS Stableford: all assertions pass ✓");
 } else {
-  console.log(`Part 4: ${failuresG.length} FAILURES`);
+  console.log(`Part 3: ${failuresG.length} FAILURES`);
   for (const f of failuresG) console.log(JSON.stringify(f));
   process.exit(1);
 }

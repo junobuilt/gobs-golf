@@ -152,7 +152,7 @@ describe("override_holes — round-level teamParAtScored", () => {
     expect(result.teamScore).toBe(31);
   });
 
-  it("Stableford with override is a no-op — same teamScore as without override", () => {
+  it("Stableford Standard with override is a no-op — same teamScore as without", () => {
     const baseConfig = { basis: "net" as const, override_holes: [] as number[] };
     const overrideConfig = { ...baseConfig, override_holes: [1, 2] };
     const players = [
@@ -169,19 +169,20 @@ describe("override_holes — round-level teamParAtScored", () => {
     expect(withOverride.teamScore).toBe(8); // (2+3) + (1+2)
   });
 
-  it("GOBS House with override is a no-op — same teamScore as without override", () => {
+  it("GOBS Stableford with override is a no-op — same teamScore as without", () => {
     const baseConfig = { basis: "net" as const, override_holes: [] as number[] };
     const overrideConfig = { ...baseConfig, override_holes: [1] };
     const players = [
-      { playerId: "A", courseHandicap: 0, grossScores: { 1: 6 } }, // double bogey → -1 in GOBS House
+      { playerId: "A", courseHandicap: 0, grossScores: { 1: 6 } }, // dbl bogey → -1 under GOBS defaults
       { playerId: "B", courseHandicap: 0, grossScores: { 1: 4 } }, // par → 2
     ];
     const holes = [{ holeNumber: 1, par: 4, strokeIndex: 10 }];
-    const without = computeRoundResult({ format: "gobs_house", formatConfig: baseConfig, holes, players });
-    const withOverride = computeRoundResult({ format: "gobs_house", formatConfig: overrideConfig, holes, players });
+    const without = computeRoundResult({ format: "gobs_stableford", formatConfig: baseConfig, holes, players });
+    const withOverride = computeRoundResult({ format: "gobs_stableford", formatConfig: overrideConfig, holes, players });
     expect(withOverride.teamScore).toBe(without.teamScore);
     expect(withOverride.teamScore).toBe(1); // -1 + 2
   });
+
 });
 
 describe("override_holes — empty list regression", () => {

@@ -4,9 +4,9 @@ import { formatTeamTotal } from "@/lib/format/copy";
 // C3: format-aware team total display. Helper has two modes:
 //   - best-N (2_ball / 3_ball): input is a stroke delta vs par, output is
 //     "+N" / "−N" / "E". Uses Unicode U+2212 for negative.
-//   - Stableford-family (standard / modified / gobs_house): input is
-//     absolute team points, output is "${total} pts". Negative totals are
-//     legal for GOBS House and rendered with Unicode U+2212.
+//   - Stableford-family (standard / modified): input is absolute team
+//     points, output is "${total} pts". Negative totals are legal for
+//     GOBS Stableford (Modified branch) and rendered with Unicode U+2212.
 //
 // Tests pin down exact strings — the helper's contract is the source of
 // truth for downstream display, so any drift would visibly affect the
@@ -29,7 +29,7 @@ describe("formatTeamTotal", () => {
     expect(formatTeamTotal(14, "stableford_standard")).toBe("14 pts");
   });
 
-  it("gobs_house: negative total renders with Unicode minus", () => {
-    expect(formatTeamTotal(-3, "gobs_house")).toBe("−3 pts");
+  it("gobs_stableford: negative total renders with Unicode minus", () => {
+    expect(formatTeamTotal(-3, "gobs_stableford")).toBe("−3 pts");
   });
 });

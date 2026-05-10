@@ -75,7 +75,7 @@ function SettingRow({ label, description, children }: { label: string; descripti
   );
 }
 
-type ToggleKey = "show_leaderboard" | "show_weekly_winners" | "two_ball_scoring";
+type ToggleKey = "show_leaderboard" | "show_weekly_winners";
 
 export default function Settings({ settings, onRefresh }: Props) {
   const [buyIn, setBuyIn] = useState(settings["buy_in_amount"] ?? "10");
@@ -86,14 +86,12 @@ export default function Settings({ settings, onRefresh }: Props) {
   const [localToggles, setLocalToggles] = useState<Record<ToggleKey, boolean>>({
     show_leaderboard: settings["show_leaderboard"] === "true",
     show_weekly_winners: settings["show_weekly_winners"] === "true",
-    two_ball_scoring: settings["two_ball_scoring"] === "true",
   });
 
   useEffect(() => {
     setLocalToggles({
       show_leaderboard: settings["show_leaderboard"] === "true",
       show_weekly_winners: settings["show_weekly_winners"] === "true",
-      two_ball_scoring: settings["two_ball_scoring"] === "true",
     });
   }, [settings]);
 
@@ -166,22 +164,12 @@ export default function Settings({ settings, onRefresh }: Props) {
       {/* Display */}
       <SectionHeader>Display</SectionHeader>
       <Card>
-        <SettingRow label="Show Leaderboard" description="Visible on the public leaderboard page">
+        <SettingRow label="Show Season Stats" description="Visible on the season stats page (/season). Live leaderboard always visible.">
           <Toggle value={localToggles.show_leaderboard} onChange={() => toggleSetting("show_leaderboard")} />
         </SettingRow>
         <div style={{ borderBottom: "none" }}>
           <SettingRow label="Show Weekly Winners" description="Display weekly winner highlights">
             <Toggle value={localToggles.show_weekly_winners} onChange={() => toggleSetting("show_weekly_winners")} />
-          </SettingRow>
-        </div>
-      </Card>
-
-      {/* Scoring */}
-      <SectionHeader>Scoring</SectionHeader>
-      <Card>
-        <div style={{ borderBottom: "none" }}>
-          <SettingRow label="2-ball Scoring" description="Count best 2 balls per team per hole">
-            <Toggle value={localToggles.two_ball_scoring} onChange={() => toggleSetting("two_ball_scoring")} />
           </SettingRow>
         </div>
       </Card>

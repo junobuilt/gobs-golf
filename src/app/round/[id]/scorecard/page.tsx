@@ -598,7 +598,7 @@ export default function ScorecardPage() {
   const scoredHoles = holesWithTeamScores();
   const countingIds = getCountingPlayerIds(currentHole);
   const { tiedForBall1, tiedForBall2 } = getTieInfo(currentHole);
-  const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball";
+  const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball" || roundFormat === "best_ball";
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 

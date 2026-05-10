@@ -2,10 +2,9 @@ import { describe, it, expect } from "vitest";
 import { rankTeams, holesCompleteForTeam, isStablefordFormat } from "@/lib/leaderboard/rank";
 
 describe("isStablefordFormat", () => {
-  it("returns true for the three Stableford-family formats", () => {
+  it("returns true for the Stableford-family formats", () => {
     expect(isStablefordFormat("stableford_standard")).toBe(true);
-    expect(isStablefordFormat("stableford_modified")).toBe(true);
-    expect(isStablefordFormat("gobs_house")).toBe(true);
+    expect(isStablefordFormat("gobs_stableford")).toBe(true);
   });
 
   it("returns false for best-N formats", () => {
@@ -74,13 +73,13 @@ describe("rankTeams", () => {
     expect(ranked.map(t => t.rank)).toEqual([1]);
   });
 
-  it("Stableford with negative GOBS House totals — most negative is last", () => {
+  it("Stableford with negative totals — most negative is last (GOBS Stableford −1 at DB+)", () => {
     const teams = [
       { id: 1, total: -3 },
       { id: 2, total: 4 },
       { id: 3, total: 0 },
     ];
-    const ranked = rankTeams(teams, "gobs_house");
+    const ranked = rankTeams(teams, "gobs_stableford");
     expect(ranked.map(t => t.id)).toEqual([2, 3, 1]);
     expect(ranked.map(t => t.rank)).toEqual([1, 2, 3]);
   });

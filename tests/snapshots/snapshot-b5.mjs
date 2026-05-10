@@ -119,6 +119,9 @@ for (const teeId of teeIds) {
 let comparisons = 0;
 const mismatches = [];
 for (const round of (rounds || [])) {
+  // Part 1 compares engine output against legacy 2-Ball best-2 math, so it
+  // only runs against 2-Ball (or null/legacy) rounds (TD11).
+  if (round.format && round.format !== "2_ball") continue;
   const teamPlayers = rpsByRound.get(round.id) || [];
   if (teamPlayers.length === 0) continue;
 
@@ -218,64 +221,6 @@ if (failures2.length === 0) {
 } else {
   console.log(`Part 2: ${failures2.length} FAILURES`);
   for (const f of failures2) console.log(JSON.stringify(f));
-  process.exit(1);
-}
-
-// ── PART 3: GOBS House override is a no-op ─────────────────────────────────
-
-const failures3 = [];
-function check3(label, actual, expected) {
-  const a = JSON.stringify(actual);
-  const e = JSON.stringify(expected);
-  if (a !== e) failures3.push({ label, actual: a, expected: e });
-}
-
-// Same scores, same round, computed twice: with and without override.
-const gobsPlayers = [
-  { playerId: "A", courseHandicap: 0, grossScores: { 1: 4, 2: 6, 3: 3 } }, // par=2, dbl bogey=-1, birdie=3
-  { playerId: "B", courseHandicap: 0, grossScores: { 1: 5, 2: 7, 3: 4 } }, // bogey=1, triple bogey=-1, par=2
-];
-const gobsHoles = [
-  { holeNumber: 1, par: 4, strokeIndex: 10 },
-  { holeNumber: 2, par: 4, strokeIndex: 5 },
-  { holeNumber: 3, par: 4, strokeIndex: 1 },
-];
-
-const gobsWithoutOverride = computeRoundResult({
-  format: "gobs_house",
-  formatConfig: { basis: "net", override_holes: [] },
-  holes: gobsHoles,
-  players: gobsPlayers,
-});
-
-const gobsWithOverride = computeRoundResult({
-  format: "gobs_house",
-  formatConfig: { basis: "net", override_holes: [1, 2, 3] }, // every hole flagged; should change nothing
-  holes: gobsHoles,
-  players: gobsPlayers,
-});
-
-check3("GOBS House teamScore identical with vs without override", gobsWithOverride.teamScore, gobsWithoutOverride.teamScore);
-check3("GOBS House perHole length identical", gobsWithOverride.perHole.length, gobsWithoutOverride.perHole.length);
-for (let i = 0; i < gobsWithoutOverride.perHole.length; i++) {
-  const a = gobsWithoutOverride.perHole[i].result;
-  const b = gobsWithOverride.perHole[i].result;
-  check3(`GOBS House hole ${i + 1} teamScore identical`, b.teamScore, a.teamScore);
-}
-
-// Sanity: the actual values
-// Hole 1: par=2 + bogey=1 = 3
-// Hole 2: dbl bogey=-1 + triple bogey=-1 = -2
-// Hole 3: birdie=3 + par=2 = 5
-// Total: 3 + (-2) + 5 = 6
-check3("GOBS House total round teamScore", gobsWithoutOverride.teamScore, 6);
-
-console.log();
-if (failures3.length === 0) {
-  console.log("Part 3 — synthetic GOBS House override no-op: all assertions pass ✓");
-} else {
-  console.log(`Part 3: ${failures3.length} FAILURES`);
-  for (const f of failures3) console.log(JSON.stringify(f));
   process.exit(1);
 }
 

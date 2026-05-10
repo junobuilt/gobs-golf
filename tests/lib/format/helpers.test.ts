@@ -51,15 +51,19 @@ describe("defaultConfigFor", () => {
     }
   });
 
-  it("returns point_values only for stableford_modified", () => {
-    expect(defaultConfigFor("stableford_modified").point_values).toBeDefined();
+  it("returns point_values only for gobs_stableford", () => {
+    expect(defaultConfigFor("gobs_stableford").point_values).toBeDefined();
     expect(defaultConfigFor("stableford_standard").point_values).toBeUndefined();
-    expect(defaultConfigFor("gobs_house").point_values).toBeUndefined();
     expect(defaultConfigFor("2_ball").point_values).toBeUndefined();
     expect(defaultConfigFor("3_ball").point_values).toBeUndefined();
+    expect(defaultConfigFor("best_ball").point_values).toBeUndefined();
   });
 
-  it("covers all five formats with no missing keys", () => {
+  it("best_ball default has best_n=1", () => {
+    expect(defaultConfigFor("best_ball").best_n).toBe(1);
+  });
+
+  it("covers every format with no missing keys", () => {
     for (const f of FORMAT_ORDER) {
       const cfg = defaultConfigFor(f);
       expect(cfg).toBeDefined();
