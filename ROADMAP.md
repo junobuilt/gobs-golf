@@ -289,6 +289,7 @@
 | I9 | SWAT format | ❓ | Blocked. Need rules from Dad. |
 | I10 | Combo tees | ❓ | Blocked. Need rules from Dad. |
 | I11 | Generate Supabase TypeScript types | 💡 | Run `supabase gen types` CLI so query responses get column-shape type checking. Currently uses `any`, meaning tsc cannot catch column typos. Tooling-only change, no functional impact. Worth doing once schema stabilizes. |
+| I12 | Players list — row-level accordion | 📋 | Tap row in `/players` to expand inline panel showing rounds, avg score, best, last round, and link to full profile. Stats lazy-loaded per player; uses complete rounds only. Distinct from I1-I3, which add accordions inside the profile page itself. Data layer (`fetchPlayerStats`) accepts an optional date-range filter so a season scope can be added later without rework. |
 
 ---
 
