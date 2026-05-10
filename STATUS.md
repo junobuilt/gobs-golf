@@ -9,8 +9,8 @@
 
 ## Master branch state
 
-- HEAD commit: `47b9af3` — `chore(roadmap): mark Phase A.1 PR 1 merged + verified live`
-- Status vs production deployment: in sync (Vercel auto-deploys from `master`; A.1 PR 1 verified live earlier today)
+- HEAD commit: `dadab5b` — `chore: establish STATUS.md as session-handoff artifact`
+- Status vs production deployment: in sync (Vercel auto-deploys from `master`; A.1 PR 1 verified live earlier today; this trailing commit is docs-only — no app behavior change)
 
 ## Open / unmerged branches
 
@@ -22,11 +22,11 @@ The `phase-a1-stableford-best-ball-format-picker` branch is **not present** on `
 
 ## Last 5 master commits
 
+- `dadab5b` — chore: establish STATUS.md as session-handoff artifact (2026-05-10)
 - `47b9af3` — chore(roadmap): mark Phase A.1 PR 1 merged + verified live (2026-05-10)
 - `9228753` — Create STATUS.md (2026-05-10)
 - `2108a5e` — chore(roadmap): mark I1 + I3 shipped (2026-05-10)
 - `6179f66` — feat(player): add Round History (I1) and Season Stats (I3) accordions (2026-05-10)
-- `09edf3e` — chore(roadmap): track settings.local.json gitignore + cleanup as tech debt (2026-05-10)
 
 ## Active blockers / paused work
 
