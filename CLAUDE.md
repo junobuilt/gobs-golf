@@ -66,6 +66,18 @@ At the end of every plan or implementation, list:
 - UI changes: type-check + manual screenshot
 - Refactors: snapshot test + unit tests
 
+### STATUS.md maintenance
+At the end of every working session, before signing off, update `STATUS.md`
+at the repo root. This is non-negotiable — `STATUS.md` is the canonical
+session-handoff artifact. Use the exact template defined in `STATUS.md`
+itself. Commit it as part of your final commit, or as a separate trailing
+commit titled `chore: update STATUS.md`. Push before signing off. If you
+forget, the next session will start with stale state and waste time.
+
+`STATUS.md` is auto-published by GitHub Pages (source = `master`, path = `/`)
+at `https://junobuilt.github.io/gobs-golf/STATUS.md`. A fresh session should
+fetch it alongside `ROADMAP.md` before doing anything else.
+
 ---
 ## Tech stack
 
