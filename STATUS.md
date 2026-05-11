@@ -13,7 +13,8 @@
    - **LT1 — Course Handicap display mismatch.** Likely stale snapshot on `round_players.course_handicap` or wrong tee_id in the join. Self-healing recompute already shipped at scorecard load (`a779ced`); needs verification on a fresh live round that the row CH display, stroke-allocation dots, and engine all read the corrected value.
    - **LT2 — Scores reverting to par on hole navigation.** Reproduced live May 8 by two testers; 2026-05-10 triage on iPhone with Web Inspector against `lt2-repro` ran 3 variants all clean. Branch + instrumentation still deployed. Monday should attempt repro again with the instrumentation live.
 2. **Live-test verification of tonight's eight fixes** (checklist below). Run alongside LT1/LT2 repro attempts.
-3. **A1.6 Step 2 — engine wiring on `phase-a1-team-pill-segments`** if Jonathan approves the mockup. Same plan as in the prior STATUS.md.
+3. **I13 — admin UI to edit `players.preferred_tee_id` from the Players tab.** Bumped 2026-05-10 (night) from regular 📋 to next-session-after-Phase-0.5 priority. Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Setting Hashimoto's or any future exception via direct SQL is too risky.
+4. **A1.6 Step 2 — engine wiring on `phase-a1-team-pill-segments`** if Jonathan approves the mockup. Same plan as in the prior STATUS.md.
 
 ---
 
@@ -57,6 +58,19 @@ All eight on `master`, all auto-deployed via Vercel, all confirmed live-golden b
 
 - **LT1 (Course Handicap display mismatch):** 📋. Self-healing recompute shipped at scorecard load earlier (`a779ced`). Verification across a full live round still pending. **Monday priority #1.**
 - **LT2 (scores reverting to par on hole navigation):** 📋. Triage clean across 3 iPhone variants 2026-05-10. Instrumentation stays deployed on `lt2-repro` for Monday's live round. **Monday priority #1.**
+- **TD15 (deactivate-while-rostered) and I13 (admin preferred_tee_id UI)** logged tonight — see ROADMAP. Neither blocks the next live round; I13 is queued right after Phase 0.5 lands.
+
+## Branch hygiene (2026-05-10 night cleanup)
+
+Deleted (local + remote where applicable):
+- `phase-a1-stableford-best-ball-format-picker` (PR 1 was already merged under a different SHA)
+- `claude/fervent-dewdney-adc672` (worktree, local-only)
+- `claude/happy-bhabha-f06a52` (worktree, local + remote)
+- `claude/peaceful-pasteur-e4d9d7` (worktree, local + remote)
+
+Worktrees `.claude/worktrees/{fervent-dewdney,happy-bhabha,peaceful-pasteur}` removed with `--force` (uncommitted agent scratchpads). One worktree (`funny-nightingale-895061`, detached HEAD at `2108a5e`) was not on the approved-deletion list and left alone.
+
+Kept: `lt2-repro` (instrumentation), `origin/phase-a1-team-pill-segments` (A1.6 mockup awaiting review).
 
 ---
 
