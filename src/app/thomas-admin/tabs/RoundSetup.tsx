@@ -55,6 +55,29 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Per-player serialization for round_players writes. toggleInRoster fires
+  // INSERT/DELETE; assignToTeam fires UPDATE of team_number. Both used to be
+  // fire-and-forget, so a fast tap pattern (check player in → drag to team
+  // before the INSERT lands) raced: the UPDATE matched 0 rows and team_number
+  // stayed 0, which on next read looked like "nothing got saved." Now each
+  // write awaits any prior write for the same player_id. Cross-player writes
+  // still run in parallel.
+  const writeQueueRef = useRef<Map<number, Promise<unknown>>>(new Map());
+  const enqueueWrite = useCallback(
+    (playerId: number, fn: () => PromiseLike<unknown>): Promise<unknown> => {
+      const prev = writeQueueRef.current.get(playerId) ?? Promise.resolve();
+      const next = prev.then(() => fn()).catch((err) => {
+        console.error("[RoundSetup] round_players write failed for player", playerId, err);
+      });
+      writeQueueRef.current.set(playerId, next);
+      return next;
+    },
+    [],
+  );
+  const drainWrites = useCallback(async () => {
+    await Promise.all(Array.from(writeQueueRef.current.values()));
+  }, []);
+
   // ── Load score status per team ─────────────────────────────────────────────
   const loadScoreStatus = useCallback(async (roundId: number, teamNumList: number[]) => {
     const { data: rps } = await supabase
@@ -105,8 +128,18 @@ export default function RoundSetup({ allPlayers }: Props) {
     setRoundFormatConfig(((round as any).format_config ?? null) as FormatConfig | null);
     setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
 
+    // Embedded join (B7 / TD2 pattern). Previously this query selected only
+    // (player_id, team_number) and resolved the player record by id against
+    // `allPlayers` — which the parent filters to is_active === true. Result:
+    // any player rostered for the round who'd later been deactivated via the
+    // Players tab was silently dropped from the admin view, while the
+    // homepage (which uses this same embedded-join pattern) kept rendering
+    // them. Active/inactive is a check-in-list concern, not a display-who's-
+    // already-in concern.
     const { data: rps } = await supabase
-      .from("round_players").select("player_id, team_number").eq("round_id", round.id);
+      .from("round_players")
+      .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active )")
+      .eq("round_id", round.id);
 
     if (!rps || rps.length === 0) {
       setViewMode("active");
@@ -118,8 +151,18 @@ export default function RoundSetup({ allPlayers }: Props) {
     const loadedTeams: Record<number, Player[]> = {};
 
     rps.forEach((rp: any) => {
-      const player = allPlayers.find(p => p.id === rp.player_id);
-      if (!player) return;
+      // PostgREST embed returns the joined row as either an object (single
+      // parent FK) or a single-element array depending on relationship
+      // metadata. Same array-vs-object guard used on homepage.
+      const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+      if (!playerRow) return;
+      const player: Player = {
+        id: playerRow.id,
+        full_name: playerRow.full_name,
+        display_name: playerRow.display_name,
+        handicap_index: playerRow.handicap_index,
+        is_active: playerRow.is_active,
+      };
       loadedRoster.push(player);
       const tn = rp.team_number;
       if (tn >= 1) {
@@ -151,11 +194,13 @@ export default function RoundSetup({ allPlayers }: Props) {
   // ── Autosave assignment to DB ──────────────────────────────────────────────
   const autosaveAssignment = useCallback(async (playerId: number, teamNum: number) => {
     if (!existingRoundId) return;
-    await supabase.from("round_players")
-      .update({ team_number: teamNum })
-      .eq("round_id", existingRoundId)
-      .eq("player_id", playerId);
-  }, [existingRoundId]);
+    await enqueueWrite(playerId, () =>
+      supabase.from("round_players")
+        .update({ team_number: teamNum })
+        .eq("round_id", existingRoundId)
+        .eq("player_id", playerId)
+    );
+  }, [existingRoundId, enqueueWrite]);
 
   // ── Assign player to team (autosaves + undo toast) ─────────────────────────
   const assignToTeam = useCallback((player: Player, toTeam: number) => {
@@ -216,15 +261,19 @@ export default function RoundSetup({ allPlayers }: Props) {
         return next;
       });
       if (existingRoundId) {
-        supabase.from("round_players").delete()
-          .eq("round_id", existingRoundId).eq("player_id", player.id);
+        enqueueWrite(player.id, () =>
+          supabase.from("round_players").delete()
+            .eq("round_id", existingRoundId).eq("player_id", player.id)
+        );
       }
     } else {
       setRoster(prev => [...prev, player]);
       if (existingRoundId) {
-        supabase.from("round_players").insert({
-          round_id: existingRoundId, player_id: player.id, team_number: 0, tee_id: null,
-        });
+        enqueueWrite(player.id, () =>
+          supabase.from("round_players").insert({
+            round_id: existingRoundId, player_id: player.id, team_number: 0, tee_id: null,
+          })
+        );
       }
     }
   };
@@ -281,6 +330,10 @@ export default function RoundSetup({ allPlayers }: Props) {
   const goToTeams = async () => {
     if (!existingRoundId) return;
     setSaving(true);
+
+    // Drain any in-flight INSERT/DELETE from toggleInRoster before reading,
+    // otherwise the diff sees stale DB state and may queue duplicate INSERTs.
+    await drainWrites();
 
     const { data: existing } = await supabase
       .from("round_players").select("player_id, team_number").eq("round_id", existingRoundId);
@@ -349,6 +402,10 @@ export default function RoundSetup({ allPlayers }: Props) {
 
   // ── Exit edit mode ─────────────────────────────────────────────────────────
   const doneEditing = async () => {
+    // Drain in-flight writes so the reload reads post-write state. Without
+    // this, the team-assignment UPDATE from a Done-immediately-after-drag tap
+    // could still be pending when loadRoundForDate runs.
+    await drainWrites();
     await loadRoundForDate(selectedDate);
   };
 

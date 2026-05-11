@@ -51,8 +51,11 @@ export default function History() {
         rps?.forEach((rp: any) => {
           const tn = rp.team_number;
           if (!tn) return;
+          // TD2 family: PostgREST embed may return the parent row as object
+          // or single-element array depending on relationship metadata.
+          const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
           if (!teams[tn]) teams[tn] = [];
-          teams[tn].push(rp.players?.display_name || rp.players?.full_name || "?");
+          teams[tn].push(playerRow?.display_name || playerRow?.full_name || "?");
           count++;
         });
 
