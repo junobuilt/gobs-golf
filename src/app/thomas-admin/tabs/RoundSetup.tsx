@@ -303,6 +303,14 @@ export default function RoundSetup({ allPlayers }: Props) {
       return null;
     }
     setExistingRoundId(round.id);
+    // Explicit reset of format state. In a fresh-mount path these are already
+    // null from loadRoundForDate, but the in-place "delete round → tap Edit
+    // Teams → ensureRoundShell" path can land here with stale format values
+    // still cached in React. Resetting at the same point we set the new
+    // round id keeps the format strip honest for the brand-new shell.
+    setRoundFormat(null);
+    setRoundFormatConfig(null);
+    setRoundFormatLockedAt(null);
     setViewMode("active");
     return round.id;
   }, [existingRoundId, selectedDate]);
@@ -390,11 +398,12 @@ export default function RoundSetup({ allPlayers }: Props) {
     }
     await supabase.from("round_players").delete().eq("round_id", existingRoundId);
     await supabase.from("rounds").delete().eq("id", existingRoundId);
-    setExistingRoundId(null);
-    setIsRoundComplete(false);
-    setRoster([]);
-    setTeams({});
-    setViewMode("none");
+    // Re-run the canonical load path so every piece of round-derived state
+    // (including roundFormat / roundFormatConfig / roundFormatLockedAt, which
+    // the old manual reset block missed) is rebuilt from a fresh DB read.
+    // Single source of truth — no risk of state-reset drift between delete
+    // and load.
+    await loadRoundForDate(selectedDate);
     setSaving(false);
   };
 
