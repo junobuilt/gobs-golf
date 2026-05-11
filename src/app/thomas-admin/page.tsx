@@ -14,6 +14,7 @@ export type Player = {
   display_name: string | null;
   handicap_index: number | null;
   is_active: boolean;
+  preferred_tee_id: number | null;
 };
 
 export type MatrixRow = {

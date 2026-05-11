@@ -5,12 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { computeCourseHandicap } from "@/lib/scoring";
 import { todayLocal } from "@/lib/date";
+import { DEFAULT_TEE_ID } from "@/lib/tees";
 
 type Player = {
   id: number;
   full_name: string;
   display_name: string | null;
   handicap_index: number | null;
+  preferred_tee_id: number | null;
 };
 
 type Tee = {
@@ -39,7 +41,6 @@ export default function NewRoundPage() {
   const [tees, setTees] = useState<Tee[]>([]);
   const [selected, setSelected] = useState<SelectedPlayer[]>([]);
   const [filter, setFilter] = useState("");
-  const [defaultTeeId, setDefaultTeeId] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [existingRound, setExistingRound] = useState<{ id: number; teamCount: number } | null>(null);
@@ -49,7 +50,7 @@ export default function NewRoundPage() {
     async function load() {
       const { data: playersData } = await supabase
         .from("players")
-        .select("id, full_name, display_name, handicap_index")
+        .select("id, full_name, display_name, handicap_index, preferred_tee_id")
         .eq("is_active", true)
         .order("full_name");
       setPlayers(playersData || []);
@@ -59,9 +60,6 @@ export default function NewRoundPage() {
         .select("id, color, slope_rating, course_rating, par")
         .order("sort_order");
       setTees(teesData || []);
-      if (teesData && teesData.length > 0) {
-        setDefaultTeeId(teesData[0].id);
-      }
 
       // Check if a round already exists for today
       const today = todayLocal();
@@ -111,7 +109,7 @@ export default function NewRoundPage() {
     } else {
       setSelected((prev) => [
         ...prev,
-        { player, tee_id: defaultTeeId, team_number: 1 },
+        { player, tee_id: player.preferred_tee_id ?? DEFAULT_TEE_ID, team_number: 1 },
       ]);
     }
   }

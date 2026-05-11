@@ -15,6 +15,7 @@ import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
+import { DEFAULT_TEE_ID } from "@/lib/tees";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -23,6 +24,7 @@ interface RoundPlayer {
   display_name: string;
   handicap_index: number | null;
   course_handicap: number | null;
+  preferred_tee_id: number | null;
 }
 
 interface Tee {
@@ -108,7 +110,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, tee_id, course_handicap, players ( full_name, display_name, handicap_index )`)
+        .select(`id, tee_id, course_handicap, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -121,6 +123,7 @@ export default function ScorecardPage() {
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
+          preferred_tee_id: r.players?.preferred_tee_id ?? null,
         }));
 
         // LT1 fix (2026-05-09): recompute Course Handicap on every load from
@@ -553,7 +556,12 @@ export default function ScorecardPage() {
 
               <div style={{ display: "flex", gap: "8px" }}>
                 {allTees.map(t => {
-                  const isSelected = rp.tee_id === t.id;
+                  // Pre-select the player's preferred tee (or the app default)
+                  // when no tee has been committed yet, so the picker opens
+                  // pre-filled rather than empty. Tapping START ROUND commits
+                  // the pre-selection if the player never taps a tee button.
+                  const effectiveTeeId = rp.tee_id ?? rp.preferred_tee_id ?? DEFAULT_TEE_ID;
+                  const isSelected = effectiveTeeId === t.id;
                   const colors = TEE_COLORS[t.color] || { bg: "#ccc", text: "#000" };
                   return (
                     <button key={t.id} onClick={() => updatePlayerTee(rp.id, t.id)} style={{
@@ -572,10 +580,17 @@ export default function ScorecardPage() {
           );
         })}
 
-        <button onClick={() => {
-          if (!roundPlayers.every(p => p.tee_id !== null && p.tee_id !== 0)) {
-            alert("Please select a tee for every player before starting.");
-            return;
+        <button onClick={async () => {
+          // Bulk-commit the pre-selected default for any player who never
+          // tapped a tee button. Sequential so each updatePlayerTee can see
+          // local state from the prior one (handicap recompute + holes
+          // fetch). Tapping a tee earlier already wrote to DB, so those
+          // rows are skipped here.
+          for (const p of roundPlayers) {
+            if (p.tee_id === null || p.tee_id === 0) {
+              const fallbackTee = p.preferred_tee_id ?? DEFAULT_TEE_ID;
+              await updatePlayerTee(p.id, fallbackTee);
+            }
           }
           setNeedsSetup(false);
         }} style={{

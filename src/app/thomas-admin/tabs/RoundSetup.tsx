@@ -136,7 +136,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     // already-in concern.
     const { data: rps } = await supabase
       .from("round_players")
-      .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active )")
+      .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
       .eq("round_id", round.id);
 
     if (!rps || rps.length === 0) {
@@ -160,6 +160,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         display_name: playerRow.display_name,
         handicap_index: playerRow.handicap_index,
         is_active: playerRow.is_active,
+        preferred_tee_id: playerRow.preferred_tee_id ?? null,
       };
       loadedRoster.push(player);
       const tn = rp.team_number;
