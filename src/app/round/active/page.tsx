@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { todayLocal } from "@/lib/date";
 
 export default function ActiveRoundPage() {
   const router = useRouter();
@@ -12,7 +13,7 @@ export default function ActiveRoundPage() {
 
   useEffect(() => {
     async function find() {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayLocal();
       const { data } = await supabase
         .from("rounds")
         .select("id")

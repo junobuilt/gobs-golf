@@ -13,6 +13,7 @@ import {
   isStablefordFormat,
   type RankedTeam,
 } from "@/lib/leaderboard/rank";
+import { todayLocal } from "@/lib/date";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,10 +44,6 @@ type LeaderboardState =
   | { kind: "complete"; round: RoundRow; teams: Array<RankedTeam<TeamForBoard>> };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function todayStr(): string {
-  return new Date().toISOString().split("T")[0];
-}
 
 function prettyDate(dateStr: string): string {
   const date = new Date(dateStr + "T12:00:00");
@@ -81,7 +78,7 @@ export default function LeaderboardPage() {
   const [state, setState] = useState<LeaderboardState>({ kind: "loading" });
 
   const load = useCallback(async () => {
-    const today = todayStr();
+    const today = todayLocal();
 
     const { data: rounds } = await supabase
       .from("rounds")

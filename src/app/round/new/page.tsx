@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { computeCourseHandicap } from "@/lib/scoring";
+import { todayLocal } from "@/lib/date";
 
 type Player = {
   id: number;
@@ -63,7 +64,7 @@ export default function NewRoundPage() {
       }
 
       // Check if a round already exists for today
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayLocal();
       const { data: todayRounds } = await supabase
         .from("rounds")
         .select("id")
@@ -144,7 +145,7 @@ export default function NewRoundPage() {
       teamNumber = existingRound.teamCount + 1;
     } else {
       // Create a new round
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayLocal();
       const { data: round, error: roundError } = await supabase
         .from("rounds")
         .insert({ course_id: 1, played_on: today, is_complete: false, format: null })

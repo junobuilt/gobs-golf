@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { getTeamColor } from "@/lib/teamColors";
+import { todayLocal, yesterdayLocal } from "@/lib/date";
 
 type TeamInfo = {
   number: number;
@@ -20,16 +21,6 @@ type RecentRound = {
   hasAnyScores: boolean;
 };
 
-function todayStr() {
-  return new Date().toISOString().split("T")[0];
-}
-
-function yesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split("T")[0];
-}
-
 export default function HomePage() {
   const [recentRounds, setRecentRounds] = useState<RecentRound[]>([]);
   const [playerCount, setPlayerCount] = useState<number>(0);
@@ -42,8 +33,8 @@ export default function HomePage() {
       .eq("is_active", true);
     setPlayerCount(count || 0);
 
-    const today = todayStr();
-    const yesterday = yesterdayStr();
+    const today = todayLocal();
+    const yesterday = yesterdayLocal();
 
     const { data: rounds } = await supabase
       .from("rounds")

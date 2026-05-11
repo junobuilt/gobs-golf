@@ -8,6 +8,7 @@ import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS, DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
+import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 
@@ -32,10 +33,7 @@ type TeamScoreStatus = "not_started" | "in_progress";
 export default function RoundSetup({ allPlayers }: Props) {
   const isMobile = useIsMobile();
 
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  const [selectedDate, setSelectedDate] = useState(() => todayLocal());
   const [roster, setRoster] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Record<number, Player[]>>({});
   const [existingRoundId, setExistingRoundId] = useState<number | null>(null);
