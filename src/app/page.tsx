@@ -4,9 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { getTeamColor } from "@/lib/teamColors";
-import FormatNotSetBanner from "@/components/format/FormatNotSetBanner";
-import { roundNeedsFormat } from "@/lib/format/helpers";
-import type { Format } from "@/lib/scoring/types";
 
 type TeamInfo = {
   number: number;
@@ -18,7 +15,6 @@ type RecentRound = {
   id: number;
   played_on: string;
   is_complete: boolean;
-  format: Format | null;
   isYesterday: boolean;
   teams: TeamInfo[];
   hasAnyScores: boolean;
@@ -51,7 +47,7 @@ export default function HomePage() {
 
     const { data: rounds } = await supabase
       .from("rounds")
-      .select("id, played_on, is_complete, format")
+      .select("id, played_on, is_complete")
       .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
       .order("played_on", { ascending: false });
 
@@ -161,11 +157,6 @@ export default function HomePage() {
               : round.hasAnyScores ? "#166534"
               : "#92400e";
 
-            const needsFormat = !round.isYesterday && roundNeedsFormat({
-              format: round.format,
-              is_complete: round.is_complete,
-            });
-
             return (
               <div key={round.id} style={{ background: "white", borderRadius: "14px", border: "1px solid rgba(0,0,0,0.07)", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px", alignItems: "center" }}>
@@ -178,13 +169,6 @@ export default function HomePage() {
                     {status}
                   </span>
                 </div>
-
-                {needsFormat && (
-                  <FormatNotSetBanner
-                    roundId={round.id}
-                    onChosen={load}
-                  />
-                )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
                   {round.teams.map((team) => {

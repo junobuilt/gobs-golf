@@ -90,6 +90,13 @@ fetch it alongside `ROADMAP.md` before doing anything else.
 
 ## Workflow rules
 
+- **First action of every session: `git fetch origin`.** Before making any
+  claim about what is or isn't on master — what's shipped, what production
+  is running, whether a feature exists yet — fetch the remote. Local
+  `master` can be stale by many commits without warning. Asserting state
+  from local refs alone has produced wrong answers in the past (e.g.,
+  "PR 1 + PR 2 are not on master" when they were already in production).
+  No exceptions: fetch first, then read.
 - **Always commit directly to master.** Do not create feature branches or pull
   requests unless explicitly asked.
 - **Always pull latest master before making changes:**

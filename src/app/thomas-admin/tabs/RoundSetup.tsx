@@ -6,9 +6,8 @@ import Link from "next/link";
 import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
-import FormatNotSetBanner from "@/components/format/FormatNotSetBanner";
-import FormatChip from "@/components/format/FormatChip";
-import { roundNeedsFormat } from "@/lib/format/helpers";
+import FormatPicker from "@/components/format/FormatPicker";
+import { FORMAT_LABELS } from "@/lib/format/copy";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 
@@ -53,6 +52,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [deleteModal, setDeleteModal] = useState(false);
   const [bottomSheetPlayer, setBottomSheetPlayer] = useState<Player | null>(null);
   const [undoAction, setUndoAction] = useState<{ player: Player; fromTeam: number; toTeam: number } | null>(null);
+  const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Load score status per team ─────────────────────────────────────────────
@@ -229,25 +229,47 @@ export default function RoundSetup({ allPlayers }: Props) {
     }
   };
 
-  // ── Create round in DB ─────────────────────────────────────────────────────
-  const createRound = async () => {
+  // ── Auto-create round shell when admin first taps Today's Format or Edit
+  // Teams (and there's no round yet for the selected date). Both buttons go
+  // through here so format-setting and team-building stay independent — either
+  // can come first. Returns the round id (existing or freshly created), or
+  // null on error so callers can bail.
+  const ensureRoundShell = useCallback(async (): Promise<number | null> => {
+    if (existingRoundId) return existingRoundId;
     setSaving(true);
     const { data: round, error } = await supabase
       .from("rounds")
-      .insert({ played_on: selectedDate, course_id: 1, format: null })
-      .select().single();
+      .insert({ played_on: selectedDate, course_id: 1, format: null, format_config: null })
+      .select()
+      .single();
+    setSaving(false);
     if (error || !round) {
-      alert("Error creating round: " + error?.message);
-      setSaving(false);
-      return;
+      alert("Error creating round: " + (error?.message ?? "unknown"));
+      return null;
     }
     setExistingRoundId(round.id);
+    setViewMode("active");
+    return round.id;
+  }, [existingRoundId, selectedDate]);
+
+  const openTodaysFormat = useCallback(async () => {
+    const rid = await ensureRoundShell();
+    if (!rid) return;
+    setFormatPickerOpen(true);
+  }, [ensureRoundShell]);
+
+  const openEditTeams = useCallback(async () => {
+    const rid = await ensureRoundShell();
+    if (!rid) return;
     setViewMode("edit");
     setMobileStep("checkin");
-    setSaving(false);
-  };
+  }, [ensureRoundShell]);
 
   // ── Mobile: transition checkin → teams ────────────────────────────────────
+  // TD4 fix (2026-05-10): diff-based reconciliation instead of delete-all +
+  // reinsert. Rows that exist in both sets are never touched, so a partial
+  // failure can no longer wipe out team assignments. Only players removed
+  // from the roster get deleted; only newly checked-in players get inserted.
   const goToTeams = async () => {
     if (!existingRoundId) return;
     setSaving(true);
@@ -256,16 +278,29 @@ export default function RoundSetup({ allPlayers }: Props) {
       .from("round_players").select("player_id, team_number").eq("round_id", existingRoundId);
 
     const existingMap: Record<number, number> = {};
-    existing?.forEach((rp: any) => { existingMap[rp.player_id] = rp.team_number ?? 0; });
+    const existingIds = new Set<number>();
+    existing?.forEach((rp: any) => {
+      existingMap[rp.player_id] = rp.team_number ?? 0;
+      existingIds.add(rp.player_id);
+    });
+    const rosterIds = new Set(roster.map(p => p.id));
 
-    await supabase.from("round_players").delete().eq("round_id", existingRoundId);
+    const toRemove: number[] = [];
+    existingIds.forEach(id => { if (!rosterIds.has(id)) toRemove.push(id); });
+    const toAdd = roster.filter(p => !existingIds.has(p.id));
 
-    if (roster.length > 0) {
+    if (toRemove.length > 0) {
+      await supabase.from("round_players")
+        .delete()
+        .eq("round_id", existingRoundId)
+        .in("player_id", toRemove);
+    }
+    if (toAdd.length > 0) {
       await supabase.from("round_players").insert(
-        roster.map(p => ({
+        toAdd.map(p => ({
           round_id: existingRoundId,
           player_id: p.id,
-          team_number: existingMap[p.id] ?? 0,
+          team_number: 0,
           tee_id: null,
         }))
       );
@@ -454,21 +489,112 @@ export default function RoundSetup({ allPlayers }: Props) {
     />
   );
 
+  // Today's Format + Edit Teams pair sits above team cards in both empty
+  // ("none") and populated ("active") view modes. Either button auto-creates a
+  // round shell first if none exists — format-setting and team-building are
+  // fully independent entry points.
+  const formatBtnIsGold = roundFormat === null;
+  const formatLabel = roundFormat === null
+    ? "Pick today's format"
+    : FORMAT_LABELS[roundFormat].title;
+  const formatStrip = (
+    <div style={{
+      padding: "14px 16px 4px",
+      display: "flex", flexDirection: "column", gap: "10px",
+      maxWidth: "700px", margin: "0 auto", width: "100%",
+      boxSizing: "border-box",
+    }}>
+      <button
+        onClick={openTodaysFormat}
+        disabled={saving}
+        style={{
+          width: "100%", padding: "11px 14px", borderRadius: "10px",
+          background: formatBtnIsGold ? C.gold : "#fff",
+          border: formatBtnIsGold ? "none" : `1px solid #e4e4e4`,
+          color: "#1a1a1a",
+          cursor: saving ? "default" : "pointer",
+          fontFamily: C.font, textAlign: "left",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        }}
+      >
+        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1, gap: 2 }}>
+          <span style={{
+            fontSize: "0.6rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em",
+            color: formatBtnIsGold ? "#6b4e00" : "#64748b",
+          }}>
+            Today's Format
+          </span>
+          <span style={{
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: "0.98rem", fontWeight: 700,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{formatLabel}</span>
+            {roundFormatLockedAt !== null && (
+              <span aria-label="locked" title="Locked — first score entered" style={{ display: "inline-flex", color: "#64748b", flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </span>
+            )}
+          </span>
+        </span>
+        <span style={{
+          fontSize: "0.82rem", fontWeight: 600,
+          color: formatBtnIsGold ? "#6b4e00" : C.navy, flexShrink: 0,
+        }}>
+          {formatBtnIsGold ? "Pick →" : "Change"}
+        </span>
+      </button>
+
+      <button
+        onClick={openEditTeams}
+        disabled={saving}
+        style={{
+          width: "100%", padding: "13px 14px", borderRadius: "10px",
+          background: C.gold, border: "none", color: "#1a1a1a",
+          fontSize: "0.95rem", fontWeight: 700, cursor: saving ? "default" : "pointer",
+          fontFamily: C.font, textAlign: "left",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}
+      >
+        <span>Edit Teams</span>
+        <span style={{ fontSize: "0.95rem", fontWeight: 700 }}>→</span>
+      </button>
+    </div>
+  );
+
+  const formatPicker = (
+    <FormatPicker
+      open={formatPickerOpen}
+      roundId={existingRoundId ?? 0}
+      currentFormat={roundFormat}
+      currentConfig={roundFormatConfig}
+      formatLocked={roundFormatLockedAt !== null}
+      onClose={() => setFormatPickerOpen(false)}
+      onSaved={() => {
+        setFormatPickerOpen(false);
+        loadRoundForDate(selectedDate);
+      }}
+    />
+  );
+
   // ── STATE 1: No round ──────────────────────────────────────────────────────
   if (viewMode === "none") {
     return (
       <div style={{ fontFamily: C.font }}>
         {hero}
         {statsRow}
-        <div style={{ padding: "60px 24px 100px", textAlign: "center", maxWidth: "400px", margin: "0 auto" }}>
-          <div style={{ fontSize: "3rem", marginBottom: "16px" }}>⛳</div>
-          <div style={{ fontSize: "1.15rem", fontWeight: 700, color: C.navy, marginBottom: "8px" }}>No round today yet</div>
-          <div style={{ fontSize: "0.88rem", color: "#9ca3af", marginBottom: "32px", lineHeight: 1.5 }}>
-            Schedule a round and assign teams to get started.
+        {formatStrip}
+        <div style={{ padding: "32px 24px 100px", textAlign: "center", maxWidth: "400px", margin: "0 auto" }}>
+          <div style={{ fontSize: "2.4rem", marginBottom: "10px", opacity: 0.55 }}>⛳</div>
+          <div style={{ fontSize: "0.88rem", color: "#9ca3af", lineHeight: 1.5 }}>
+            No round yet. Tap a button above to start — format and teams are independent, set either one first.
           </div>
-          {ctaBtn(saving ? "Creating…" : "+ Create today's round", createRound, saving)}
         </div>
         {dangerModal}
+        {formatPicker}
       </div>
     );
   }
@@ -483,27 +609,9 @@ export default function RoundSetup({ allPlayers }: Props) {
       <div style={{ fontFamily: C.font }}>
         {hero}
         {statsRow}
+        {formatStrip}
 
         <div style={{ padding: "16px", maxWidth: "700px", margin: "0 auto", paddingBottom: "100px" }}>
-          {existingRoundId && roundNeedsFormat({ format: roundFormat, is_complete: isRoundComplete }) && (
-            <FormatNotSetBanner
-              roundId={existingRoundId}
-              onChosen={() => loadRoundForDate(selectedDate)}
-            />
-          )}
-
-          {existingRoundId && roundFormat !== null && (
-            <div style={{ marginBottom: 16 }}>
-              <FormatChip
-                roundId={existingRoundId}
-                currentFormat={roundFormat}
-                currentConfig={roundFormatConfig}
-                formatLocked={roundFormatLockedAt !== null}
-                onChange={() => loadRoundForDate(selectedDate)}
-              />
-            </div>
-          )}
-
           <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "14px" }}>
             Today's scorecards
           </div>
@@ -569,8 +677,7 @@ export default function RoundSetup({ allPlayers }: Props) {
             </div>
           )}
 
-          <div style={{ marginTop: "24px", display: "flex", flexDirection: "column", gap: "10px" }}>
-            {ctaBtn("Edit teams", () => { setViewMode("edit"); setMobileStep("checkin"); })}
+          <div style={{ marginTop: "24px" }}>
             <button onClick={() => setDeleteModal(true)} disabled={saving} style={{
               width: "100%", padding: "13px", borderRadius: "9px",
               border: `1.5px solid ${C.red}`, background: "transparent",
@@ -582,6 +689,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           </div>
         </div>
         {dangerModal}
+        {formatPicker}
       </div>
     );
   }
