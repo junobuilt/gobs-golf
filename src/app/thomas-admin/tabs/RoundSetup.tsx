@@ -822,9 +822,9 @@ export default function RoundSetup({ allPlayers }: Props) {
           borderTop: `1px solid ${C.border}`, boxShadow: "0 -2px 12px rgba(0,0,0,0.06)",
         }}>
           {ctaBtn(
-            saving ? "Saving…" : roster.length < 4 ? `Check in ${4 - roster.length} more to continue` : `Assign to teams → (${roster.length} players)`,
+            saving ? "Saving…" : roster.length === 0 ? "Check in at least one player" : `Assign to teams → (${roster.length} players)`,
             goToTeams,
-            roster.length < 4 || saving
+            roster.length === 0 || saving
           )}
         </div>
         {dangerModal}
