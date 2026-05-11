@@ -70,6 +70,20 @@ const GOBS_STABLEFORD_DEFAULT_POINT_VALUES: Record<string, number> = {
   albatross: GOBS_STABLEFORD_POINTS.albatross,
 };
 
+// Used when ensuring a round shell exists before any format has been picked.
+// `rounds.format_config` is NOT NULL in the DB, so we can't insert null — but
+// we also don't want to leak format-specific shape (best_n, point_values) into
+// a row whose format is still null. The picker overwrites the entire config
+// the moment a format is chosen, so this shape is only ever live for the gap
+// between shell creation and first format selection. Engine helpers
+// (getScoringBasis, getOverrideHoles, readGobsPointValues) all tolerate the
+// optional keys being absent.
+export const DEFAULT_FORMAT_CONFIG_SHELL: FormatConfig = {
+  basis: "net",
+  scoring_basis: "net",
+  override_holes: [],
+};
+
 export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
   "2_ball": { basis: "net", scoring_basis: "net", best_n: 2, override_holes: [] },
   "3_ball": { basis: "net", scoring_basis: "net", best_n: 3, override_holes: [] },

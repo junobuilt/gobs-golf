@@ -7,7 +7,7 @@ import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
-import { FORMAT_LABELS } from "@/lib/format/copy";
+import { FORMAT_LABELS, DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 
@@ -237,9 +237,17 @@ export default function RoundSetup({ allPlayers }: Props) {
   const ensureRoundShell = useCallback(async (): Promise<number | null> => {
     if (existingRoundId) return existingRoundId;
     setSaving(true);
+    // rounds.format_config is NOT NULL — use the shared shell config until a
+    // format is picked. FormatPicker.commitSave() overwrites the whole config
+    // when the first format selection lands.
     const { data: round, error } = await supabase
       .from("rounds")
-      .insert({ played_on: selectedDate, course_id: 1, format: null, format_config: null })
+      .insert({
+        played_on: selectedDate,
+        course_id: 1,
+        format: null,
+        format_config: DEFAULT_FORMAT_CONFIG_SHELL,
+      })
       .select()
       .single();
     setSaving(false);
@@ -541,10 +549,11 @@ export default function RoundSetup({ allPlayers }: Props) {
           </span>
         </span>
         <span style={{
-          fontSize: "0.82rem", fontWeight: 600,
-          color: formatBtnIsGold ? "#6b4e00" : C.navy, flexShrink: 0,
+          fontSize: formatBtnIsGold ? "0.95rem" : "0.82rem",
+          fontWeight: formatBtnIsGold ? 700 : 600,
+          color: formatBtnIsGold ? "#1a1a1a" : C.navy, flexShrink: 0,
         }}>
-          {formatBtnIsGold ? "Pick →" : "Change"}
+          {formatBtnIsGold ? "→" : "Change"}
         </span>
       </button>
 
