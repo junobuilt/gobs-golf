@@ -61,13 +61,17 @@ export default function NewRoundPage() {
         .order("sort_order");
       setTees(teesData || []);
 
-      // Check if a round already exists for today
+      // Check if a round already exists for today. The is_complete = false
+      // filter that used to live here was the structural enabler of the
+      // May 11 duplicate-rounds bug: once round 90 was flagged complete,
+      // this query returned empty and a new shell got minted instead of
+      // joining the existing day-of round. Round-complete is not a basis
+      // for creating a duplicate — if a round exists for today, join it.
       const today = todayLocal();
       const { data: todayRounds } = await supabase
         .from("rounds")
         .select("id")
         .eq("played_on", today)
-        .eq("is_complete", false)
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -136,27 +140,86 @@ export default function NewRoundPage() {
 
     let roundId: number;
     let teamNumber: number;
+    const today = todayLocal();
 
     if (existingRound) {
       // Join the existing round as the next team
       roundId = existingRound.id;
       teamNumber = existingRound.teamCount + 1;
     } else {
-      // Create a new round
-      const today = todayLocal();
-      const { data: round, error: roundError } = await supabase
+      // Find-or-create on played_on (May 11 duplicate-rounds fix). This
+      // page's load() runs once on mount; if a round was created between
+      // mount and this tap (stale-tab scenario, or a near-simultaneous
+      // group starting from admin), the existingRound state above is null
+      // and we'd otherwise blindly INSERT a duplicate. Re-SELECT for the
+      // canonical row before inserting, and handle 23505 (unique-violation
+      // from migration 006) by re-fetching once more — mirrors the
+      // ensureRoundShell upsert in RoundSetup.
+      const { data: existingByDate } = await supabase
         .from("rounds")
-        .insert({ course_id: 1, played_on: today, is_complete: false, format: null })
         .select("id")
-        .single();
+        .eq("played_on", today)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (roundError || !round) {
-        alert("Error creating round: " + (roundError?.message || "Unknown"));
-        setSaving(false);
-        return;
+      if (existingByDate) {
+        // Round was created since mount — join it as the next team.
+        const { data: rps } = await supabase
+          .from("round_players")
+          .select("team_number")
+          .eq("round_id", existingByDate.id);
+        const maxTeam = rps && rps.length > 0
+          ? Math.max(...rps.map((r: { team_number: number | null }) => r.team_number || 0))
+          : 0;
+        roundId = existingByDate.id;
+        teamNumber = maxTeam + 1;
+      } else {
+        const { data: round, error: roundError } = await supabase
+          .from("rounds")
+          .insert({ course_id: 1, played_on: today, is_complete: false, format: null })
+          .select("id")
+          .single();
+
+        if (roundError) {
+          if (roundError.code === "23505") {
+            // Concurrent caller inserted between our SELECT and INSERT.
+            // Re-fetch the canonical row and join it.
+            const { data: refetched } = await supabase
+              .from("rounds")
+              .select("id")
+              .eq("played_on", today)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (!refetched) {
+              alert("Error creating round: race could not be resolved");
+              setSaving(false);
+              return;
+            }
+            const { data: rps } = await supabase
+              .from("round_players")
+              .select("team_number")
+              .eq("round_id", refetched.id);
+            const maxTeam = rps && rps.length > 0
+              ? Math.max(...rps.map((r: { team_number: number | null }) => r.team_number || 0))
+              : 0;
+            roundId = refetched.id;
+            teamNumber = maxTeam + 1;
+          } else {
+            alert("Error creating round: " + roundError.message);
+            setSaving(false);
+            return;
+          }
+        } else if (!round) {
+          alert("Error creating round: no row returned");
+          setSaving(false);
+          return;
+        } else {
+          roundId = round.id;
+          teamNumber = 1;
+        }
       }
-      roundId = round.id;
-      teamNumber = 1;
     }
 
     const roundPlayers = selected.map((s) => {

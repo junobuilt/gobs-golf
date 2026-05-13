@@ -46,6 +46,13 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("none");
   const [mobileStep, setMobileStep] = useState<"checkin" | "teams">("checkin");
   const [saving, setSaving] = useState(false);
+  // True from mount until the first loadRoundForDate settles, and again any
+  // time the date picker changes and the new date's load is in flight. Gates
+  // the Today's Format and Edit Teams buttons so a fast tap during the load
+  // window can't fire ensureRoundShell with stale (null) existingRoundId —
+  // the May 11 duplicate-rounds race. See migration 006 for the DB-level
+  // backstop that catches this if it ever escapes the UI gate.
+  const [initialLoading, setInitialLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [deleteModal, setDeleteModal] = useState(false);
   const [bottomSheetPlayer, setBottomSheetPlayer] = useState<Player | null>(null);
@@ -98,91 +105,100 @@ export default function RoundSetup({ allPlayers }: Props) {
 
   // ── Load round for selected date ───────────────────────────────────────────
   const loadRoundForDate = useCallback(async (date: string) => {
-    setExistingRoundId(null);
-    setIsRoundComplete(false);
-    setRoundFormat(null);
-    setRoundFormatConfig(null);
-    setRoundFormatLockedAt(null);
-    setRoster([]);
-    setTeams({});
-    setMaxTeams(8);
-    setViewMode("none");
-    setMobileStep("checkin");
-    setTeamScoreStatus({});
-    setUndoAction(null);
-    setBottomSheetPlayer(null);
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    // try/finally guarantees initialLoading flips back to false on every exit
+    // path, including the two "no round" early returns below. Without it, the
+    // button-disable gate could stick on forever if the first DB lookup short-
+    // circuits — the May 11 race fix would silently lock the admin tab.
+    setInitialLoading(true);
+    try {
+      setExistingRoundId(null);
+      setIsRoundComplete(false);
+      setRoundFormat(null);
+      setRoundFormatConfig(null);
+      setRoundFormatLockedAt(null);
+      setRoster([]);
+      setTeams({});
+      setMaxTeams(8);
+      setViewMode("none");
+      setMobileStep("checkin");
+      setTeamScoreStatus({});
+      setUndoAction(null);
+      setBottomSheetPlayer(null);
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
-    const { data: rounds } = await supabase
-      .from("rounds").select("id, is_complete, format, format_config, format_locked_at").eq("played_on", date)
-      .order("created_at", { ascending: false }).limit(1);
+      const { data: rounds } = await supabase
+        .from("rounds").select("id, is_complete, format, format_config, format_locked_at").eq("played_on", date)
+        .order("created_at", { ascending: false }).limit(1);
 
-    if (!rounds || rounds.length === 0) return;
+      if (!rounds || rounds.length === 0) return;
 
-    const round = rounds[0];
-    setExistingRoundId(round.id);
-    setIsRoundComplete(round.is_complete);
-    setRoundFormat((round.format ?? null) as Format | null);
-    setRoundFormatConfig(((round as any).format_config ?? null) as FormatConfig | null);
-    setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
+      const round = rounds[0];
+      setExistingRoundId(round.id);
+      setIsRoundComplete(round.is_complete);
+      setRoundFormat((round.format ?? null) as Format | null);
+      setRoundFormatConfig(((round as any).format_config ?? null) as FormatConfig | null);
+      setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
 
-    // Embedded join (B7 / TD2 pattern). Previously this query selected only
-    // (player_id, team_number) and resolved the player record by id against
-    // `allPlayers` — which the parent filters to is_active === true. Result:
-    // any player rostered for the round who'd later been deactivated via the
-    // Players tab was silently dropped from the admin view, while the
-    // homepage (which uses this same embedded-join pattern) kept rendering
-    // them. Active/inactive is a check-in-list concern, not a display-who's-
-    // already-in concern.
-    const { data: rps } = await supabase
-      .from("round_players")
-      .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
-      .eq("round_id", round.id);
+      // Embedded join (B7 / TD2 pattern). Previously this query selected only
+      // (player_id, team_number) and resolved the player record by id against
+      // `allPlayers` — which the parent filters to is_active === true. Result:
+      // any player rostered for the round who'd later been deactivated via the
+      // Players tab was silently dropped from the admin view, while the
+      // homepage (which uses this same embedded-join pattern) kept rendering
+      // them. Active/inactive is a check-in-list concern, not a display-who's-
+      // already-in concern.
+      const { data: rps } = await supabase
+        .from("round_players")
+        .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
+        .eq("round_id", round.id);
 
-    if (!rps || rps.length === 0) {
-      setViewMode("active");
-      setMobileStep("teams");
-      return;
-    }
-
-    const loadedRoster: Player[] = [];
-    const loadedTeams: Record<number, Player[]> = {};
-
-    rps.forEach((rp: any) => {
-      // PostgREST embed returns the joined row as either an object (single
-      // parent FK) or a single-element array depending on relationship
-      // metadata. Same array-vs-object guard used on homepage.
-      const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
-      if (!playerRow) return;
-      const player: Player = {
-        id: playerRow.id,
-        full_name: playerRow.full_name,
-        display_name: playerRow.display_name,
-        handicap_index: playerRow.handicap_index,
-        is_active: playerRow.is_active,
-        preferred_tee_id: playerRow.preferred_tee_id ?? null,
-      };
-      loadedRoster.push(player);
-      const tn = rp.team_number;
-      if (tn >= 1) {
-        if (!loadedTeams[tn]) loadedTeams[tn] = [];
-        loadedTeams[tn].push(player);
+      if (!rps || rps.length === 0) {
+        setViewMode("active");
+        setMobileStep("teams");
+        return;
       }
-    });
 
-    setRoster(loadedRoster);
-    setTeams(loadedTeams);
+      const loadedRoster: Player[] = [];
+      const loadedTeams: Record<number, Player[]> = {};
 
-    const teamNumList = Object.keys(loadedTeams).map(Number);
-    const maxTn = teamNumList.length > 0 ? Math.max(...teamNumList) : 8;
-    setMaxTeams(Math.max(maxTn, 8));
+      rps.forEach((rp: any) => {
+        // PostgREST embed returns the joined row as either an object (single
+        // parent FK) or a single-element array depending on relationship
+        // metadata. Same array-vs-object guard used on homepage.
+        const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+        if (!playerRow) return;
+        const player: Player = {
+          id: playerRow.id,
+          full_name: playerRow.full_name,
+          display_name: playerRow.display_name,
+          handicap_index: playerRow.handicap_index,
+          is_active: playerRow.is_active,
+          preferred_tee_id: playerRow.preferred_tee_id ?? null,
+        };
+        loadedRoster.push(player);
+        const tn = rp.team_number;
+        if (tn >= 1) {
+          if (!loadedTeams[tn]) loadedTeams[tn] = [];
+          loadedTeams[tn].push(player);
+        }
+      });
 
-    if (teamNumList.length > 0) {
-      await loadScoreStatus(round.id, teamNumList);
-      setViewMode("active");
-    } else {
-      setViewMode("active");
-      setMobileStep("teams");
+      setRoster(loadedRoster);
+      setTeams(loadedTeams);
+
+      const teamNumList = Object.keys(loadedTeams).map(Number);
+      const maxTn = teamNumList.length > 0 ? Math.max(...teamNumList) : 8;
+      setMaxTeams(Math.max(maxTn, 8));
+
+      if (teamNumList.length > 0) {
+        await loadScoreStatus(round.id, teamNumList);
+        setViewMode("active");
+      } else {
+        setViewMode("active");
+        setMobileStep("teams");
+      }
+    } finally {
+      setInitialLoading(false);
     }
   }, [allPlayers, loadScoreStatus]);
 
@@ -282,9 +298,43 @@ export default function RoundSetup({ allPlayers }: Props) {
   // through here so format-setting and team-building stay independent — either
   // can come first. Returns the round id (existing or freshly created), or
   // null on error so callers can bail.
+  //
+  // Find-or-create on played_on (May 11 duplicate-rounds fix). The flow is:
+  //   1. If existingRoundId is already set in state, return it (fast path).
+  //   2. SELECT for any round on selectedDate. If one exists, adopt it via
+  //      loadRoundForDate so the full UI state (roster, teams, format) is
+  //      hydrated from the canonical row — covers the "tap before initial
+  //      load settles" race.
+  //   3. Otherwise INSERT a new shell. If that fails with 23505 (unique
+  //      violation from migration 006), another concurrent caller won the
+  //      race between our SELECT and INSERT — re-fetch via loadRoundForDate.
+  // The DB-level unique constraint is the structural backstop; this code path
+  // is defense-in-depth so behavior is correct in production both before and
+  // after migration 006 lands.
   const ensureRoundShell = useCallback(async (): Promise<number | null> => {
     if (existingRoundId) return existingRoundId;
     setSaving(true);
+
+    // Step 1: best-effort SELECT for an existing round on this date.
+    const { data: existing } = await supabase
+      .from("rounds")
+      .select("id")
+      .eq("played_on", selectedDate)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) {
+      // Found one. Hydrate full state via the canonical load path so the
+      // caller sees roster/teams/format consistent with the DB. This handles
+      // the load-vs-tap race where ensureRoundShell fires before
+      // loadRoundForDate has populated existingRoundId.
+      setSaving(false);
+      await loadRoundForDate(selectedDate);
+      return existing.id;
+    }
+
+    // Step 2: insert a brand-new shell.
     // rounds.format_config is NOT NULL — use the shared shell config until a
     // format is picked. FormatPicker.commitSave() overwrites the whole config
     // when the first format selection lands.
@@ -296,13 +346,38 @@ export default function RoundSetup({ allPlayers }: Props) {
         format: null,
         format_config: DEFAULT_FORMAT_CONFIG_SHELL,
       })
-      .select()
+      .select("id")
       .single();
-    setSaving(false);
-    if (error || !round) {
-      alert("Error creating round: " + (error?.message ?? "unknown"));
+
+    if (error) {
+      // Step 3: unique-violation fallback. Postgres code 23505 means a
+      // concurrent caller inserted between our SELECT and INSERT (only
+      // possible once migration 006 is applied — pre-migration this branch
+      // never fires and we'd duplicate, which is precisely the bug the
+      // constraint exists to prevent). Re-hydrate from the canonical row.
+      if (error.code === "23505") {
+        setSaving(false);
+        await loadRoundForDate(selectedDate);
+        const { data: refetched } = await supabase
+          .from("rounds")
+          .select("id")
+          .eq("played_on", selectedDate)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return refetched?.id ?? null;
+      }
+      setSaving(false);
+      alert("Error creating round: " + error.message);
       return null;
     }
+
+    setSaving(false);
+    if (!round) {
+      alert("Error creating round: no row returned");
+      return null;
+    }
+
     setExistingRoundId(round.id);
     // Explicit reset of format state. In a fresh-mount path these are already
     // null from loadRoundForDate, but the in-place "delete round → tap Edit
@@ -314,7 +389,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     setRoundFormatLockedAt(null);
     setViewMode("active");
     return round.id;
-  }, [existingRoundId, selectedDate]);
+  }, [existingRoundId, selectedDate, loadRoundForDate]);
 
   const openTodaysFormat = useCallback(async () => {
     const rid = await ensureRoundShell();
@@ -579,13 +654,18 @@ export default function RoundSetup({ allPlayers }: Props) {
     }}>
       <button
         onClick={openTodaysFormat}
-        disabled={saving}
+        disabled={saving || initialLoading}
         style={{
           width: "100%", padding: "11px 14px", borderRadius: "10px",
           background: formatBtnIsGold ? C.gold : "#fff",
           border: formatBtnIsGold ? "none" : `1px solid #e4e4e4`,
           color: "#1a1a1a",
-          cursor: saving ? "default" : "pointer",
+          // Grey out only while the initial round-for-date load is in flight,
+          // so an impatient tap can't fire ensureRoundShell with a stale null
+          // existingRoundId. `saving` keeps its existing visual treatment
+          // (cursor change only) to match the rest of the file.
+          opacity: initialLoading ? 0.5 : 1,
+          cursor: saving || initialLoading ? "default" : "pointer",
           fontFamily: C.font, textAlign: "left",
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
         }}
@@ -624,11 +704,14 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       <button
         onClick={openEditTeams}
-        disabled={saving}
+        disabled={saving || initialLoading}
         style={{
           width: "100%", padding: "13px 14px", borderRadius: "10px",
           background: C.gold, border: "none", color: "#1a1a1a",
-          fontSize: "0.95rem", fontWeight: 700, cursor: saving ? "default" : "pointer",
+          fontSize: "0.95rem", fontWeight: 700,
+          // Same gate + visual as Today's Format above — see comment there.
+          opacity: initialLoading ? 0.5 : 1,
+          cursor: saving || initialLoading ? "default" : "pointer",
           fontFamily: C.font, textAlign: "left",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}
