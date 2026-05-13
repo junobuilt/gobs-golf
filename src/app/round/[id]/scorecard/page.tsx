@@ -676,17 +676,22 @@ export default function ScorecardPage() {
       )}
 
       {/* Hole navigation dots */}
-      <div style={{ display: "flex", overflowX: "auto", gap: "6px", marginBottom: "20px", paddingBottom: "10px" }}>
+      {/* touchAction: pan-x on the rail and manipulation on each dot mitigate
+          iOS Safari's scroll-into-tap behavior — a horizontal flick to scroll
+          the rail was firing setCurrentHole on whichever dot the touch landed
+          on (Bug 2 contributor). 44px targets hit the WCAG 2.1 AA minimum and
+          reduce adjacent-dot mis-taps. */}
+      <div style={{ display: "flex", overflowX: "auto", gap: "6px", marginBottom: "20px", paddingBottom: "10px", touchAction: "pan-x" }}>
         {Array.from({ length: 18 }, (_, i) => i + 1).map(h => {
           const hasScores = roundPlayers.some(rp => scores[rp.id]?.[h] != null);
           const hasOverride = !!countingOverrides[h];
           return (
             <button key={h} onClick={() => setCurrentHole(h)} style={{
-              minWidth: "35px", height: "35px", borderRadius: "50%",
+              minWidth: "44px", height: "44px", borderRadius: "50%",
               border: h === currentHole ? "2px solid #0c3057" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
               background: h === currentHole ? "#0c3057" : hasScores ? "#dbeafe" : "white",
               color: h === currentHole ? "white" : hasScores ? "#1e40af" : "#94a3b8",
-              fontSize: "0.8rem", fontWeight: "bold", cursor: "pointer",
+              fontSize: "0.8rem", fontWeight: "bold", cursor: "pointer", touchAction: "manipulation",
             }}>
               {h}
             </button>
