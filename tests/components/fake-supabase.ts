@@ -1,0 +1,302 @@
+// Minimal in-memory fake of the Supabase JS client surface that the scorecard
+// page uses. Supports the chained query-builder methods we hit in production
+// code paths and exposes a `writes` log so tests can assert against the order
+// and shape of mutations.
+//
+// Supported chains:
+//   from(table).select(cols).eq(col, v)[.in(col, vs)][.is(col, v)][.gt(col, v)][.order(col)][.maybeSingle()|.single()]
+//   from(table).insert(row)
+//   from(table).update(payload).eq(col, v)[.is(col, v)].select(cols).maybeSingle()
+//
+// The builder is a Thenable so `await ...` works at any chain point.
+
+export interface FakeData {
+  rounds: any[];
+  tees: any[];
+  holes: any[];
+  round_players: any[];
+  players: any[];
+  scores: any[];
+}
+
+export type WriteOp =
+  | { type: "insert"; table: string; payload: any }
+  | { type: "update"; table: string; filters: any[]; payload: any };
+
+export interface FakeOptions {
+  // Artificial delay applied to every insert/update before it resolves.
+  writeDelayMs?: number;
+  // If set, the supplied function decides whether a given write should fail
+  // (and reject the promise). Called once per insert/update, in order.
+  failWrite?: (op: WriteOp, callIndex: number) => boolean;
+}
+
+export class FakeSupabase {
+  data: FakeData;
+  writes: WriteOp[] = [];
+  options: FakeOptions = {};
+  private nextIds: Record<string, number> = {};
+  private writeCallCounter = 0;
+
+  constructor(seed: FakeData) {
+    this.data = seed;
+    for (const t of Object.keys(seed)) {
+      const rows = (seed as any)[t] as any[];
+      const maxId = rows.reduce((m, r) => (typeof r.id === "number" && r.id > m ? r.id : m), 0);
+      this.nextIds[t] = maxId + 1;
+    }
+  }
+
+  setOptions(opts: FakeOptions) {
+    this.options = { ...this.options, ...opts };
+  }
+
+  reset() {
+    this.writes = [];
+    this.writeCallCounter = 0;
+  }
+
+  from(table: string) {
+    return new QueryBuilder(this, table);
+  }
+
+  _allocId(table: string): number {
+    const id = this.nextIds[table];
+    this.nextIds[table] = id + 1;
+    return id;
+  }
+
+  _nextWriteCall() {
+    return this.writeCallCounter++;
+  }
+}
+
+type Op = "select" | "insert" | "update";
+type Terminal = "list" | "maybeSingle" | "single";
+
+class QueryBuilder<Row = any> {
+  private op: Op = "select";
+  private terminal: Terminal = "list";
+  private selectStr: string = "*";
+  private eqFilters: Array<[string, any]> = [];
+  private inFilter: [string, any[]] | null = null;
+  private isFilter: [string, any] | null = null;
+  private gtFilters: Array<[string, any]> = [];
+  private orderField: string | null = null;
+  private insertPayload: any[] = [];
+  private updatePayload: any = null;
+
+  constructor(private fake: FakeSupabase, private table: string) {}
+
+  select(cols?: string) {
+    if (this.op === "select") {
+      this.selectStr = cols ?? "*";
+    }
+    // For insert/update chains that add .select() to return updated rows
+    return this;
+  }
+  insert(row: any | any[]) {
+    this.op = "insert";
+    this.insertPayload = Array.isArray(row) ? row : [row];
+    return this;
+  }
+  update(payload: any) {
+    this.op = "update";
+    this.updatePayload = payload;
+    return this;
+  }
+  eq(col: string, val: any) {
+    this.eqFilters.push([col, val]);
+    return this;
+  }
+  in(col: string, vals: any[]) {
+    this.inFilter = [col, vals];
+    return this;
+  }
+  is(col: string, val: any) {
+    this.isFilter = [col, val];
+    return this;
+  }
+  gt(col: string, val: any) {
+    this.gtFilters.push([col, val]);
+    return this;
+  }
+  order(col: string) {
+    this.orderField = col;
+    return this;
+  }
+  maybeSingle() {
+    this.terminal = "maybeSingle";
+    return this;
+  }
+  single() {
+    this.terminal = "single";
+    return this;
+  }
+
+  then<T1 = { data: any; error: any }, T2 = never>(
+    onFulfilled?: ((value: { data: any; error: any }) => T1 | PromiseLike<T1>) | null,
+    onRejected?: ((reason: any) => T2 | PromiseLike<T2>) | null,
+  ): Promise<T1 | T2> {
+    return this.execute().then(onFulfilled, onRejected);
+  }
+
+  private applyFilters(rows: any[]): any[] {
+    // Real Supabase coerces string params against numeric columns; the
+    // scorecard does `.eq("id", roundId)` where roundId is a string from
+    // useParams but the column is bigint. Match that behavior with a
+    // loose string-equality comparison.
+    const looseEq = (a: any, b: any) => a === b || String(a) === String(b);
+    let out = rows;
+    for (const [c, v] of this.eqFilters) out = out.filter(r => looseEq(r[c], v));
+    if (this.inFilter) {
+      const [c, vs] = this.inFilter;
+      out = out.filter(r => vs.some(v => looseEq(r[c], v)));
+    }
+    if (this.isFilter) {
+      const [c, v] = this.isFilter;
+      out = out.filter(r => r[c] === v);
+    }
+    for (const [c, v] of this.gtFilters) out = out.filter(r => r[c] > v);
+    return out;
+  }
+
+  private async execute(): Promise<{ data: any; error: any }> {
+    const tableRows: any[] = (this.fake.data as any)[this.table];
+    if (!tableRows) {
+      return { data: this.terminal === "list" ? [] : null, error: null };
+    }
+
+    if (this.op === "insert") {
+      await this.maybeDelay();
+      const created = this.insertPayload.map(r => ({
+        ...r,
+        id: r.id ?? this.fake._allocId(this.table),
+        created_at: r.created_at ?? new Date().toISOString(),
+      }));
+      const op: WriteOp = { type: "insert", table: this.table, payload: created };
+      const idx = this.fake._nextWriteCall();
+      this.fake.writes.push(op);
+      if (this.fake.options.failWrite?.(op, idx)) {
+        return { data: null, error: { message: "fake write failure" } };
+      }
+      tableRows.push(...created);
+      return { data: this.terminal === "list" ? created : created[0], error: null };
+    }
+
+    if (this.op === "update") {
+      await this.maybeDelay();
+      const filtered = this.applyFilters(tableRows);
+      const op: WriteOp = {
+        type: "update",
+        table: this.table,
+        filters: [...this.eqFilters, ...(this.isFilter ? [this.isFilter] : [])],
+        payload: this.updatePayload,
+      };
+      const idx = this.fake._nextWriteCall();
+      this.fake.writes.push(op);
+      if (this.fake.options.failWrite?.(op, idx)) {
+        return { data: null, error: { message: "fake write failure" } };
+      }
+      const updated: any[] = [];
+      for (const r of filtered) {
+        Object.assign(r, this.updatePayload);
+        updated.push(r);
+      }
+      if (this.terminal === "maybeSingle") return { data: updated[0] ?? null, error: null };
+      if (this.terminal === "single") return { data: updated[0] ?? null, error: null };
+      return { data: updated, error: null };
+    }
+
+    // select
+    let rows = this.applyFilters([...tableRows]);
+    if (this.orderField) {
+      const field = this.orderField;
+      rows.sort((a, b) => {
+        const av = a[field];
+        const bv = b[field];
+        if (av === bv) return 0;
+        return av < bv ? -1 : 1;
+      });
+    }
+
+    // Handle relational select: e.g. select(`id, players(name, ...)`)
+    // For the scorecard's round_players load, the join is to `players`.
+    if (this.table === "round_players" && /players\s*\(/.test(this.selectStr)) {
+      rows = rows.map(rp => {
+        const player = this.fake.data.players.find(p => p.id === rp.player_id);
+        return { ...rp, players: player ?? null };
+      });
+    }
+
+    if (this.terminal === "maybeSingle") return { data: rows[0] ?? null, error: null };
+    if (this.terminal === "single")
+      return { data: rows[0] ?? null, error: rows[0] ? null : { message: "not found" } };
+    return { data: rows, error: null };
+  }
+
+  private async maybeDelay() {
+    const ms = this.fake.options.writeDelayMs ?? 0;
+    if (ms > 0) await new Promise(r => setTimeout(r, ms));
+  }
+}
+
+/**
+ * Build a minimal seed: 1 round with 2_ball format, 2 tees, 18 par-4 holes per tee,
+ * 3 round_players assigned to team 1 with tees and course handicaps, optional pre-existing scores.
+ */
+export function buildSeed(opts?: {
+  preExistingScores?: Array<{ round_player_id: number; hole_number: number; strokes: number }>;
+}): FakeData {
+  const pars = Array.from({ length: 18 }, (_, i) => (i + 1)).map(n => 4); // all par 4 for simplicity
+  const holes = [];
+  for (const teeId of [1, 2]) {
+    for (let n = 1; n <= 18; n++) {
+      holes.push({
+        id: holes.length + 1,
+        tee_id: teeId,
+        hole_number: n,
+        par: pars[n - 1],
+        yardage: 350,
+        stroke_index: n,
+      });
+    }
+  }
+  const seedScores = (opts?.preExistingScores ?? []).map((s, i) => ({
+    id: 1000 + i,
+    round_player_id: s.round_player_id,
+    hole_number: s.hole_number,
+    strokes: s.strokes,
+    created_at: new Date().toISOString(),
+  }));
+  return {
+    rounds: [
+      {
+        id: 1,
+        played_on: "2026-05-13",
+        course_id: 1,
+        is_complete: false,
+        format: "2_ball",
+        format_config: { basis: "net", best_n: 2, override_holes: [] },
+        format_locked_at: "2026-05-13T00:00:00Z",
+        created_at: "2026-05-13T00:00:00Z",
+      },
+    ],
+    tees: [
+      { id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 },
+      { id: 2, color: "Yellow", slope_rating: 115, course_rating: 68, par: 72, sort_order: 2 },
+    ],
+    holes,
+    round_players: [
+      { id: 101, round_id: 1, player_id: 201, tee_id: 1, team_number: 1, course_handicap: 10 },
+      { id: 102, round_id: 1, player_id: 202, tee_id: 1, team_number: 1, course_handicap: 12 },
+      { id: 103, round_id: 1, player_id: 203, tee_id: 1, team_number: 1, course_handicap: 8 },
+    ],
+    players: [
+      { id: 201, full_name: "Alice A", display_name: "Alice A", handicap_index: 10, preferred_tee_id: 1 },
+      { id: 202, full_name: "Bob B", display_name: "Bob B", handicap_index: 12, preferred_tee_id: 1 },
+      { id: 203, full_name: "Carol C", display_name: "Carol C", handicap_index: 8, preferred_tee_id: 1 },
+    ],
+    scores: seedScores,
+  };
+}
