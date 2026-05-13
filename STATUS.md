@@ -2,8 +2,10 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-10 (end of night, post-live-test wrap)
+**Last updated:** 2026-05-13 (Sentry phase 1 installed; see entry below)
 **Session purpose:** Pre-Monday hardening sprint. Eight commits to master fixing live-test bugs from earlier this evening. All confirmed by Jonathan as live-golden on homepage, admin flow, tee defaults, and date handling. No outstanding code work from tonight.
+
+**2026-05-13 entry:** Sentry error tracking installed — phase 1 plumbing only (`@sentry/nextjs` 10.53.1, DSN via `NEXT_PUBLIC_SENTRY_DSN`, source maps uploading to Vercel, no custom instrumentation yet). Merged at `47cebc9`.
 
 ---
 
