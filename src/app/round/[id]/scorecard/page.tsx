@@ -16,6 +16,7 @@ import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
+import { getWriteQueue } from "@/lib/writeQueue";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -163,6 +164,18 @@ export default function ScorecardPage() {
         const allSet = playersData.every(p => p.tee_id !== null && p.tee_id !== 0);
         setNeedsSetup(!allSet);
 
+        // Phase C: drain the write queue before rehydrating from the DB.
+        // Any items left from a previous session (offline scores, failed
+        // writes) need to land in Supabase before we fetch the canonical
+        // scores; otherwise the DB rehydrate would mask the pending
+        // writes. drain() returns immediately if offline — see overlay
+        // below for that case.
+        try {
+          await getWriteQueue().drain();
+        } catch {
+          // Queue drain failures shouldn't block the page from loading.
+        }
+
         const { data: s } = await supabase
           .from("scores")
           .select("*")
@@ -173,6 +186,23 @@ export default function ScorecardPage() {
           if (!scoreMap[item.round_player_id]) scoreMap[item.round_player_id] = {};
           scoreMap[item.round_player_id][item.hole_number] = item.strokes;
         });
+
+        // Phase C: overlay any queue items still pending or in-flight for
+        // this round. Drain may have skipped (offline) or items may have
+        // failed retry; either way, the user's optimistic state should
+        // survive across mount cycles. This is the core Bug 1 fix —
+        // without the overlay, the DB-rehydrate path replaces the
+        // optimistic value with whatever Supabase has (often nothing).
+        const queueItems = getWriteQueue().getItems();
+        for (const item of queueItems) {
+          if (item.state === "terminal_failure") continue;
+          if (item.payload.round_id !== Number(roundId)) continue;
+          if (!scoreMap[item.payload.round_player_id]) {
+            scoreMap[item.payload.round_player_id] = {};
+          }
+          scoreMap[item.payload.round_player_id][item.payload.hole_number] = item.payload.strokes;
+        }
+
         setScores(scoreMap);
 
         const uniqueTeeIds = [...new Set(playersData.map(p => p.tee_id).filter(Boolean))] as number[];
@@ -266,17 +296,26 @@ export default function ScorecardPage() {
       return next;
     });
 
-    // Option 3 Phase A: single atomic round-trip via upsert against the
-    // existing scores_round_player_id_hole_number_key unique constraint.
-    // Replaces SELECT-then-INSERT/UPDATE (two trips, silent-error on the
-    // first one's `.maybeSingle()`). The DB-level constraint was already
-    // in place (predates the migrations/ directory) — Phase 2's audit
-    // missed it because list_tables doesn't surface unique constraints.
-    // This change is idempotent under retry, which Phase B (the write
-    // queue) will rely on.
-    await supabase.from("scores").upsert(
-      { round_player_id: rpId, hole_number: hole, strokes },
-      { onConflict: "round_player_id,hole_number" },
+    // Phase C: enqueue the write rather than awaiting Supabase directly.
+    // Optimistic state is already set above; the queue handles persistence,
+    // retry, backoff, and tab-eviction durability. Phase A's upsert path
+    // is now the queue's writer (src/lib/writeQueue/instance.ts), so the
+    // DB conflict resolution stays the same. End-Round reconciliation
+    // (Phase D) and the stale-failure prompt (Phase E) will surface any
+    // items that fail to drain — for now, the queue retries silently in
+    // the background.
+    const player = roundPlayers.find(p => p.id === rpId);
+    getWriteQueue().enqueue(
+      {
+        round_id: Number(roundId),
+        round_player_id: rpId,
+        hole_number: hole,
+        strokes,
+      },
+      {
+        player_name: player?.display_name ?? "Player",
+        hole_label: `Hole ${hole}`,
+      },
     );
 
     // First successful score for this round locks the format. Idempotent:

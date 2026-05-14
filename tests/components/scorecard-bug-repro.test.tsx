@@ -1,16 +1,19 @@
 // @vitest-environment jsdom
 /**
- * Phase 3 scorecard bug-reproduction tests.
+ * Scorecard bug-reproduction tests.
  *
- * Sequences A-E from the Bug 1 / Bug 2 investigation. Each test simulates the
- * exact user sequence Dad reported, using an in-memory FakeSupabase so we can
- * inspect both DOM state and "DB" state after each step.
+ * Sequences A-E: original Phase 3 repros (Bug 1 / Bug 2 mechanisms). All pass
+ * with Phase A + Phase C wiring — happy paths are queue-transparent.
+ * Sequence F: Phase C addition — failed write + unmount + remount → queue
+ *             drains on next mount → DB has value. Demonstrates Bug 1 fix.
+ * Sequence G: Phase C addition — 18 holes × 4 players entered rapid-fire with
+ *             random failures sprinkled → all values eventually land in DB.
  *
  * Failing test = bug reproduced. Passing test = mechanism ruled out (in jsdom;
  * iOS-Safari-specific touch behavior is not modeled here).
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 import { FakeSupabase, buildSeed } from "./fake-supabase";
 
 // vi.hoisted lets us reference the fake from the vi.mock factory below, which
@@ -23,6 +26,11 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: vi.fn(),
+  captureException: vi.fn(),
+}));
+
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "1" }),
@@ -31,6 +39,7 @@ vi.mock("next/navigation", () => ({
 
 // Import AFTER mocks so the scorecard picks up the fakes.
 import ScorecardPage from "@/app/round/[id]/scorecard/page";
+import { getWriteQueue, resetWriteQueueForTesting } from "@/lib/writeQueue";
 
 /**
  * Render the scorecard and wait for load() to finish (Hole 1 header visible).
@@ -86,10 +95,17 @@ beforeEach(() => {
     writable: true,
   });
   routerPush.mockReset();
+  // Phase C: the write queue is a module-level singleton living across
+  // mounts intentionally. Tests need a clean slate per case — clear
+  // localStorage (the queue's persistence layer) and tear down the
+  // singleton so the next getWriteQueue() builds fresh.
+  globalThis.localStorage.clear();
+  resetWriteQueueForTesting();
 });
 
 afterEach(() => {
   cleanup();
+  resetWriteQueueForTesting();
 });
 
 describe("Scorecard — Phase 3 bug repro", () => {
@@ -270,47 +286,166 @@ describe("Scorecard — Phase 3 bug repro", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Bonus — direct repro of the suspected Bug 1 failure mode that the
-  // Sequence D success path doesn't exercise: write FAILS while user is
-  // navigating away. Models the iOS "tab evicted mid-write" scenario.
-  it("Sequence D' — write fails mid-flight + remount: confirms data-loss path", async () => {
+  // Sequence F — Phase C Bug 1 fix demonstration.
+  //
+  // Previously (Phase 3 Sequence D'): write fails → unmount → remount →
+  // load() rehydrates from empty DB → score lost. With the queue wired
+  // (Phase C), the optimistic write is durable: it sits in localStorage
+  // through the unmount, and on the next mount load() drains the queue
+  // before rehydrating. The write retries against the now-recovered
+  // network, lands in the DB, and the user sees the score they entered.
+  it("Sequence F — failed write + unmount + remount: queue drains on next mount", async () => {
     const utils = await renderAndWaitForLoad();
 
-    // Configure the fake to fail any write into the scores table.
-    // Phase A: setScore is now a single upsert; match both insert (legacy
-    // code paths) and upsert (current).
+    // Force every score upsert to fail.
     fakeRef.current.setOptions({
-      failWrite: op =>
-        (op.type === "insert" || op.type === "upsert") && op.table === "scores",
+      failWrite: op => op.type === "upsert" && op.table === "scores",
     });
 
-    // Enter a score for Alice on hole 1. The optimistic state shows "4"
-    // immediately but the INSERT fails silently (no try/catch in setScore).
+    // Enter a score for Alice on hole 1.
     await tapPlus(0);
     await flushPendingPromises(50);
 
-    // DOM shows the score (optimistic state wasn't rolled back).
-    const plusButtonsBefore = screen.getAllByRole("button", { name: "+" });
-    const aliceRowBefore = plusButtonsBefore[0].closest("div")!.parentElement!;
-    expect(aliceRowBefore.textContent).toMatch(/4/);
+    // Optimistic state: UI shows score even though the upsert failed.
+    const plusButtonsMid = screen.getAllByRole("button", { name: "+" });
+    const aliceRowMid = plusButtonsMid[0].closest("div")!.parentElement!;
+    expect(aliceRowMid.textContent).toMatch(/4/);
 
-    // DB has NO row for Alice hole 1 — the write failed.
+    // DB has no row for Alice hole 1 — the write failed and the queue is
+    // holding the item for retry.
     expect(
       fakeRef.current.data.scores.filter(s => s.round_player_id === 101 && s.hole_number === 1),
     ).toHaveLength(0);
 
-    // User backgrounds the app → tab evicted → remount.
+    // Simulate tab eviction → background → reopen.
     utils.unmount();
-    fakeRef.current.setOptions({ failWrite: undefined }); // future writes OK
+
+    // Network is now recovered.
+    fakeRef.current.setOptions({ failWrite: undefined });
+
+    // Remount. load() drains the queue before rehydrating from DB. The
+    // item's backoff is 1s into the future at this point, so load()'s
+    // drain respects it (D10 — normal drains honor next_attempt_at). To
+    // keep the test deterministic without 30+ seconds of real-time wait
+    // for the backstop interval, simulate the eventual auto-drain
+    // (backstop / online / visibilitychange) by force-firing with
+    // ignoreBackoff. In production this happens within 30 seconds via
+    // the backstop or sooner via visibilitychange when the user returns
+    // to the tab. The Bug 1 fix is that the item is durable across the
+    // remount — when it eventually drains, the DB is consistent.
     render(<ScorecardPage />);
     await screen.findByText("Hole 1");
+    await flushPendingPromises(50);
+    await act(async () => {
+      await getWriteQueue().drain({ ignoreBackoff: true });
+    });
 
-    // Alice's hole-1 score is now MISSING — load() hydrated from empty DB,
-    // overwriting the lost optimistic value. This is the Bug 1 mechanism.
+    // DB now has the score — the queue's retry succeeded and persisted it.
+    const aliceScores = fakeRef.current.data.scores.filter(
+      s => s.round_player_id === 101 && s.hole_number === 1,
+    );
+    expect(aliceScores).toHaveLength(1);
+    expect(aliceScores[0].strokes).toBe(4);
+
+    // DOM still shows the score (via DB rehydrate after successful drain).
     const plusButtonsAfter = screen.getAllByRole("button", { name: "+" });
     const aliceRowAfter = plusButtonsAfter[0].closest("div")!.parentElement!;
-    // Score area shows "—" not "4".
-    expect(aliceRowAfter.textContent).toMatch(/—/);
-    expect(aliceRowAfter.textContent).not.toMatch(/[^0-9]4[^0-9]/);
+    expect(aliceRowAfter.textContent).toMatch(/4/);
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Sequence G — Phase C resilience demo.
+  //
+  // 18 holes × 4 players entered rapid-fire with every other upsert failing.
+  // After clearing the failure injection and advancing through the retry
+  // backoff windows, every score must have landed exactly once in the DB.
+  // No duplicates (the unique constraint + upsert idempotency); no losses
+  // (the queue retains failed items and retries forever during the round).
+  it("Sequence G — 18 holes × 4 players with random failures, all land", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(0);
+
+    // Extend the seed to 4 players.
+    const seed = buildSeed();
+    seed.round_players[0].course_handicap = 9; // Alice HI=10
+    seed.round_players[1].course_handicap = 11; // Bob HI=12
+    seed.round_players[2].course_handicap = 6; // Carol HI=8
+    seed.round_players.push({
+      id: 104,
+      round_id: 1,
+      player_id: 204,
+      tee_id: 1,
+      team_number: 1,
+      course_handicap: 9,
+    });
+    seed.players.push({
+      id: 204,
+      full_name: "Dan D",
+      display_name: "Dan D",
+      handicap_index: 9,
+      preferred_tee_id: 1,
+    });
+    fakeRef.current = new FakeSupabase(seed);
+    resetWriteQueueForTesting();
+
+    // Fail every other upsert (deterministic via call index).
+    fakeRef.current.setOptions({
+      failWrite: (op, idx) =>
+        op.type === "upsert" && op.table === "scores" && idx % 2 === 0,
+    });
+
+    render(<ScorecardPage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // findByText with fake timers is unreliable — drive the load directly.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    // Sanity: rendered scorecard, players visible.
+    expect(screen.getByText("Hole 1")).toBeInTheDocument();
+
+    // Tap + once per player per hole, navigating after each hole.
+    for (let h = 1; h <= 18; h++) {
+      for (let p = 0; p < 4; p++) {
+        const buttons = screen.getAllByRole("button", { name: "+" });
+        await act(async () => {
+          fireEvent.click(buttons[p]);
+        });
+        // Let the enqueue + drain microtasks settle.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+      }
+      if (h < 18) {
+        const next = screen.getByRole("button", { name: /next hole/i });
+        await act(async () => {
+          fireEvent.click(next);
+        });
+      }
+    }
+
+    // Disable failure injection so retries succeed.
+    fakeRef.current.setOptions({ failWrite: undefined });
+
+    // Advance through backoff windows: schedule cumulates to ~241s through
+    // attempt 8 (1+2+4+8+16+30+60+120). Hammer 10s steps for 5 minutes
+    // of fake time to cover any item that landed in steady-state 120s.
+    for (let i = 0; i < 35; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+    }
+
+    // All 72 (player, hole) combinations should be in the DB exactly once.
+    const dbScores = fakeRef.current.data.scores;
+    expect(dbScores).toHaveLength(72);
+    const keys = new Set(dbScores.map(s => `${s.round_player_id}:${s.hole_number}`));
+    expect(keys.size).toBe(72);
+    // Every score was a first-tap "par" (4).
+    expect(dbScores.every(s => s.strokes === 4)).toBe(true);
+
+    vi.useRealTimers();
+  }, 30_000);
 });
