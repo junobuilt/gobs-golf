@@ -396,6 +396,74 @@ describe("WriteQueue — hail-mary drain (D9)", () => {
   });
 });
 
+describe("WriteQueue — markAsTerminal (Phase D)", () => {
+  it("marks pending items terminal_failure and logs Sentry with the given reason", async () => {
+    let resolve!: (r: WriteResult) => void;
+    const pending = new Promise<WriteResult>(r => {
+      resolve = r;
+    });
+    let pendingFlag = true;
+    const writer = vi.fn(async () => {
+      if (pendingFlag) return pending;
+      return { success: true as const };
+    });
+    const sentry = { captureMessage: vi.fn(), captureException: vi.fn() };
+    const q = new WriteQueue({
+      writer,
+      storage: createStorage(),
+      sentry,
+      hailMaryStaggerMs: 0,
+    });
+    q.enqueue(payload(101, 1, 4), display);
+    q.enqueue(payload(102, 1, 4), display);
+    await flush();
+    // First write is in_flight, second is pending.
+    const items = q.getItems();
+    const inFlight = items.find(i => i.state === "in_flight")!;
+    const pendingItem = items.find(i => i.state === "pending")!;
+    expect(inFlight).toBeDefined();
+    expect(pendingItem).toBeDefined();
+
+    q.markAsTerminal([inFlight.id, pendingItem.id], "end_round_timeout");
+    const after = q.getItems();
+    expect(after.find(i => i.id === inFlight.id)!.state).toBe("terminal_failure");
+    expect(after.find(i => i.id === pendingItem.id)!.state).toBe("terminal_failure");
+    expect(sentry.captureMessage).toHaveBeenCalledWith(
+      "writeQueue.terminal_failure",
+      expect.objectContaining({ reason: "end_round_timeout" }),
+    );
+
+    // Resolve pending so the writer doesn't dangle (release the closure).
+    pendingFlag = false;
+    resolve({ success: true });
+  });
+
+  it("skips items already in terminal_failure (idempotent)", () => {
+    const sentry = { captureMessage: vi.fn(), captureException: vi.fn() };
+    const q = new WriteQueue({
+      writer: async () => ({ success: false as const, classification: "terminal" as const }),
+      storage: createStorage(),
+      sentry,
+      hailMaryStaggerMs: 0,
+    });
+    q.enqueue(payload(101, 1, 4), display);
+    // The terminal classification puts the item in terminal_failure already.
+    // Wait for that — we need to flush.
+    return flush().then(() => {
+      const id = q.getItems()[0].id;
+      const callsBefore = sentry.captureMessage.mock.calls.length;
+      q.markAsTerminal([id], "should_not_log");
+      // No new Sentry call for an item that's already terminal.
+      expect(sentry.captureMessage.mock.calls.length).toBe(callsBefore);
+    });
+  });
+
+  it("ignores unknown ids without throwing", () => {
+    const q = makeQueue({ writer: async () => ({ success: true as const }) });
+    expect(() => q.markAsTerminal(["nope"], "nope")).not.toThrow();
+  });
+});
+
 describe("WriteQueue — forget + isPersistent", () => {
   it("forget() removes items and emits Sentry event per item", async () => {
     const writer = vi.fn(async () => ({ success: false as const, classification: "terminal" as const }));
