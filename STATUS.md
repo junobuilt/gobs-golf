@@ -2,10 +2,16 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-13 (Sentry phase 1 installed; see entry below)
-**Session purpose:** Pre-Monday hardening sprint. Eight commits to master fixing live-test bugs from earlier this evening. All confirmed by Jonathan as live-golden on homepage, admin flow, tee defaults, and date handling. No outstanding code work from tonight.
+**Last updated:** 2026-05-13 (Track A: May 11 duplicate-rounds fix + three migrations live on prod; Track B: scorecard Bug 2 dot-rail mitigation + Bug 1/2 repro test infra landed earlier this evening)
+**Session purpose:** Two parallel tracks closed out tonight. **Track A** investigated and fixed the May 11 duplicate-rounds incident: DB cleanup merge of rounds 90 + 91 (round 90 now holds all 10 players / 5 teams / 180 scores), `UNIQUE (played_on)` constraint on `rounds`, new `rounds.updated_at` column + auto-update trigger, upsert patterns in `ensureRoundShell` and `/round/new`, plus a `initialLoading` gate on the admin Today's Format / Edit Teams buttons. **Track B** mitigated Bug 2 (snap-back-to-prior-hole on iOS) via CSS `touch-action` + 44×44 tap targets, and added component-level scorecard tests (170/170 pass) that reproduce Bug 1's data-loss path on demand. All landed on master via fast-forward; production DB updated via Supabase MCP.
 
-**2026-05-13 entry:** Sentry error tracking installed — phase 1 plumbing only (`@sentry/nextjs` 10.53.1, DSN via `NEXT_PUBLIC_SENTRY_DSN`, source maps uploading to Vercel, no custom instrumentation yet). Merged at `47cebc9`.
+**2026-05-13 entry — May 11 duplicate-rounds (Track A):** Merged `fix/may11-duplicate-rounds` to master at `df0ee7b` (rebased onto Track B's tip before merge — clean rebase, no conflicts). Investigation report walked the chain: round 90 (3 teams, fully scored) and round 91 (2 teams, fully scored, 31 min later) coexisted for played_on = '2026-05-11'. Original duplicate-cause hypothesis (round-complete-then-stale-tab) was invalidated by score-timestamp triangulation — round 90's `is_complete` couldn't have flipped until ~6:46 PM PT (8+ hours after round 91 was minted). Revised hypothesis: admin RoundSetup race against initial `loadRoundForDate`, OR stale `/round/new` tab. Both paths now use find-or-create with 23505 unique-violation fallback. Migrations `005_fix_may11_duplicate_rounds_cleanup` (idempotent DO block raises if post-merge counts don't match 10 / 5 / 180), `006_rounds_played_on_unique`, `007_rounds_updated_at` applied to prod via Supabase MCP in order. Verified: tsc clean, 170/170 vitest pass, all 5 snapshot scripts clean, live slow-load Chrome test confirmed buttons go disabled+opacity 0.5 within 156 ms of date-picker change and back to enabled at 5799 ms.
+
+**2026-05-13 entry — Scorecard Bug 1 / Bug 2 (Track B):** Two commits landed on master before Track A:
+- `5729e2f` — Bug 2 CSS mitigation: `touchAction: 'pan-x'` on the hole-dot rail, `touchAction: 'manipulation'` on each dot, dot tap targets bumped from 35×35 to 44×44 (WCAG 2.1 AA). Suppresses iOS Safari's scroll-into-tap which was the suspected mechanism for the snap-back-to-prior-hole behavior. CSS-only; no JS movement-threshold handler yet.
+- `ec7a614` — Phase 3 of the scorecard bug investigation. Added `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`. Per-file env opt-in via `// @vitest-environment jsdom` (Vitest 4 removed `environmentMatchGlobs`). New `tests/components/fake-supabase.ts` (chainable in-memory client with writes log + `failWrite` hook) and `tests/components/scorecard-bug-repro.test.tsx` (6 sequences A–E + bonus D'). Bug 1's data-loss path is now reproducible on demand via the forced-INSERT-failure scenario. Bug 1 itself is NOT fixed — phase 4 (Sentry invariants) + the duplicate-rounds upsert + unique constraint were the planned follow-ups. The unique constraint shipped via Track A; phase 4 still pending.
+
+**2026-05-13 entry — Sentry phase 1:** Sentry error tracking installed — phase 1 plumbing only (`@sentry/nextjs` 10.53.1, DSN via `NEXT_PUBLIC_SENTRY_DSN`, source maps uploading to Vercel, no custom instrumentation yet). Merged at `47cebc9`.
 
 ---
 
@@ -38,8 +44,8 @@ All eight on `master`, all auto-deployed via Vercel, all confirmed live-golden b
 
 ## Master branch state
 
-- HEAD commit: `ebb6987` — Tee default + per-player preference (2026-05-10)
-- Status vs production deployment: **in sync**. Migration `004_phase_a_preferred_tee` applied to prod via MCP before the code push.
+- HEAD commit: `df0ee7b` — fix(rounds): prevent duplicate rounds per played_on (May 11 fix) (2026-05-13)
+- Status vs production deployment: **in sync**. Migrations `005_fix_may11_duplicate_rounds_cleanup`, `006_rounds_played_on_unique`, `007_rounds_updated_at` applied to prod via Supabase MCP before the code push. Round 90 now holds 10 players across 5 teams (T1–T5) with 180 scores; round 91 deleted; `rounds.played_on` is UNIQUE; `rounds.updated_at` populated with auto-update trigger. Existing rows got the migration apply-time as their initial `updated_at` (honest from this point forward; historical mutation times not reconstructable).
 
 ## Open / unmerged branches
 
@@ -50,11 +56,11 @@ All eight on `master`, all auto-deployed via Vercel, all confirmed live-golden b
 
 ## Last 5 master commits
 
-- `ebb6987` — Tee default + per-player preference (2026-05-10)
-- `d087dd6` — Admin RoundSetup: refresh format state on round delete (2026-05-10)
-- `c0f9d6e` — Admin RoundSetup: drop hardcoded 4-player minimum on check-in gate (2026-05-10)
-- `bfec8ca` — Fix UTC-vs-local mismatch on "today" date for rounds.played_on (2026-05-10)
-- `7bbd43d` — Admin RoundSetup: fix silent inactive-player drop + write race (2026-05-10)
+- `df0ee7b` — fix(rounds): prevent duplicate rounds per played_on (May 11 fix) (2026-05-13)
+- `ec7a614` — test: scorecard component tests for Bug 1 / Bug 2 repro (2026-05-13)
+- `5729e2f` — fix: dot rail touch-action + tap target size for Bug 2 mitigation (2026-05-13)
+- `8042500` — chore: STATUS.md — note Sentry phase 1 installation (2026-05-13)
+- `47cebc9` — chore: install Sentry error tracking (phase 1 plumbing) (2026-05-13)
 
 ## Active blockers / paused work
 
