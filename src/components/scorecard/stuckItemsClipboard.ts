@@ -1,8 +1,10 @@
 /**
- * Phase D — clipboard formatting for the "Copy details" affordance on the
- * second-attempt reconciliation dialog. Plain text, one row per stuck
- * write, with a header so the user can paste into a text message to the
- * admin and have it be readable.
+ * Phase D + E — clipboard formatting for the "Copy details" affordance.
+ *
+ * Phase D's single-round variant (formatStuckItemsForClipboard) renders
+ * a flat list under one round header. Phase E's stale-failure prompt may
+ * surface items from multiple prior rounds at once, so its formatter
+ * groups items by round_id and prints a header per group.
  */
 
 export interface StuckItemForClipboard {
@@ -24,4 +26,35 @@ export function formatStuckItemsForClipboard(
     item => `${item.hole_label}, ${item.player_name}: ${item.strokes} strokes`,
   );
   return [...headerLines, "", ...rows].join("\n");
+}
+
+export interface StaleItemForClipboard extends StuckItemForClipboard {
+  round_id: number;
+  round_date?: string | null;
+}
+
+export function formatStaleItemsForClipboard(items: StaleItemForClipboard[]): string {
+  if (items.length === 0) return "GOBS Golf — failed sync (last session)";
+  // Preserve insertion order for deterministic output; group by round_id
+  // as we walk. Items from the same round stay adjacent in the input
+  // (they're enqueued in scoring order), so the simple groupBy is enough.
+  const groups: Array<{ round_id: number; round_date?: string | null; rows: StuckItemForClipboard[] }> = [];
+  for (const item of items) {
+    let group = groups.find(g => g.round_id === item.round_id);
+    if (!group) {
+      group = { round_id: item.round_id, round_date: item.round_date ?? null, rows: [] };
+      groups.push(group);
+    }
+    group.rows.push(item);
+    if (!group.round_date && item.round_date) group.round_date = item.round_date;
+  }
+  const sections: string[] = ["GOBS Golf — failed sync (last session)"];
+  for (const g of groups) {
+    sections.push("");
+    sections.push(g.round_date ? `Round ${g.round_id} — ${g.round_date}:` : `Round ${g.round_id}:`);
+    for (const row of g.rows) {
+      sections.push(`  ${row.hole_label}, ${row.player_name}: ${row.strokes} strokes`);
+    }
+  }
+  return sections.join("\n");
 }

@@ -11,6 +11,14 @@ export interface ScorePayload {
 export interface QueueItemDisplay {
   player_name: string;
   hole_label: string;
+  /**
+   * Phase E: the round's played_on date in YYYY-MM-DD form so the
+   * stale-failure prompt can show which round each stuck item came from
+   * without re-querying Supabase. Optional for backward compatibility
+   * with items enqueued before Phase E (those fall back to formatting
+   * the item's enqueued_at timestamp).
+   */
+  round_date?: string | null;
 }
 
 export interface QueueItem {

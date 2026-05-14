@@ -5,6 +5,15 @@ import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { getTeamColor } from "@/lib/teamColors";
 import { todayLocal, yesterdayLocal } from "@/lib/date";
+import { getWriteQueue } from "@/lib/writeQueue";
+import type { QueueItem } from "@/lib/writeQueue";
+import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
+import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
+
+// Phase E: sessionStorage flag. Suppresses the stale-failure prompt for
+// the current browser-tab session after the user dismisses it. Cleared
+// when the tab is closed → next app open re-checks.
+const STALE_SUPPRESS_KEY = "gobs:stale-failure-dismissed";
 
 type TeamInfo = {
   number: number;
@@ -25,6 +34,10 @@ export default function HomePage() {
   const [recentRounds, setRecentRounds] = useState<RecentRound[]>([]);
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+
+  // Phase E: stale-failure prompt state.
+  const [staleItems, setStaleItems] = useState<QueueItem[]>([]);
+  const [staleCopyState, setStaleCopyState] = useState<"idle" | "copied">("idle");
 
   const load = useCallback(async () => {
     const { count } = await supabase
@@ -95,6 +108,96 @@ export default function HomePage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Phase E: check the write queue on homepage mount. If terminal failures
+  // exist and the user hasn't dismissed the prompt this session, surface
+  // them. We mount this on the homepage only (not on every route) — per
+  // D9, frequent re-checks would be noise.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (sessionStorage.getItem(STALE_SUPPRESS_KEY) === "1") return;
+    } catch {
+      // sessionStorage disabled — fall through; we'll still show the prompt.
+    }
+    const queue = getWriteQueue();
+    const terminal = queue.getItems({ state: "terminal_failure" });
+    if (terminal.length > 0) setStaleItems(terminal);
+  }, []);
+
+  const handleStaleRetry = useCallback(async (): Promise<boolean> => {
+    const queue = getWriteQueue();
+    const ids = staleItems.map(i => i.id);
+    if (ids.length === 0) return true;
+    await queue.retryTerminal(ids);
+    await queue.drain({ ignoreBackoff: true });
+    // After retry: items either succeeded (gone from queue) or are
+    // pending again with backoff (still failing). Mark any still-pending
+    // ones terminal so the dialog has a stable item list to show.
+    const stillPending = queue
+      .getItems()
+      .filter(i => ids.includes(i.id) && (i.state === "pending" || i.state === "in_flight"));
+    if (stillPending.length > 0) {
+      queue.markAsTerminal(
+        stillPending.map(i => i.id),
+        "stale_failure_retry_timeout",
+      );
+    }
+    const stillStuck = queue
+      .getItems({ state: "terminal_failure" })
+      .filter(i => ids.includes(i.id));
+    setStaleItems(stillStuck);
+    return stillStuck.length === 0;
+  }, [staleItems]);
+
+  const handleStaleForget = useCallback(() => {
+    const queue = getWriteQueue();
+    queue.forget(
+      staleItems.map(i => i.id),
+      "user_forget_stale",
+    );
+    setStaleItems([]);
+  }, [staleItems]);
+
+  const handleStaleCopy = useCallback(async () => {
+    const text = formatStaleItemsForClipboard(
+      staleItems.map(i => ({
+        hole_label: i.display.hole_label,
+        player_name: i.display.player_name,
+        strokes: i.payload.strokes,
+        round_id: i.payload.round_id,
+        round_date: i.display.round_date ?? null,
+      })),
+    );
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand?.("copy");
+        document.body.removeChild(ta);
+      }
+      setStaleCopyState("copied");
+      setTimeout(() => setStaleCopyState("idle"), 2000);
+    } catch {
+      // Silent failure — user can still read the list in the dialog.
+    }
+  }, [staleItems]);
+
+  const handleStaleDismiss = useCallback(() => {
+    try {
+      sessionStorage.setItem(STALE_SUPPRESS_KEY, "1");
+    } catch {
+      // sessionStorage disabled — best-effort; dialog will re-appear on
+      // next mount within this session, but that's better than crashing.
+    }
+    setStaleItems([]);
+  }, []);
 
   function formatDate(dateStr: string) {
     const date = new Date(dateStr + "T12:00:00");
@@ -201,6 +304,17 @@ export default function HomePage() {
             );
           })}
         </div>
+      )}
+
+      {staleItems.length > 0 && (
+        <StaleFailureDialog
+          items={staleItems}
+          onRetry={handleStaleRetry}
+          onForget={handleStaleForget}
+          onCopyDetails={handleStaleCopy}
+          onDismiss={handleStaleDismiss}
+          copyState={staleCopyState}
+        />
       )}
     </div>
   );

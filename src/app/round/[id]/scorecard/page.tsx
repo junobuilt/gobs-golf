@@ -341,6 +341,10 @@ export default function ScorecardPage() {
       {
         player_name: player?.display_name ?? "Player",
         hole_label: `Hole ${hole}`,
+        // Phase E: included so the stale-failure prompt can render which
+        // round each stuck item came from. Falls back to the queue
+        // item's enqueued_at if absent (older items pre-dating this).
+        round_date: roundPlayedOn,
       },
     );
 
