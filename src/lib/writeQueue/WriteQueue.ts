@@ -264,10 +264,13 @@ export class WriteQueue {
   }
 
   /**
-   * Permanently remove items. Used by the "Forget" affordance in D9. Each
-   * removal is logged to Sentry so we know users are abandoning data.
+   * Permanently remove items. Used by the "Forget" affordance in D9 and
+   * the Phase E stale-failure prompt. Each removal is logged to Sentry
+   * so we know users are abandoning data. The optional `reason` lets
+   * Phase E distinguish "user_forget_stale" from other future forget
+   * callsites; defaults to "forget" for backward compatibility.
    */
-  forget(ids: string[]): void {
+  forget(ids: string[], reason: string = "forget"): void {
     const removed: QueueItem[] = [];
     this.items = this.items.filter(i => {
       if (ids.includes(i.id)) {
@@ -279,6 +282,7 @@ export class WriteQueue {
     if (removed.length === 0) return;
     for (const item of removed) {
       this.sentry.captureMessage("writeQueue.forget", {
+        reason,
         item_id: item.id,
         payload: item.payload,
         state: item.state,
