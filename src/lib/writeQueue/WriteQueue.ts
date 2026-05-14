@@ -209,6 +209,36 @@ export class WriteQueue {
   }
 
   /**
+   * Force the listed items to terminal_failure. Used by the End-Round flow
+   * when the 30s hail-mary window elapses or the user taps "Skip and
+   * finish" — items that didn't drain in time get surfaced via the
+   * reconciliation dialog (D9) and persist as terminal so Phase E's
+   * app-open prompt can find them on next mount. `reason` is logged to
+   * Sentry per D14.
+   */
+  markAsTerminal(ids: string[], reason: string): void {
+    let touched = false;
+    for (const id of ids) {
+      const item = this.items.find(i => i.id === id);
+      if (!item) continue;
+      if (item.state === "terminal_failure") continue;
+      item.state = "terminal_failure";
+      item.last_attempt_at = this.now();
+      this.sentry.captureMessage("writeQueue.terminal_failure", {
+        reason,
+        item_id: item.id,
+        payload: item.payload,
+        attempts: item.attempts,
+      });
+      touched = true;
+    }
+    if (touched) {
+      this.persist();
+      this.emit();
+    }
+  }
+
+  /**
    * Reset specified items (or all terminal-failure items if no ids given)
    * to pending and drain. Used by the End-Round "Retry sync" affordance
    * and the app-open stale-failure prompt's "Retry" button.
@@ -273,14 +303,23 @@ export class WriteQueue {
   }
 
   private async drainLoop(ignoreBackoff: boolean): Promise<void> {
+    // Track which items we've already attempted in this pass. Critical for
+    // hail-mary mode (ignoreBackoff=true): without this, a persistently-
+    // failing item would loop forever because the filter accepts it again
+    // immediately after its next_attempt_at is bumped into the future. In
+    // normal mode the backoff filter already prevents re-pick, but tracking
+    // here keeps the loop bounded as a defense-in-depth.
+    const attemptedInThisPass = new Set<string>();
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const candidates = this.items
         .filter(i => i.state === "pending")
         .filter(i => ignoreBackoff || i.next_attempt_at <= this.now())
+        .filter(i => !attemptedInThisPass.has(i.id))
         .sort((a, b) => a.enqueued_at - b.enqueued_at);
       const next = candidates[0];
       if (!next) return;
+      attemptedInThisPass.add(next.id);
 
       next.state = "in_flight";
       this.persist();

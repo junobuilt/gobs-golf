@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import DangerModal from "@/app/thomas-admin/components/DangerModal";
@@ -17,6 +17,12 @@ import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
+import type { QueueItem } from "@/lib/writeQueue";
+import ReconciliationDialog, {
+  type StuckScoreItem,
+} from "@/components/scorecard/ReconciliationDialog";
+import FinishingSpinner from "@/components/scorecard/FinishingSpinner";
+import { formatStuckItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -70,6 +76,25 @@ export default function ScorecardPage() {
   const [endRoundModal, setEndRoundModal] = useState(false);
   const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
 
+  // --- Phase D: End-Round reconciliation state ---
+  // null = no end-round flow active; otherwise the dialog/spinner phase.
+  const [endRoundPhase, setEndRoundPhase] = useState<
+    null | "draining" | "first-dialog" | "second-dialog"
+  >(null);
+  // Shown ~15s into the hail-mary drain — see D9.
+  const [showSkipDuringDrain, setShowSkipDuringDrain] = useState(false);
+  // Items surfaced in the reconciliation dialog (post-drain stuck writes).
+  const [stuckItems, setStuckItems] = useState<QueueItem[]>([]);
+  // "Copied ✓" feedback on the second-attempt dialog's clipboard button.
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  // Disables dialog buttons while a retry drain is mid-flight.
+  const [retryBusy, setRetryBusy] = useState(false);
+  // Resolves the Promise.race when the user taps "Skip and finish" during
+  // the spinner. Set/cleared by the hail-mary orchestrator.
+  const skipResolveRef = useRef<(() => void) | null>(null);
+  // Date the round was played, surfaced in the clipboard payload.
+  const [roundPlayedOn, setRoundPlayedOn] = useState<string | null>(null);
+
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
 
@@ -83,7 +108,7 @@ export default function ScorecardPage() {
     async function load() {
       const { data: roundRow } = await supabase
         .from("rounds")
-        .select("format, format_config, format_locked_at, is_complete")
+        .select("format, format_config, format_locked_at, is_complete, played_on")
         .eq("id", roundId)
         .maybeSingle();
       const roundIsComplete = !!roundRow?.is_complete;
@@ -92,6 +117,7 @@ export default function ScorecardPage() {
         setRoundFormatConfig((roundRow.format_config ?? null) as FormatConfig | null);
         setRoundFormatLockedAt((roundRow.format_locked_at ?? null) as string | null);
         setIsRoundComplete(roundIsComplete);
+        setRoundPlayedOn((roundRow.played_on ?? null) as string | null);
       }
 
       const { data: teesData } = await supabase
@@ -462,9 +488,169 @@ export default function ScorecardPage() {
     setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
   };
 
-  // Check if all active teams have ≥2 players with 18 hole scores before marking complete.
-  const finishRound = async () => {
+  // Phase D — End-Round reconciliation flow (D9 step 2 onward).
+  //
+  // Sequence per the design doc:
+  //   1. Show "Finishing up…" spinner.
+  //   2. Hail-mary drain (queue.drain({ ignoreBackoff: true })).
+  //   3. Race against a 30s timeout, with a "Skip and finish" button
+  //      surfacing at 15s.
+  //   4. If everything drained → finalize normally.
+  //   5. Otherwise → mark remaining items terminal, show reconciliation
+  //      dialog with [Retry sync] / [Skip and finish].
+  //   6. On Retry: retryTerminal + another hail-mary; if it works finalize,
+  //      else escalate to second-attempt dialog.
+  //
+  // The DangerModal confirmation step ("Finalize this round?") stays as
+  // the entry point — it's UX-protective against an accidental Finish-
+  // Round tap and consistent with the rest of the app's dangerous-action
+  // pattern. The "disable End Round button" requirement from D9 step 1
+  // is satisfied implicitly by the modal overlay (button is unreachable
+  // while any modal/spinner is up) and additionally by the existing
+  // `disabled={saving}` guard.
+
+  const queueItemsForThisRound = (states: QueueItem["state"][]) => {
+    return getWriteQueue()
+      .getItems()
+      .filter(
+        i =>
+          states.includes(i.state) && i.payload.round_id === Number(roundId),
+      );
+  };
+
+  const runHailMaryWithTimeout = async (
+    timeoutMs: number,
+    skipButtonDelayMs: number,
+  ): Promise<void> => {
+    setShowSkipDuringDrain(false);
+
+    const skipButtonTimer = setTimeout(
+      () => setShowSkipDuringDrain(true),
+      skipButtonDelayMs,
+    );
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<void>(resolve => {
+      timeoutHandle = setTimeout(resolve, timeoutMs);
+    });
+
+    let skipResolve!: () => void;
+    const skipPromise = new Promise<void>(r => {
+      skipResolve = r;
+    });
+    skipResolveRef.current = skipResolve;
+
+    try {
+      await Promise.race([
+        getWriteQueue().drain({ ignoreBackoff: true }),
+        timeoutPromise,
+        skipPromise,
+      ]);
+    } finally {
+      clearTimeout(skipButtonTimer);
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      skipResolveRef.current = null;
+      setShowSkipDuringDrain(false);
+    }
+  };
+
+  const startEndRoundFlow = async () => {
     setEndRoundModal(false);
+    setEndRoundPhase("draining");
+
+    await runHailMaryWithTimeout(30_000, 15_000);
+
+    const remaining = queueItemsForThisRound(["pending", "in_flight"]);
+    if (remaining.length === 0) {
+      await finalizeRound();
+      return;
+    }
+
+    // D9: items still failing get marked terminal_failure so Phase E can
+    // surface them on the next app open and so the dialog has stable
+    // items to show.
+    getWriteQueue().markAsTerminal(
+      remaining.map(i => i.id),
+      "end_round_timeout",
+    );
+    setStuckItems(queueItemsForThisRound(["terminal_failure"]));
+    setEndRoundPhase("first-dialog");
+  };
+
+  const handleRetrySync = async () => {
+    setRetryBusy(true);
+    setEndRoundPhase("draining");
+
+    const queue = getWriteQueue();
+    const ids = stuckItems.map(i => i.id);
+    await queue.retryTerminal(ids);
+    await runHailMaryWithTimeout(30_000, 15_000);
+
+    const stillStuck = queueItemsForThisRound(["pending", "in_flight"]);
+    if (stillStuck.length === 0) {
+      setRetryBusy(false);
+      await finalizeRound();
+      return;
+    }
+    // Still failing — re-mark and escalate to the second-attempt dialog.
+    queue.markAsTerminal(
+      stillStuck.map(i => i.id),
+      "end_round_retry_timeout",
+    );
+    setStuckItems(queueItemsForThisRound(["terminal_failure"]));
+    setRetryBusy(false);
+    setEndRoundPhase("second-dialog");
+  };
+
+  const handleSkipAndFinalize = async () => {
+    setEndRoundPhase(null);
+    await finalizeRound();
+  };
+
+  const handleCopyDetails = async () => {
+    const text = formatStuckItemsForClipboard(
+      stuckItems.map(i => ({
+        hole_label: i.display.hole_label,
+        player_name: i.display.player_name,
+        strokes: i.payload.strokes,
+      })),
+      roundId,
+      roundPlayedOn,
+    );
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers / iOS Safari without clipboard
+        // permission. Best-effort: render the text in a textarea, select,
+        // execCommand("copy"). Some browsers no longer support this — if
+        // it fails the user can still read the dialog list directly.
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand?.("copy");
+        document.body.removeChild(ta);
+      }
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      // If the copy genuinely failed we leave copyState as idle so the
+      // user sees no false confirmation. They can still read the list.
+    }
+  };
+
+  // Original finishRound logic, extracted: count scores per team, mark
+  // the round complete if all teams have ≥2 18-hole players, redirect to
+  // summary. Called after the End-Round reconciliation flow resolves
+  // (either drain success, "Skip and finish", or "Finish anyway").
+  const finalizeRound = async () => {
     setSaving(true);
 
     const { data: allRPs } = await supabase
@@ -501,6 +687,7 @@ export default function ScorecardPage() {
     }
 
     setSaving(false);
+    setEndRoundPhase(null);
     router.push(`/round/${roundId}/summary`);
   };
 
@@ -916,7 +1103,7 @@ export default function ScorecardPage() {
           description="This will save all scores. If all teams have completed 18 holes, the round will be marked complete."
           cannotBeUndone={false}
           confirmLabel="Finish Round"
-          onConfirm={finishRound}
+          onConfirm={startEndRoundFlow}
           onCancel={() => setEndRoundModal(false)}
         />
       )}
@@ -931,6 +1118,42 @@ export default function ScorecardPage() {
           onCancel={() => setRemovePlayerModal(null)}
         />
       )}
+
+      {/* Phase D — hail-mary spinner + reconciliation dialogs. */}
+      {endRoundPhase === "draining" && (
+        <FinishingSpinner
+          showSkipButton={showSkipDuringDrain}
+          onSkip={() => skipResolveRef.current?.()}
+        />
+      )}
+      {endRoundPhase === "first-dialog" && (
+        <ReconciliationDialog
+          variant="first-attempt"
+          items={stuckItemsToDialogItems(stuckItems)}
+          onRetry={handleRetrySync}
+          onSkip={handleSkipAndFinalize}
+          busy={retryBusy}
+        />
+      )}
+      {endRoundPhase === "second-dialog" && (
+        <ReconciliationDialog
+          variant="second-attempt"
+          items={stuckItemsToDialogItems(stuckItems)}
+          onRetry={handleRetrySync}
+          onSkip={handleSkipAndFinalize}
+          onCopyDetails={handleCopyDetails}
+          copyState={copyState}
+          busy={retryBusy}
+        />
+      )}
     </div>
   );
+}
+
+function stuckItemsToDialogItems(items: QueueItem[]): StuckScoreItem[] {
+  return items.map(i => ({
+    player_name: i.display.player_name,
+    hole_label: i.display.hole_label,
+    strokes: i.payload.strokes,
+  }));
 }
