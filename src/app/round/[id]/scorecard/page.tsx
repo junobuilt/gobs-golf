@@ -266,14 +266,18 @@ export default function ScorecardPage() {
       return next;
     });
 
-    const { data: exists } = await supabase
-      .from("scores").select("id").eq("round_player_id", rpId).eq("hole_number", hole).maybeSingle();
-
-    if (exists) {
-      await supabase.from("scores").update({ strokes }).eq("id", exists.id);
-    } else {
-      await supabase.from("scores").insert({ round_player_id: rpId, hole_number: hole, strokes });
-    }
+    // Option 3 Phase A: single atomic round-trip via upsert against the
+    // existing scores_round_player_id_hole_number_key unique constraint.
+    // Replaces SELECT-then-INSERT/UPDATE (two trips, silent-error on the
+    // first one's `.maybeSingle()`). The DB-level constraint was already
+    // in place (predates the migrations/ directory) — Phase 2's audit
+    // missed it because list_tables doesn't surface unique constraints.
+    // This change is idempotent under retry, which Phase B (the write
+    // queue) will rely on.
+    await supabase.from("scores").upsert(
+      { round_player_id: rpId, hole_number: hole, strokes },
+      { onConflict: "round_player_id,hole_number" },
+    );
 
     // First successful score for this round locks the format. Idempotent:
     // skipped on subsequent calls via the local short-circuit, and the DB
