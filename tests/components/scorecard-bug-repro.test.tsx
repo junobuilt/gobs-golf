@@ -276,9 +276,12 @@ describe("Scorecard — Phase 3 bug repro", () => {
   it("Sequence D' — write fails mid-flight + remount: confirms data-loss path", async () => {
     const utils = await renderAndWaitForLoad();
 
-    // Configure the fake to fail the next INSERT into scores.
+    // Configure the fake to fail any write into the scores table.
+    // Phase A: setScore is now a single upsert; match both insert (legacy
+    // code paths) and upsert (current).
     fakeRef.current.setOptions({
-      failWrite: op => op.type === "insert" && op.table === "scores",
+      failWrite: op =>
+        (op.type === "insert" || op.type === "upsert") && op.table === "scores",
     });
 
     // Enter a score for Alice on hole 1. The optimistic state shows "4"
