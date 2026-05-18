@@ -21,6 +21,7 @@ export interface PlayerHoleGridProps {
 
 const COLOR_TERTIARY = "#94a3b8";
 const COLOR_TEXT = "#1e293b";
+const COLOR_NAVY = "#042C53";
 const COLOR_HIGHLIGHT = "#dbeafe";
 const COLOR_DIVIDER = "#e2e8f0";
 
@@ -110,7 +111,8 @@ function NineGrid({
         lineHeight: 1.2,
       }}
     >
-      {/* Row 1 — hole numbers */}
+      {/* Row 1 — hole numbers (navy primary, weight 500). Current-hole
+          background highlight is the only signal of which hole is live. */}
       {indices.map(i => {
         const isCurrent = currentHoleIndex === i;
         return (
@@ -118,8 +120,8 @@ function NineGrid({
             key={`h-${i}`}
             style={{
               background: isCurrent ? COLOR_HIGHLIGHT : "transparent",
-              color: isCurrent ? "#1e40af" : COLOR_TERTIARY,
-              fontWeight: 700,
+              color: COLOR_NAVY,
+              fontWeight: 500,
               padding: "3px 0",
               borderRadius: "4px",
             }}
@@ -130,8 +132,8 @@ function NineGrid({
       })}
       <div
         style={{
-          color: COLOR_TERTIARY,
-          fontWeight: 800,
+          color: COLOR_NAVY,
+          fontWeight: 500,
           padding: "3px 0",
           letterSpacing: "0.03em",
         }}
@@ -139,11 +141,16 @@ function NineGrid({
         {totalLabel}
       </div>
 
-      {/* Row 2 — par */}
+      {/* Row 2 — par (italic, muted — reference info, not data) */}
       {parSlice.map((p, j) => (
         <div
           key={`p-${j}`}
-          style={{ color: COLOR_TERTIARY, padding: "2px 0", fontWeight: 500 }}
+          style={{
+            color: COLOR_TERTIARY,
+            padding: "2px 0",
+            fontWeight: 500,
+            fontStyle: "italic",
+          }}
         >
           {p}
         </div>
@@ -151,14 +158,15 @@ function NineGrid({
       <div
         style={{
           color: COLOR_TERTIARY,
-          fontWeight: 600,
+          fontWeight: 500,
+          fontStyle: "italic",
           padding: "2px 0",
         }}
       >
         {parSubtotal}
       </div>
 
-      {/* Row 3 — gross score with traditional notation */}
+      {/* Row 3 — gross score (semibold primary, with notation marks) */}
       {indices.map((i, j) => {
         const s = scoreSlice[j];
         const isCurrent = currentHoleIndex === i;
@@ -169,7 +177,7 @@ function NineGrid({
             style={{
               background: isCurrent ? COLOR_HIGHLIGHT : "transparent",
               color: unplayed ? COLOR_TERTIARY : COLOR_TEXT,
-              fontWeight: 700,
+              fontWeight: 600,
               padding: "1px 0",
               borderRadius: "4px",
               display: "flex",
@@ -185,7 +193,7 @@ function NineGrid({
       <div
         style={{
           color: scoreSubtotal == null ? COLOR_TERTIARY : COLOR_TEXT,
-          fontWeight: 800,
+          fontWeight: 600,
           padding: "3px 0",
           display: "flex",
           alignItems: "center",
