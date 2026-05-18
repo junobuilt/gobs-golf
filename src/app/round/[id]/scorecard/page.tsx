@@ -111,6 +111,11 @@ export default function ScorecardPage() {
   const [autoFinalizing, setAutoFinalizing] = useState(false);
   const [finalizedToastVisible, setFinalizedToastVisible] = useState(false);
   const [poolErrorVisible, setPoolErrorVisible] = useState(false);
+  // D.1 S2 — true when every team other than this one has all required
+  // scores entered. Combined with "this team on hole 17/18" + round not yet
+  // complete, drives the yellow pre-fire banner. Refreshed on mount + on
+  // every score write + after dropout state changes.
+  const [otherTeamsComplete, setOtherTeamsComplete] = useState(false);
 
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
@@ -293,8 +298,12 @@ export default function ScorecardPage() {
         setHolesByTee(holesMap);
       }
       setLoading(false);
+      // D.1 S2 — initial fetch for the pre-fire banner. Subsequent updates
+      // come from setScore / refreshDropoutStates.
+      void refreshOtherTeamsState();
     }
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roundId]);
 
   const updatePlayerTee = async (rpId: number, teeId: number) => {
@@ -401,6 +410,11 @@ export default function ScorecardPage() {
     // skipped on subsequent calls via the local short-circuit, and the DB
     // UPDATE guards with `WHERE format_locked_at IS NULL` as a safety net.
     void ensureFormatLocked();
+
+    // D.1 S2 — refresh other-teams completion so the pre-fire banner picks
+    // up another group finishing as we score. Cheap and async; doesn't
+    // block the score entry.
+    void refreshOtherTeamsState();
   };
 
   const removePlayer = async (rpId: number) => {
@@ -423,6 +437,10 @@ export default function ScorecardPage() {
     setRoundPlayers(prev =>
       prev.map(p => ({ ...p, dropped_after_hole: map[p.id] ?? null }))
     );
+    // Dropout state of OTHER teams could have changed (admin marks a player
+    // dropped from the admin tab; refreshDropoutStates fires here). Re-
+    // evaluate the banner.
+    void refreshOtherTeamsState();
   };
 
   // D.1: local mirror of the RPC's server-side completion check. Every non-
@@ -439,6 +457,49 @@ export default function ScorecardPage() {
       }
       return true;
     });
+  };
+
+  // D.1 S2 — refetches completion state for every team OTHER than the one
+  // shown by this scorecard view. Cheap (~2 queries) and runs only on
+  // score-write or dropout-change events, so the once-mounted cost is bounded.
+  // When `teamFilter` is null (whole-round view), the banner does not apply
+  // and we leave the flag false.
+  const refreshOtherTeamsState = async () => {
+    if (!teamFilter) {
+      setOtherTeamsComplete(false);
+      return;
+    }
+    const myTeam = parseInt(teamFilter, 10);
+    const { data: rps } = await supabase
+      .from("round_players")
+      .select("id, team_number, dropped_after_hole")
+      .eq("round_id", roundId)
+      .gt("team_number", 0)
+      .neq("team_number", myTeam);
+    if (!rps || rps.length === 0) {
+      // Lone team — there's no "other" team to wait on. Banner doesn't apply.
+      setOtherTeamsComplete(false);
+      return;
+    }
+    const otherRpIds = (rps as any[]).map(r => r.id as number);
+    const { data: scoreRows } = await supabase
+      .from("scores")
+      .select("round_player_id, hole_number")
+      .in("round_player_id", otherRpIds);
+    const holesByRp: Record<number, Set<number>> = {};
+    (scoreRows ?? []).forEach((s: any) => {
+      if (!holesByRp[s.round_player_id]) holesByRp[s.round_player_id] = new Set();
+      holesByRp[s.round_player_id].add(s.hole_number);
+    });
+    const allComplete = (rps as any[]).every(rp => {
+      const required = rp.dropped_after_hole ?? 18;
+      const got = holesByRp[rp.id] ?? new Set<number>();
+      for (let h = 1; h <= required; h++) {
+        if (!got.has(h)) return false;
+      }
+      return true;
+    });
+    setOtherTeamsComplete(allComplete);
   };
 
   // D.1 auto-fire (S3 + S5). Drains the queue so the latest score lands
@@ -1025,6 +1086,36 @@ export default function ScorecardPage() {
           PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS
         </p>
       </div>
+
+      {/* D.1 S2 — pre-fire warning banner. Only on team-filtered scorecards
+          (?team=N) where every OTHER team is complete and this team has at
+          least one player scored on hole 17 or 18. Disappears the moment
+          the round actually finalizes or another team becomes incomplete. */}
+      {!isRoundComplete && !!teamFilter && otherTeamsComplete && (
+        roundPlayers.some(rp => {
+          const rpScores = scores[rp.id] ?? {};
+          return rpScores[17] != null || rpScores[18] != null;
+        })
+      ) && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: "#fef9c3",
+            border: "1px solid #fde68a",
+            borderRadius: 10,
+            padding: "10px 14px",
+            marginBottom: 12,
+            fontSize: "0.82rem",
+            color: "#713f12",
+            fontWeight: 600,
+            lineHeight: 1.45,
+          }}
+        >
+          Last team finishing up. Round will finalize when hole 18 is scored —
+          check earlier holes for typos first.
+        </div>
+      )}
 
       {/* B3.3: All-scores-count banner — only fires for best-N formats since
           Stableford ignores override_holes (every player already contributes). */}
