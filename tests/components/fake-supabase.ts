@@ -40,6 +40,10 @@ export interface FakeOptions {
 export class FakeSupabase {
   data: FakeData;
   writes: WriteOp[] = [];
+  // D.1 hotfix: every supabase.rpc(name, args) call gets recorded so the
+  // submit-flow tests can assert "RPC was called once when the last team
+  // submitted" / "RPC was NOT called when only one team submitted."
+  rpcCalls: Array<{ name: string; args: any }> = [];
   options: FakeOptions = {};
   private nextIds: Record<string, number> = {};
   private writeCallCounter = 0;
@@ -59,6 +63,7 @@ export class FakeSupabase {
 
   reset() {
     this.writes = [];
+    this.rpcCalls = [];
     this.writeCallCounter = 0;
   }
 
@@ -69,13 +74,14 @@ export class FakeSupabase {
   /**
    * D.1: minimal RPC mock. The scorecard calls
    *   supabase.rpc('finalize_round_with_blind_draws', { p_round_id })
-   * after every score write that locally completes the round, and from
-   * the End-Round flow. The default response ('finalized', no error)
-   * mirrors a successful end-of-round so the existing test assertions
-   * about router.push('/round/N/summary') continue to hold without
-   * per-test wiring. Override with setOptions({ rpcFinalizeResult }).
+   * from the all-teams-submitted useEffect. The default response
+   * ('finalized', no error) mirrors a successful end-of-round so tests
+   * don't need per-call wiring. Override with setOptions({
+   * rpcFinalizeResult }) when you want to exercise pool_too_small /
+   * not_yet branches. Every call is recorded in rpcCalls.
    */
-  async rpc(_name: string, _args: any): Promise<{ data: string | null; error: unknown }> {
+  async rpc(name: string, args: any): Promise<{ data: string | null; error: unknown }> {
+    this.rpcCalls.push({ name, args });
     if (this.options.rpcFinalizeResult) return this.options.rpcFinalizeResult;
     return { data: "finalized", error: null };
   }
