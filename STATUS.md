@@ -2,12 +2,80 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 PM (end of A1.7 session)
-**Session purpose:** Ship A1.7 — tap-to-expand hole-by-hole player rows on the live scorecard, extracting the grid as a reusable component for Phase C PR3 reuse. Sibling/parallel session also shipped A1.6 (team-pill F9/B9/Tot row) earlier in the day.
+**Last updated:** 2026-05-17 PM2 (end of Phase C PR 3 session)
+**Session purpose:** Ship Phase C PR 3 — C4 + C5 + C6. Rebuild the round summary page (`/round/[id]/summary`) as an all-teams ranked view with two-level tap-to-expand drill-down, replacing the prior raw-absolute-scores view. Reuses `rankTeams` (PR 2), `formatTeamTotal` (PR 1), `PlayerHoleGrid` (A1.7), `FormatChip`. Phase C closes with this PR.
 
 ---
 
-## Today's work — 2026-05-17 PM (A1.7)
+## Today's work — 2026-05-17 PM2 (Phase C PR 3)
+
+### Phase C PR 3 shipped — C4 + C5 + C6
+
+**Full rewrite of `src/app/round/[id]/summary/page.tsx`.** Replaces the previous raw-absolute-scores layout (Team header banner + bare numeric totals + Individual Rankings table) with an all-teams ranked, two-level drill-down that mirrors the leaderboard conventions PR 2 established.
+
+**Header:**
+- Date in `"Weekday · Month Day"` form (e.g. "Sunday · May 17"), built via two `toLocaleDateString` calls and joined with a middle dot.
+- Read-only `FormatChip` (no `onChange` prop → component's internal `editable = typeof onChange === "function"` resolves to false; chip renders without the "Change" affordance). Lock icon shows when `format_locked_at != null`.
+- Course name "Semiahmoo Golf & Country Club" (hardcoded — single-course app).
+- Status tag on right: green-on-mint "Final" (`#15803d` on `#dcfce7`) when `is_complete`; secondary-text "In progress · thru N" when live, where N = `Math.max(...teams.map(t => t.thru))` using the PR 2 `holesCompleteForTeam` helper.
+
+**Team cards (ranked via shared `rankTeams` from `src/lib/leaderboard/rank.ts`):**
+- Rank badge: gold `#d4a017` for rank 1, navy `#042C53` for others (spec color — slightly darker than the leaderboard's `#0c3057`, deliberate per spec).
+- Team name + dot-separated roster (same format as leaderboard).
+- Big total on right via `formatTeamTotal(team.total, format)`. Color rules: best-N → green/red/black for under/over/even; Stableford → blue. `team.total = rawTeamScore - teamParAtScored`, which collapses to absolute Stableford points by the C3 convention (`teamParAtScored == 0` for non-best-N).
+- Small "F9 [val] · B9 [val]" leg row below the roster. Leg totals computed inline by walking `engine.perHole`, filtering to holes 1–9 / 10–18, summing `teamScore` and (for best-N only) `par × contributingPlayerIds.length`. Returns `null` when no in-range hole has a team score → renders "—". Same leg semantics as A1.6's pill row.
+- 1st-place card: header section gets `#faf8f0` (cream) background tint for emphasis. Spec mentioned `var(--color-background-secondary)`, which does not exist in globals.css; closest analog is `--cream` = `#faf8f0`, used inline since the page is otherwise pure inline-styles.
+- Chevron-down on the right toggles team expand. Aria-label flips Expand ↔ Collapse + aria-expanded for screen readers.
+
+**Player rows (inside expanded team):**
+- Player name on left.
+- Right side: Gross [N] + Net [delta or pts] side-by-side, each with a tiny uppercase label above ("GROSS" / "NET") and the value at 16px / weight 700. When `holesPlayed === 0` both render as `—`.
+- Net colored by performance via shared `scoreColor` rule (green/red/black for best-N delta vs par-of-played; blue for Stableford pts).
+- For Stableford: player Net = sum of `result.perHole[i].result.perPlayer.find(p => p.playerId == X).points` across all 18 holes. The engine's `result.perPlayer` field currently only carries stroke totals (gross/net), so points are rolled up inline — documented as a deliberate non-engine-change.
+- Chevron-down on the right toggles player expand. When expanded: `<PlayerHoleGrid scores={...18} par={...18} showRunningTotal={false} />` — `currentHoleIndex` omitted entirely so no current-hole highlight on summary view (A1.7's component supports this directly).
+
+**Multi-expand at both levels:** two independent `Set<number>` state objects (`expandedTeams` keyed by `team_number`, `expandedPlayers` keyed by `round_player.id`). Verified live: Team 1 + Team 5 simultaneously expanded, Ward C + Wayne H simultaneously expanded inside Team 1.
+
+**Stableford handling:** `rankTeams` already flips sort direction for Stableford formats per its existing contract (descending — highest wins). `formatTeamTotal` already prints "${N} pts" for Stableford with Unicode minus for negative GOBS Stableford totals. Player Net display branches on `isStablefordFormat(format)` to swap delta formatting for `"${N} pts"`.
+
+**Data plumbing:** single Supabase load chain — `rounds` (1 row), `round_players` (filtered `team_number > 0`, embedded `players(...)` join, embedded `tees(...)` no longer needed since the redesigned card doesn't show per-player tee color), `scores` (`.in("round_player_id", rpIds)`), and one `holes` query per unique tee. Then `computeRoundResult` per team to drive both team totals and player perHole points. Loading state shown until everything resolves; cleanup-on-unmount guard via `cancelled` flag.
+
+**Confessed scope deviations:**
+- The old summary's bottom "Individual Rankings" cross-team table is gone. Per-player gross/net is now exposed inside each team's expanded panel, which the spec explicitly opted into. Surface-level loss; better drill-down model.
+- Spec's `var(--color-background-secondary)` token doesn't exist in this codebase — substituted `#faf8f0` (matches `--cream` in globals.css). Flagged in case the spec intent was a token that should be added globally.
+- The previous summary had a Gross / Net view toggle (segmented control). Removed — the new design shows both per-player gross and per-player net side-by-side in the expanded row, and the team total is always the format-aware "net delta" (or Stableford pts) per leaderboard PR 2 convention. No remaining need for a top-level toggle.
+- The previous summary's "Back to Home" link styling moved from centered above the heading to a small inline link in the header.
+
+**Out of scope per spec (confessed):** live scorecard, leaderboard, season page — all untouched. A1.7's `PlayerHoleGrid` component consumed verbatim — no changes to the component itself.
+
+**Tests:** no new tests in this session. The new page is a thin consumer of three already-tested helpers:
+- `rankTeams` — 13 tests in `tests/lib/leaderboard/rank.test.ts` (covering ascending/descending, ties, skip semantics, immutability)
+- `formatTeamTotal` — 5 tests in `tests/lib/format/copy.test.ts`
+- `PlayerHoleGrid` — 11 tests in `tests/components/PlayerHoleGrid.test.tsx` (A1.7)
+The summary page itself has no extracted pure helpers worth testing in isolation (legTotal closure could be lifted, but it's a 12-line walk over `perHole` — same shape as A1.6's `getTeamNetDeltaForHoles` which is similarly inlined).
+
+**Verification:**
+- `tsc --noEmit` clean.
+- **251/251 unit tests pass** across 25 files.
+- Browser preview at iPhone SE (375 × 812):
+  - Round 90 (Best Ball, complete, 5 teams). All 5 teams render in correct rank order (Team 1 / Team 5 / Team 2 ↔ Team 4 tied at rank 3 / Team 3 at rank 5 — tie-skip semantics confirmed). F9/B9/total math is internally consistent on all 5 teams (e.g. Team 1: −8 / −1 / −9; Team 5: −3 / −4 / −7; Team 2: −2 / E / −2). 1st place header bg `rgb(250,248,240)` (`#faf8f0`); 1st place rank badge `rgb(212,160,23)` (`#d4a017` gold); non-1st rank badge `rgb(4,44,83)` (`#042C53` navy); 1st place total color `rgb(21,128,61)` (under-par green `#15803d`); total text reads `"−9"` with Unicode minus. Status tag reads "FINAL".
+  - Round 95 (Best Ball, complete, 1 team). Renders single Team 1 card with rank 1, gold badge, F9 −5 · B9 +1, total −4.
+  - Team expand verified: clicking Team 1 chevron flips aria-expanded to "true", reveals 2 player rows ("Expand Ward C" + "Expand Wayne H").
+  - Player expand verified: clicking Ward C reveals PlayerHoleGrid with 60 cells (2× 10-col × 3-row grids), correct hole numbers + par values + scores; no "Total N" line at the bottom (regex `/Total\s+\d/` returns false).
+  - Multi-expand at both levels verified.
+  - Zero console errors.
+- `preview_screenshot` tool timed out at 30s twice — same browser-side flakiness as A1.6/A1.7 sessions. Accessibility-tree snapshot + computed-style queries via `preview_eval` cover all visual requirements.
+
+**ROADMAP updated:**
+- C4 / C5 / C6 → ✅ with 2026-05-17 PM2 date stamps and per-item notes.
+- PR 3 banner line above the table marked shipped.
+- Phase C exit-criteria line marked met.
+- Top-of-file last-updated banner refreshed.
+- New `May 17 (PM2)` session log entry appended above the `May 17 (PM)` A1.7 entry.
+
+---
+
+## Earlier today — 2026-05-17 PM (A1.7)
 
 ### A1.7 shipped
 
@@ -130,13 +198,14 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-A1.7-commit): `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill. A1.7 commit + this STATUS.md update will move HEAD forward.
-- Status vs production deployment: **in sync** at A1.6 HEAD. A1.7 will auto-deploy to Vercel on push.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-PR-3-commit): `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows. Phase C PR 3 commit + this STATUS.md update will move HEAD forward.
+- Status vs production deployment: **in sync** at A1.7 HEAD. Phase C PR 3 will auto-deploy to Vercel on push.
+- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
-- (pending) — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows + extract `PlayerHoleGrid` (2026-05-17 PM)
+- (pending) — feat(summary): Phase C PR 3 — ranked all-teams summary with F9/B9 + two-level drill-down (2026-05-17 PM2)
+- `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows (2026-05-17 PM)
 - `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (2026-05-17)
 - `03828ff` — chore: STATUS.md — Option 3 phases A–E + Bug 1 resolution (2026-05-13)
 - `668da1e` — feat(homepage): stale-failure prompt (Phase E of Option 3) (2026-05-13)
@@ -154,7 +223,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Test surface on master
 
-- vitest: **251/251 pass** across 25 files. Verified fresh at session end (11 new `PlayerHoleGrid` tests added in A1.7).
+- vitest: **251/251 pass** across 25 files. Verified fresh at session end. No new tests added in Phase C PR 3 — page is a thin consumer of already-tested helpers (`rankTeams`, `formatTeamTotal`, `PlayerHoleGrid`).
 - `tsc --noEmit` clean.
 - Component test infra: `tests/components/fake-supabase.ts` (chainable in-memory client supporting `.upsert`, `.or` no-op, `failWrite` hook, `writeDelayMs`, writes log). Used by `scorecard-bug-repro.test.tsx`, `end-round-flow.test.tsx`, `stale-failure-homepage.test.tsx`, `ReconciliationDialog.test.tsx`, `StaleFailureDialog.test.tsx`, `stuckItemsClipboard.test.ts`.
 - Library unit tests: `tests/lib/writeQueue/{backoff,storage,WriteQueue}.test.ts` cover the locked D7 backoff schedule, quota eviction order, `markAsTerminal` / `retryTerminal` / `forget` semantics, hail-mary drain, online / offline / visibility / pageshow triggers, and `in_flight` resurrection on mount.
@@ -167,7 +236,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 2. **Option 3 telemetry review.** After a full live round on production, check Sentry for `writeQueue.terminal_failure` events. Each one tells us whether the queue's failure path is firing in practice or whether everything drains via the happy path. Also watch for `user_forget_stale` — every one indicates a user abandoning scoring data.
 3. **Bug 2 — confirm fixed or queue follow-up.** After a live round on production, ask whether anyone has experienced snap-back. If yes, the JS movement-threshold guard is the queued follow-up; if no, mark Bug 2 confirmed-fixed.
 4. **I13 — admin UI to edit `players.preferred_tee_id`.** Bumped earlier from regular 📋. Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Setting Hashimoto's via direct SQL carries real risk of editing the wrong row.
-5. **Phase C PR 3 — drill-in summary hole-by-hole.** Now unblocked by A1.7: `src/components/scorecard/PlayerHoleGrid.tsx` is the shared component. Pass `currentHoleIndex={undefined}` (no highlight) and `showRunningTotal={false}` to suppress the bottom Total line. C4 / C5 / C6 should consume this component verbatim — no further extraction needed.
+5. **Phase D.1 — Blind Draw.** Phase C is now closed. Per the May 9 reprioritization, Blind Draw is the next active priority ahead of more leaderboard / summary polish. See ROADMAP D.1 (D1.1–D1.6) — needs decision input from Dad on the randomizer trigger UX before code starts.
 
 ---
 
