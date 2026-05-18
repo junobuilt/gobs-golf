@@ -2,12 +2,31 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-13 (end of day)
-**Session purpose:** Marathon session, four tracks of work all landed on master and live in production.
+**Last updated:** 2026-05-17 (end of session)
+**Session purpose:** Ship A1.6 — F9 / B9 / Tot cumulative net on the scorecard team-net pill.
 
 ---
 
-## Today's work — 2026-05-13 end-of-day summary
+## Today's work — 2026-05-17 end-of-session summary
+
+### A1.6 shipped (commit `0639b57`)
+
+Added a 13px cumulative-net row below the existing big delta on the navy team-net pill in `src/app/round/[id]/scorecard/page.tsx`. Format: **"F9 [val] · B9 [val] · Tot [val]"** with middle-dot separators, labels at opacity 0.65, values bold (weight 500) in white. Headline delta untouched per spec.
+
+- **New helper `getTeamNetDeltaForHoles(holeNumbers: number[]): number | null`** walks `buildRoundInput("net").perHole`, filters to the supplied range, and sums `teamScore − (par × contributingPlayerIds.length)` per hole for best-N. Returns `null` when no hole in range has a team score → row renders "—" for that leg. Stableford collapses to absolute points by the C3 convention (`teamParAtScored == 0` for non-best-N), so `formatTeamTotal` renders "X pts" automatically.
+- **Constants `F9_HOLES`, `B9_HOLES`, `ALL_HOLES`** hoisted to module scope so they aren't reallocated each render.
+- **Tot equals `teamNet − teamPar`** from the headline by design (Nassau payouts settle each leg separately, so showing all three at once is intentional).
+- **Out of scope per spec:** player rows, summary page, leaderboard — all untouched.
+
+**Verification:** `tsc --noEmit` clean (no `src/` errors). **240/240 unit tests pass** across 24 files. Browser preview at iPhone SE (375 × 812) on live round 95 (Best Ball, complete) rendered "TEAM NET −5" headline plus "F9 −6 · B9 +1 · Tot −5" row on one line — no wrap, no console errors. Tot matches the headline (−6 + +1 = −5).
+
+**Infra note:** test deps `@testing-library/jest-dom`, `@testing-library/react`, `jsdom` were missing from `node_modules` at session start; `npm install` re-hydrated them. Pre-existing drift, not caused by this change.
+
+ROADMAP updated: A1.6 → ✅, Phase A.1 exit-criteria line updated to reflect A1.6 shipped, May 17 session log entry appended.
+
+---
+
+## Previous session — 2026-05-13 end-of-day summary
 
 Four threads, in the order they shipped:
 
@@ -77,12 +96,13 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit: `03828ff` — chore: STATUS.md — Option 3 phases A–E + Bug 1 resolution (will move forward by one once this update commits).
+- HEAD commit: `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (this STATUS.md update will move HEAD forward by one).
 - Status vs production deployment: **in sync.** Each merged PR auto-deployed via Vercel to production. Latest confirmed production deploys: `dpl_GioCMq3TWkTnU5BCRiHasqt6E2Di` (Phase E merge) and `dpl_E3q5pkAyqd86uavSA4cZqpwZDLxV` (prior STATUS.md update), both `state=READY, target=production`.
 - Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 added no net schema delta (`option3_phase_a_scores_unique_idx` was created and then reverted in the same session — see migration history). Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
+- `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (2026-05-17)
 - `03828ff` — chore: STATUS.md — Option 3 phases A–E + Bug 1 resolution (2026-05-13)
 - `668da1e` — feat(homepage): stale-failure prompt (Phase E of Option 3) (2026-05-13)
 - `76e1a8b` — feat(scorecard): End-Round reconciliation flow (Phase D of Option 3) (2026-05-13)
@@ -112,7 +132,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 2. **Option 3 telemetry review.** After a full live round on production, check Sentry for `writeQueue.terminal_failure` events. Each one tells us whether the queue's failure path is firing in practice or whether everything drains via the happy path. Also watch for `user_forget_stale` — every one indicates a user abandoning scoring data.
 3. **Bug 2 — confirm fixed or queue follow-up.** After a live round on production, ask whether anyone has experienced snap-back. If yes, the JS movement-threshold guard is the queued follow-up; if no, mark Bug 2 confirmed-fixed.
 4. **I13 — admin UI to edit `players.preferred_tee_id`.** Bumped earlier from regular 📋. Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Setting Hashimoto's via direct SQL carries real risk of editing the wrong row.
-5. **A1.6 Step 2 — engine wiring on `phase-a1-team-pill-segments`** if Jonathan approves the mockup.
+5. **A1.7 — tap player row → expand hole-by-hole on scorecard.** A1.6's sibling, also unblocked. Shares helper code with the Phase C drill-in summary (C4 / C5 / C6).
 
 ---
 
