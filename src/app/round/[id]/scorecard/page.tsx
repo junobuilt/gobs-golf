@@ -102,11 +102,40 @@ export default function ScorecardPage() {
   // Date the round was played, surfaced in the clipboard payload.
   const [roundPlayedOn, setRoundPlayedOn] = useState<string | null>(null);
 
+  // D.1 — auto-finalize state. `finalizePending` gates the useEffect so we
+  // only attempt the RPC once per locally-complete state; it resets when the
+  // predicate flips back false (admin undoes a dropout, score gets cleared,
+  // etc.). `finalizedToast` shows S5's confirmation; `poolErrorVisible`
+  // shows the S4 defensive-abort message.
+  const [finalizePending, setFinalizePending] = useState(false);
+  const [autoFinalizing, setAutoFinalizing] = useState(false);
+  const [finalizedToastVisible, setFinalizedToastVisible] = useState(false);
+  const [poolErrorVisible, setPoolErrorVisible] = useState(false);
+
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
 
   // Per-hole manual overrides: which 2 round_player ids count
   const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
+
+  // D.1 auto-fire effect. Locally compute completion; if the predicate flips
+  // true and we haven't already attempted, kick off the drain + RPC. The
+  // pending flag prevents the effect from re-entering during the async call.
+  // It resets when the predicate flips false again (admin undid a dropout,
+  // a score got cleared, etc.) so a later legitimate completion still fires.
+  useEffect(() => {
+    if (isRoundComplete) return;
+    if (autoFinalizing) return;
+    const localComplete = isRoundLocallyComplete();
+    if (!localComplete) {
+      if (finalizePending) setFinalizePending(false);
+      return;
+    }
+    if (finalizePending) return;
+    setFinalizePending(true);
+    void autoFinalizeIfReady();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scores, roundPlayers, isRoundComplete]);
 
   // A1.7: player rows expanded to show the per-player hole-by-hole grid.
   // Multi-expand — tapping one player does not collapse the others.
@@ -394,6 +423,67 @@ export default function ScorecardPage() {
     setRoundPlayers(prev =>
       prev.map(p => ({ ...p, dropped_after_hole: map[p.id] ?? null }))
     );
+  };
+
+  // D.1: local mirror of the RPC's server-side completion check. Every non-
+  // dropped player must have 18 holes scored; every dropped player must have
+  // scores through their dropped_after_hole. Predicate flipping true triggers
+  // the auto-finalize effect.
+  const isRoundLocallyComplete = (): boolean => {
+    if (roundPlayers.length === 0) return false;
+    return roundPlayers.every(rp => {
+      const required = rp.dropped_after_hole ?? 18;
+      const rpScores = scores[rp.id] ?? {};
+      for (let h = 1; h <= required; h++) {
+        if (rpScores[h] == null) return false;
+      }
+      return true;
+    });
+  };
+
+  // D.1 auto-fire (S3 + S5). Drains the queue so the latest score lands
+  // server-side before the RPC reads it, then calls
+  // finalize_round_with_blind_draws. Branches:
+  //   'finalized'       → toast (S5), flip local is_complete
+  //   'already_complete' → silent (another tab raced and won)
+  //   'pool_too_small'  → red banner (S4 defensive abort)
+  //   'not_yet'         → silent (a write hasn't reached the DB yet; the
+  //                       useEffect will re-fire on the next state change)
+  const autoFinalizeIfReady = async () => {
+    if (autoFinalizing) return;
+    setAutoFinalizing(true);
+    try {
+      try { await getWriteQueue().drain(); } catch { /* offline; try anyway */ }
+      const { data, error } = await supabase.rpc(
+        "finalize_round_with_blind_draws",
+        { p_round_id: Number(roundId) },
+      );
+      if (error) {
+        // Unexpected RPC failure. Don't redirect; surface in console for
+        // debugging. The next score-state change will retry.
+        console.warn("[D.1] finalize RPC error", error);
+        // Allow retry on next change.
+        setFinalizePending(false);
+        return;
+      }
+      const status = (data ?? "") as string;
+      if (status === "finalized") {
+        setIsRoundComplete(true);
+        setFinalizedToastVisible(true);
+        setTimeout(() => setFinalizedToastVisible(false), 4000);
+      } else if (status === "already_complete") {
+        // Silent — but reflect the DB state locally.
+        setIsRoundComplete(true);
+      } else if (status === "pool_too_small") {
+        setPoolErrorVisible(true);
+        setTimeout(() => setPoolErrorVisible(false), 6000);
+      } else if (status === "not_yet") {
+        // Likely a write was still in flight. Let the effect retry.
+        setFinalizePending(false);
+      }
+    } finally {
+      setAutoFinalizing(false);
+    }
   };
 
   // --- SCORING HELPERS (engine-backed) ---
@@ -721,48 +811,39 @@ export default function ScorecardPage() {
     }
   };
 
-  // Original finishRound logic, extracted: count scores per team, mark
-  // the round complete if all teams have ≥2 18-hole players, redirect to
-  // summary. Called after the End-Round reconciliation flow resolves
-  // (either drain success, "Skip and finish", or "Finish anyway").
+  // D.1: replaces the pre-D.1 client-side completion check + manual
+  // `UPDATE rounds SET is_complete = true`. The RPC owns completion (which
+  // is now stricter: every non-dropped player needs every required hole),
+  // randomization, and the atomic flip. Branches:
+  //   'finalized' / 'already_complete' → redirect to summary
+  //   'pool_too_small'                  → red banner, stay on scorecard
+  //   'not_yet'                          → stay on scorecard (missing scores)
   const finalizeRound = async () => {
     setSaving(true);
 
-    const { data: allRPs } = await supabase
-      .from("round_players")
-      .select("id, team_number")
-      .eq("round_id", roundId)
-      .gt("team_number", 0);
-
-    let allComplete = false;
-    if (allRPs && allRPs.length > 0) {
-      const teamGroups: Record<number, number[]> = {};
-      allRPs.forEach((rp: any) => {
-        if (!teamGroups[rp.team_number]) teamGroups[rp.team_number] = [];
-        teamGroups[rp.team_number].push(rp.id);
-      });
-
-      const { data: allScores } = await supabase
-        .from("scores")
-        .select("round_player_id, hole_number")
-        .in("round_player_id", allRPs.map((r: any) => r.id));
-
-      const scoreCounts: Record<number, number> = {};
-      allScores?.forEach((s: any) => {
-        scoreCounts[s.round_player_id] = (scoreCounts[s.round_player_id] || 0) + 1;
-      });
-
-      allComplete = Object.values(teamGroups).every(rpIds =>
-        rpIds.filter(id => (scoreCounts[id] || 0) >= 18).length >= 2
-      );
-    }
-
-    if (allComplete) {
-      await supabase.from("rounds").update({ is_complete: true }).eq("id", roundId);
-    }
+    const { data, error } = await supabase.rpc(
+      "finalize_round_with_blind_draws",
+      { p_round_id: Number(roundId) },
+    );
 
     setSaving(false);
     setEndRoundPhase(null);
+
+    if (error) {
+      console.warn("[D.1] manual finalize RPC error", error);
+      return;
+    }
+    const status = (data ?? "") as string;
+    if (status === "pool_too_small") {
+      setPoolErrorVisible(true);
+      setTimeout(() => setPoolErrorVisible(false), 6000);
+      return;
+    }
+    if (status === "not_yet") {
+      // Missing scores. Stay on the scorecard so the user can fill them.
+      return;
+    }
+    // finalized | already_complete → both mean the round is done in the DB.
     router.push(`/round/${roundId}/summary`);
   };
 
@@ -1358,6 +1439,62 @@ export default function ScorecardPage() {
           copyState={copyState}
           busy={retryBusy}
         />
+      )}
+
+      {/* D.1 S5 — post-fire confirmation toast. Shown only to the user who
+          entered the last score. Auto-dismisses after ~4s. */}
+      {finalizedToastVisible && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#0e4270",
+            color: "white",
+            padding: "12px 22px",
+            borderRadius: 999,
+            fontWeight: 600,
+            fontSize: "0.92rem",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
+            zIndex: 1100,
+            fontFamily: "DM Sans, system-ui, sans-serif",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ✅ Round finalized. Blind draw complete.
+        </div>
+      )}
+
+      {/* D.1 S4 defensive abort — surfaces when finalize_round_with_blind_draws
+          returns 'pool_too_small'. Auto-dismisses after 6s; longer than the
+          success toast because the user needs time to read the escalation. */}
+      {poolErrorVisible && (
+        <div
+          role="alert"
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#7f1d1d",
+            color: "white",
+            padding: "12px 22px",
+            borderRadius: 12,
+            fontWeight: 600,
+            fontSize: "0.88rem",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
+            zIndex: 1100,
+            fontFamily: "DM Sans, system-ui, sans-serif",
+            maxWidth: 340,
+            textAlign: "center",
+            lineHeight: 1.4,
+          }}
+        >
+          Not enough complete rounds to fill blind draws. Contact Jonathan.
+        </div>
       )}
     </div>
   );
