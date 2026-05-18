@@ -2,12 +2,57 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-18 (Phase D.1 — Blind Draw shipped)
-**Session purpose:** Ship Phase D.1 end-to-end against the locked spec (`CLAUDE_CODE_SPEC_BLIND_DRAW.md`). Migration + RPC engine, data-layer extension, dropout-marking UI on admin + scorecard, auto-fire trigger, pre/post-fire banners, blind-draw rendering across `RoundResultsView` + read-only scorecard, Individual Rankings exclusion, and specific UX copy for the post-finalize write-rejection path. Ten commits to master.
+**Last updated:** 2026-05-18 PM (Phase D.1 hotfix — Submit Final Scores gate)
+**Session purpose:** Hotfix shipped over the morning's D.1 ship. The auto-fire trigger raced A6's "first +/− tap commits par": a player tapping `+` on hole 18 wrote par before they could adjust, the completion check passed, the RPC fired, and the round locked. Confirmed live. Replaced with explicit per-team submission — each team taps "Submit Final Scores" when done; the RPC fires only when every team has submitted.
 
 ---
 
-## Today's work — 2026-05-18 (Phase D.1 — Blind Draw)
+## Today's work — 2026-05-18 PM (D.1 hotfix — per-team submit gate)
+
+Three commits replacing the auto-fire trigger with an explicit per-team submission gate.
+
+### What broke and why
+
+Original D.1 (this morning) wired auto-finalize as a `useEffect` over `scores` + `roundPlayers`: when the local completion predicate flipped true, the RPC fired. A6 — the "first +/− tap on a hole commits par to DB" behavior — meant tapping `+` on hole 18 to start working out a bogey wrote par to DB *before* the player could adjust. Local state passed completion check. RPC fired. `rounds.is_complete = true`. Player keeps tapping; trigger rejects the writes with `round_finalized`. Round was effectively locked at par on hole 18 for that player.
+
+Tested in vitest as `setScore → enqueue → effect → drain → RPC`. Looked clean in isolation. Failed live because the dependency between A6's optimistic-write semantics and the auto-fire trigger only surfaces when a real human pauses on the final hole.
+
+### Commit timeline
+
+| Commit | What it does |
+| --- | --- |
+| `73de23c` | **Scorecard rewrite.** Removed the entire auto-fire path: the `useEffect` watching `scores`/`roundPlayers`, the "Finish Round ✓" button on hole 18, the "End round early" link, the "Finalize this round?" DangerModal, and the full Phase D reconciliation flow (`startEndRoundFlow`, `runHailMaryWithTimeout`, `handleRetrySync`, `handleSkipAndFinalize`, `handleCopyDetails`, `finalizeRound`, `queueItemsForThisRound`, and the rendered `ReconciliationDialog` + `FinishingSpinner`). Added `submittedTeams: number[]` + `allTeamNumbers: number[]` state, sourced from `format_config.submitted_teams` (new optional field on the existing `FormatConfig` JSONB) and a `round_players` `team_number` query at mount. Added `submitTeam(teamNum)` — drains the WriteQueue, re-reads `format_config` (race-safety against another tab submitting in the same window), appends my team, writes back. Added `tryFinalizeIfAllSubmitted()` in a `useEffect` over `submittedTeams`/`allTeamNumbers`/`isRoundComplete` — fires the RPC once every team is in the set. Derived `isLocked = isRoundComplete \|\| myTeamSubmitted` gates +/− and the `PlayerOverflowMenu` (which auto-hides when no action is available). New green "Final scores submitted" caption near the top when my team has submitted; new green "Submit Final Scores" button below the player rows, disabled until `isRoundLocallyComplete()`, opens a DangerModal with title `Submit Team N's final scores?` + body `You won't be able to edit these scores after submitting.` Pre-fire banner reworded to `All other teams have submitted. Tap Submit Final Scores when ready.` and gated on (a) this team is the last not in `submitted_teams` AND (b) `isRoundLocallyComplete()`. Removed `useRouter` (no more router.push from finalize). |
+| `485dfa0` | **Test refresh.** Deleted `tests/components/end-round-flow.test.tsx` (7 tests for the removed manual-finalize flow). Added `tests/components/submit-flow.test.tsx` with 6 cases: Submit disabled until every hole scored; Submit appends to `format_config.submitted_teams`; Submit alone does NOT fire RPC; Submit closing the set fires RPC exactly once with the right args; `Final scores submitted` caption + Submit button hidden when my team is already in `submitted_teams`; pre-fire banner appears when my team is the last not-yet-submitted. `FakeSupabase` now logs every `rpc()` call into `rpcCalls: Array<{ name, args }>` so the suite can assert invocation counts. |
+| `00375bd → this commit` | **STATUS.md update.** Top section refreshed to describe the hotfix; the morning's D.1 ship moves down one level. |
+
+### Design calls made during the hotfix
+
+1. **Submit button is per-team only — whole-round view (no `?team=N`) has no Submit affordance.** Submit represents a single team's intent. The whole-round view is observer/admin and lacks a meaningful "submit" subject. Pre-fire banner also requires a team filter.
+
+2. **Read-modify-write on `format_config.submitted_teams`, not an atomic RPC.** Spec language ("via standard supabase update") and the in-person league context (sequential submissions in practice) made the simpler path right. If a real race shows up, the fallback is a small `append_submitted_team` RPC; not needed today.
+
+3. **Post-submit dropout is a documented limitation.** Overflow menu auto-hides when `isLocked`. Per spec — "dropout-after-submit is a Jonathan-DB-fix path."
+
+4. **Stale tabs can write scores to a submitted team's players pre-finalize.** The DB trigger only blocks post-finalize writes (when `rounds.is_complete` is true). A submitted-but-pre-finalize team's scores are still mutable from any tab that has them loaded. Acceptable for an in-person league; if it bites, Jonathan can DB-fix.
+
+5. **`Next Hole` no longer becomes `Finish Round` at hole 18.** It just disables. Reduces the visual draw toward "do something to end the round" — the right end-the-round action is the explicit Submit Final Scores button below the player rows.
+
+### Verification
+
+- `tsc --noEmit` clean across both code commits.
+- vitest **272/272 across 27 files** (was 273; net -1 from deleting 7 end-round tests + adding 6 submit tests).
+- Browser preview on `/round/95/scorecard?team=1` (a finalized round): page renders cleanly with no +/−, no Submit button (round is_complete → no submit affordance), no "Final scores submitted" caption (`myTeamSubmitted` is false because pre-hotfix rounds don't have `submitted_teams`), no JS errors. The new "← Back" / "Next Hole →" navigation row is the only bottom-of-page UI.
+- **End-to-end live verification is deferred to Jonathan at ~4am per instruction.** Engine correctness already covered by `snapshot-d1.sql` (10-test fixture, unchanged); the submit gate is covered by the new vitest suite. The classifier blocked DB flips for live UI testing.
+
+### Known follow-ups
+
+- `ROADMAP_EDITS_D1.md` application still pending (was already a separate-trailing-session item from the morning).
+- "🎲 rendering / snapshot-d1 / P0001 tests" not touched per spec. All still green.
+- Telemetry once a live round goes through: watch for `writeQueue.terminal_failure` with `reason: 'round_finalized'` — should be rare; each one means a stale tab tried to write after auto-fire fired on `all teams submitted`.
+
+---
+
+## Earlier today — 2026-05-18 (Phase D.1 — Blind Draw)
 
 Ten focused commits, each one independently verifiable. The locked spec packaged decisions on auto-fire trigger (client-driven RPC call), toast (minimal inline, no new component), overflow menu shape (consolidate Remove + Mark Left + Undo Left into one ⋯ to avoid mis-tap for the 60–80 demographic), stale-failure copy (specific `round_finalized` classification), and PRNG (setseed + random with pool ordered by `round_players.id ASC`).
 
@@ -415,12 +460,15 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-STATUS-update): `50842db` — test(d1): snapshot-d1.sql + unit tests for pairing + terminal reason. The trailing STATUS.md / ROADMAP commit will move HEAD forward by one.
-- Status vs production deployment: **in sync** through `50842db` after the push. Each commit auto-deploys to Vercel.
-- Schema state: migrations 001–007 plus `008_phase_d1_blind_draws` (applied today). Live: `round_players.dropped_after_hole` column, `blind_draws` table, `round_player_actions` audit table, `scores_reject_on_complete` trigger, `finalize_round_with_blind_draws` RPC. Round 90 still holds 10 players across 5 teams (T1–T5) with 180 scores; today's round 95 holds 1 team with 2 players; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained; `blind_draws` and `round_player_actions` are empty (no live finalize through the new path yet).
+- HEAD commit (pre-STATUS-update): `485dfa0` — test(d1): submit-flow test suite + drop obsolete end-round-flow tests. The trailing STATUS.md commit will move HEAD forward by one.
+- Status vs production deployment: **in sync** through `485dfa0` after the push. Each commit auto-deploys to Vercel.
+- Schema state: migrations 001–007 plus `008_phase_d1_blind_draws` (applied 2026-05-18 AM). Live: `round_players.dropped_after_hole`, `blind_draws`, `round_player_actions`, `scores_reject_on_complete` trigger, `finalize_round_with_blind_draws` RPC. Hotfix added an optional `submitted_teams: number[]` field inside the existing `rounds.format_config` JSONB — no migration. `blind_draws` and `round_player_actions` are empty (no live finalize since the morning's broken auto-fire was reverted by the hotfix); first real fill will happen next league round through the submit gate.
 
 ## Last commits on master
 
+- `485dfa0` — test(d1): submit-flow test suite + drop obsolete end-round-flow tests (2026-05-18 PM)
+- `73de23c` — fix(d1): replace auto-fire with per-team Submit Final Scores gate (2026-05-18 PM)
+- `00375bd` — chore: update STATUS.md for Phase D.1 (Blind Draw) ship (2026-05-18 AM)
 - `50842db` — test(d1): snapshot-d1.sql + unit tests for pairing + terminal reason (2026-05-18)
 - `2779241` — feat(d1): classify P0001 round_finalized + show specific stale-failure copy (2026-05-18)
 - `0cc1592` — feat(d1): exclude blind-draw fills + dropouts from Individual Rankings (2026-05-18)
@@ -455,9 +503,9 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Test surface on master
 
-- vitest: **273/273 pass** across 27 files. 14 new today: 8 in `tests/lib/round/blindDrawPairing.test.ts` + 5 in `tests/lib/writeQueue/getTerminalReason.test.ts` + 1 from a tweak to `tests/components/end-round-flow.test.tsx` (now routes through the new RPC stub on FakeSupabase).
+- vitest: **272/272 pass** across 27 files. Net change today: morning added 8 pairing + 5 terminal-reason + 1 end-round-flow stub update; PM dropped the 7 obsolete end-round-flow cases and added 6 submit-flow cases.
 - `tsc --noEmit` clean.
-- New SQL fixture: `tests/snapshots/snapshot-d1.sql` — 10 assertions covering the D.1 engine (completion check, fill count, no collisions, no own-team draws, dropouts excluded, dropout range, single-fire guard, post-finalize rejection, seed reproducibility). Runs inside a rollback transaction; reaches `ROLLBACK_OK` sentinel cleanly.
+- SQL fixture: `tests/snapshots/snapshot-d1.sql` — 10 assertions covering the D.1 engine (completion check, fill count, no collisions, no own-team draws, dropouts excluded, dropout range, single-fire guard, post-finalize rejection, seed reproducibility). Unchanged by the hotfix — engine semantics didn't move. Runs inside a rollback transaction; reaches `ROLLBACK_OK` sentinel cleanly.
 - `tsc --noEmit` clean.
 - Component test infra: `tests/components/fake-supabase.ts` (chainable in-memory client supporting `.upsert`, `.or` no-op, `failWrite` hook, `writeDelayMs`, writes log). Used by `scorecard-bug-repro.test.tsx`, `end-round-flow.test.tsx`, `stale-failure-homepage.test.tsx`, `ReconciliationDialog.test.tsx`, `StaleFailureDialog.test.tsx`, `stuckItemsClipboard.test.ts`.
 - Library unit tests: `tests/lib/writeQueue/{backoff,storage,WriteQueue}.test.ts` cover the locked D7 backoff schedule, quota eviction order, `markAsTerminal` / `retryTerminal` / `forget` semantics, hail-mary drain, online / offline / visibility / pageshow triggers, and `in_flight` resurrection on mount.
