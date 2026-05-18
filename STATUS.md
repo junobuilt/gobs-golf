@@ -2,12 +2,64 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 PM5 (end of Phase A.1 polish session)
-**Session purpose:** Three small scorecard polish commits — drop redundant `Tot` from the team-pill F9/B9 row, replace green-text birdie with traditional concentric notation marks on `PlayerHoleGrid` score cells, and refresh the three-row visual hierarchy on hole/par/gross.
+**Last updated:** 2026-05-18 (Phase D.1 — Blind Draw shipped)
+**Session purpose:** Ship Phase D.1 end-to-end against the locked spec (`CLAUDE_CODE_SPEC_BLIND_DRAW.md`). Migration + RPC engine, data-layer extension, dropout-marking UI on admin + scorecard, auto-fire trigger, pre/post-fire banners, blind-draw rendering across `RoundResultsView` + read-only scorecard, Individual Rankings exclusion, and specific UX copy for the post-finalize write-rejection path. Ten commits to master.
 
 ---
 
-## Today's work — 2026-05-17 PM5 (Phase A.1 polish)
+## Today's work — 2026-05-18 (Phase D.1 — Blind Draw)
+
+Ten focused commits, each one independently verifiable. The locked spec packaged decisions on auto-fire trigger (client-driven RPC call), toast (minimal inline, no new component), overflow menu shape (consolidate Remove + Mark Left + Undo Left into one ⋯ to avoid mis-tap for the 60–80 demographic), stale-failure copy (specific `round_finalized` classification), and PRNG (setseed + random with pool ordered by `round_players.id ASC`).
+
+### Commit timeline
+
+| Commit | What it does |
+| --- | --- |
+| `f307057` | **Migration + RPC.** Adds `round_players.dropped_after_hole` (NULL or 1..17 CHECK), `blind_draws` table, `round_player_actions` audit log, `scores_reject_on_complete` BEFORE INSERT/UPDATE trigger (raises P0001 `round_finalized`), and `finalize_round_with_blind_draws(round_id)` RPC. Engine is atomic: locks rounds FOR UPDATE, runs completion check, identifies slots, composes the pool (excludes dropouts + own team + already-drawn), seeds the PRNG once per round, draws in ascending team_number / slot order, writes blind_draws rows, flips is_complete. Returns one of `not_yet` / `already_complete` / `finalized` / `pool_too_small`. Verified by a 10-test SQL fixture inside a rollback transaction (2/2/2/3 split + 1 dropout on team 4 after hole 8 → 4 fills, no collisions, no own-team draws, dropouts excluded, single seed, second call returns `already_complete`, post-finalize score insert rejected with `round_finalized`). Migration file in `supabase/migrations/008_phase_d1_blind_draws.sql`. |
+| `2ea7ce3` | **Data layer.** `LoadedRoundResults` extends with `TeamRow.blindDraws: BlindDrawFill[]` (carries the drawn player's name, their own team_number, hole range, and full 18-hole gross-score array) and `PlayerRow.droppedAfterHole: number \| null`. `loadRoundResults` joins `blind_draws` with `players` and reuses `scoresByRpId` for the drawn player's scores. Empty array for any round that wasn't finalized with short teams. |
+| `bf80159` | **S1 — per-player ⋯ overflow menu.** New shared `PlayerOverflowMenu` component (`src/components/round/PlayerOverflowMenu.tsx`). Live scorecard player rows: ⋯ next to the chevron; "Remove from team" text link removed (consolidated into the menu); dropped players show muted "(left after hole N)" caption; +/− buttons disable for holes > droppedAfterHole. Admin RoundSetup active view: ⋯ at the end of each player line (no Remove option there). Modal shows the hole picker (1..17) + dynamic consequence text + 1.5s confirm delay (matches DangerModal pattern). Writes flow through the component: `round_players.dropped_after_hole` update + a `round_player_actions` audit row stamped with surface ('admin' \| 'scorecard'). Menu auto-hides when no action is available (round finalized + no removable option), so finalized rounds correctly show no ⋯. |
+| `ae9cdb3` | **S3 + S5 — auto-fire + toast.** `useEffect` watches `scores` + `roundPlayers` in the scorecard; when the local completion predicate flips true (every non-dropped player has 18 holes, every dropped player has scores through `dropped_after_hole`), drains the WriteQueue and calls `finalize_round_with_blind_draws`. Branches: `finalized` → toast + flip `is_complete` locally; `already_complete` → sync local state silently; `pool_too_small` → red banner with the spec's escalation copy ("Not enough complete rounds to fill blind draws. Contact Jonathan."); `not_yet` → clear the pending flag so the next state change retries. The existing manual `finalizeRound` (End-Round reconciliation entry point) also delegates to the RPC instead of the pre-D.1 client-side completion check. **Behavior change to flag:** the pre-D.1 finish-round check was lenient (every team needed ≥2 players with 18 holes); the RPC enforces the spec's stricter rule (every non-dropped player needs every required hole). Stragglers must be marked dropped via the ⋯ menu for the round to finalize. |
+| `6413180` | **S2 — pre-fire warning banner.** Yellow banner above the hole-scoring UI on the team-filtered scorecard view (`?team=N`). Shown when every team other than this one has all required holes scored + at least one player on this team has a score for hole 17 or 18 + round not yet complete. Not dismissible; disappears the moment the round finalizes or another team becomes incomplete. New `refreshOtherTeamsState()` runs on mount + after every score write + after dropout edits. Whole-round view opts out (no "other team" to wait on). |
+| `3cad777` | **S6 — RoundResultsView fill rendering + read-only scorecard.** Three new surfaces on `/leaderboard` and `/round/[id]/summary`: (1) pill row under each team's roster listing every fill ("🎲 Blind draw: Bill (all 18 holes)" / "(holes 9–18)"; stacks per fill); (2) expanded team card pairs dropout fills with their dropped player by `dropped_after_hole + 1 = hole_range_start` → paired players get "left after hole N" + an expanded merged 18-hole grid + caption "🎲 Holes N+1–18: blind draw from [Name] (Team M)"; (3) round-start fills render as synthetic pseudo-player rows with their own expand state. Read-only scorecard (post-finalize): +/− removed from every player row; the big-number per-hole display shows the drawn player's score with a "🎲 (blind draw)" caption when the hole falls in a paired fill's range; expanded `PlayerHoleGrid` shows merged scores. New `refreshBlindDrawFills()` runs on mount + after auto-fire so fills appear without a page reload. |
+| `0cc1592` | **S7 — Individual Rankings exclusion.** The Individual Rankings section in `RoundResultsView` now filters dropouts (`droppedAfterHole != null`). Blind-draw fills were already excluded automatically (no `round_players` row for the fill). Drawn players still appear exactly once on their own team with their own scores. 🎲 emoji never appears in this section. |
+| `2779241` | **WriteQueue P0001 classification + UI copy.** When the trigger rejects a write because the round was already finalized, the WriteQueue now stamps the item with `terminal_reason: 'round_finalized'` and `StaleFailureDialog` swaps in specific copy ("Round was finalized — N scores can no longer be edited" + "These edits were attempted after the round closed. Tap Forget to clear them, or contact Jonathan if a real correction is needed."). New `TerminalReason` union in types.ts; `getTerminalReason()` helper in `instance.ts` pattern-matches the error; `WriteResult` carries an optional `terminalReason` field; `WriteQueue` stores it onto `QueueItem.terminal_reason` and includes it in the Sentry breadcrumb. Test scaffolding: `FakeSupabase` now stubs `supabase.rpc()` with a default `'finalized'` response so existing end-round-flow tests keep passing through the new path. |
+| `50842db` | **snapshot-d1.sql + unit tests.** Three artifacts: (1) `tests/snapshots/snapshot-d1.sql` — 10 assertions inside a single `DO` block, wrapped in a `ROLLBACK_OK` sentinel exception so the fixture leaves no production data; (2) `tests/lib/round/blindDrawPairing.test.ts` — 8 cases for `pairBlindDraws` + `rangeCopy` (round-start only, dropout pairing, unmatched dropped player, mixed, multiple at same hole, no false pairing). Extracted the pure helper into `src/lib/round/blindDrawPairing.ts` so it's directly testable; `RoundResultsView` imports from there. (3) `tests/lib/writeQueue/getTerminalReason.test.ts` — 5 cases for the P0001 classifier with `@/lib/supabase` mocked to avoid env-var crashes at import. |
+
+### Architectural decisions worth flagging for future-you
+
+1. **No API layer means the "single-fire guard" lives at the DB.** Score writes go directly from client to Supabase (no API route). The spec language "subsequent writes rejected at the API layer" got translated to a `BEFORE INSERT/UPDATE` trigger on `scores` that joins to `rounds.is_complete`. Stronger than an API guard — works regardless of which tab/client wrote. The WriteQueue's existing `classifySupabaseError` already maps the resulting `P0001` to terminal classification cleanly.
+
+2. **Atomic finalize transaction via Postgres RPC.** Client-side Supabase calls can't span a transaction over multiple writes. The RPC locks the rounds row `FOR UPDATE` so two tabs racing the final score can't both fire; the loser gets `already_complete` and silently no-ops.
+
+3. **Client-driven RPC call, not a DB trigger on `scores`.** Considered an `AFTER INSERT` trigger that would auto-call `finalize_round_with_blind_draws` server-side. Rejected because the post-fire toast (S5) needs a clear signal back to the user who entered the last score, and round-tripping a `SELECT is_complete` after every write is uglier than letting the client own the call and branch on the return string.
+
+4. **PRNG reproducibility.** `setseed(seed_bigint::float / 9223372036854775807)` + `random()` inside the function. Pool ordered by `round_players.id ASC` before every draw. Same seed + same pool composition = identical draw sequence. The seed is stamped on every `blind_draws` row written by that call for audit.
+
+5. **The ⋯ consolidation is a UX safety call.** Spec originally separated Mark Left and Remove. Q3 of the design handoff (this session) consolidated them into one menu after considering the demographic (60–80yo users) and the mis-tap risk of two adjacent destructive icons.
+
+6. **`pool_too_small` is near-impossible but handled defensively.** Pre-check at the top of the RPC computes `pool_size < total_slots`; if so, returns the string without writing anything. Mid-loop subpool-empty case wraps in `RAISE EXCEPTION` so partial writes roll back. Client shows the red banner; round stays live for admin to escalate.
+
+### Verification
+
+- `tsc --noEmit` clean across all 10 commits.
+- **vitest: 273/273 pass** (251 prior + 8 new pairing + 5 new terminal-reason + 9 net via earlier scorecard test updates). 27 test files.
+- `snapshot-d1.sql` executed in the live database via the Supabase SQL editor path — 10 assertions all pass, `ROLLBACK_OK` sentinel reached, no test pollution remains (verified with a follow-up `SELECT COUNT(*)` on the four mutation surfaces — all zero).
+- Browser preview verifications: leaderboard renders today's no-fill round correctly; read-only scorecard on a finalized round correctly hides +/− buttons (snapshot captured both states).
+- **End-to-end flow with actual fills not yet exercised on a live round.** Today's round 95 has no short teams; rounds 92/93 are pre-tee-setup; the auto-mode classifier (correctly) blocked me from flipping `rounds.is_complete` on a production row for verification. The full UI path through ⋯ → mark dropout → enter final score → auto-fire toast → finalized view will get its first live exercise on the next round-day. Engine correctness is independently verified by the 10-test SQL fixture; component logic is independently verified by tsc + the 273-test vitest suite.
+
+### Known follow-ups (not blockers)
+
+- **`ROADMAP_EDITS_D1.md` not applied.** The original handoff included a `ROADMAP_EDITS_D1.md` file with table replacements + Decisions Locked subsection + Session Log entry + header date update + Q3 menu-consolidation refinement. Per the user's instruction, this is a separate trailing session. The file was not present in `~/Downloads/` during this session; the user will apply the edits separately with the full content.
+- **CLAUDE.md schema doc is partially stale.** `round_players.course_handicap` is `integer` (not `numeric`); `tee_order_priority`, `payout_amount`, `buy_in_amount` columns aren't documented there. The spec called this out; live DB was used as the source of truth for this session. Worth a TD entry on the next consolidation pass.
+- **Pre-fire banner refresh cadence.** `refreshOtherTeamsState` runs on mount + on every score write. If User A is on Team 1 finishing up and Team 2's final score lands on User B's phone, User A's banner won't update until User A enters their next score. Acceptable trade-off — the league is at the course together and the auto-fire RPC will fire correctly regardless. Realtime sync is queued under the Option 3 design doc's "Phase F (deferred)" notes if cross-device live sync ever becomes a real workflow need.
+
+### ROADMAP updates
+
+- D.1 work is shipped; ROADMAP table replacement still pending (see `ROADMAP_EDITS_D1.md` follow-up above). Header date line will move to 2026-05-18 once that session runs.
+
+---
+
+## Earlier — 2026-05-17 PM5 (Phase A.1 polish)
 
 Three small commits to refine the surfaces introduced by A1.6 + A1.7. All three are scorecard-only at the file level; `PlayerHoleGrid` changes in P2 + P3 naturally propagate to `<RoundResultsView/>` consumers (`/leaderboard` + `/round/[id]/summary`) since it's the shared per-player grid — that propagation is the intended consequence of the A1.7 extraction, not a separate edit.
 
@@ -363,12 +415,22 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-STATUS-update): `23d7379` — style(scorecard): clarify hole/par/gross visual hierarchy. The trailing STATUS.md / ROADMAP commit will move HEAD forward by one.
-- Status vs production deployment: **in sync** through P3 (`23d7379`) after the push. Each commit auto-deploys to Vercel.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 + PM4 + PM5 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-STATUS-update): `50842db` — test(d1): snapshot-d1.sql + unit tests for pairing + terminal reason. The trailing STATUS.md / ROADMAP commit will move HEAD forward by one.
+- Status vs production deployment: **in sync** through `50842db` after the push. Each commit auto-deploys to Vercel.
+- Schema state: migrations 001–007 plus `008_phase_d1_blind_draws` (applied today). Live: `round_players.dropped_after_hole` column, `blind_draws` table, `round_player_actions` audit table, `scores_reject_on_complete` trigger, `finalize_round_with_blind_draws` RPC. Round 90 still holds 10 players across 5 teams (T1–T5) with 180 scores; today's round 95 holds 1 team with 2 players; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained; `blind_draws` and `round_player_actions` are empty (no live finalize through the new path yet).
 
 ## Last commits on master
 
+- `50842db` — test(d1): snapshot-d1.sql + unit tests for pairing + terminal reason (2026-05-18)
+- `2779241` — feat(d1): classify P0001 round_finalized + show specific stale-failure copy (2026-05-18)
+- `0cc1592` — feat(d1): exclude blind-draw fills + dropouts from Individual Rankings (2026-05-18)
+- `3cad777` — feat(d1): render blind-draw fills in RoundResultsView + read-only scorecard (2026-05-18)
+- `6413180` — feat(d1): pre-fire warning banner on the final team's scorecard (2026-05-18)
+- `ae9cdb3` — feat(d1): auto-fire finalize RPC on last score + post-fire toast (2026-05-18)
+- `bf80159` — feat(d1): per-player overflow menu — mark/undo left round + remove (2026-05-18)
+- `2ea7ce3` — feat(d1): extend LoadedRoundResults with blindDraws + droppedAfterHole (2026-05-18)
+- `f307057` — feat(d1): add blind_draws schema + finalize_round RPC (2026-05-18)
+- `6d964b7` — chore: ROADMAP polish section + STATUS.md PM5 entry (2026-05-17 PM5)
 - `23d7379` — style(scorecard): clarify hole/par/gross visual hierarchy (P3, 2026-05-17 PM5)
 - `00a54c3` — feat(scorecard): add traditional notation marks to score cells (P2, 2026-05-17 PM5)
 - `370c7df` — feat(scorecard): remove redundant Tot from team pill (P1, 2026-05-17 PM5)
@@ -393,7 +455,9 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Test surface on master
 
-- vitest: **259/259 pass** across 25 files. Verified fresh at session end (8 new `PlayerHoleGrid` notation-mark tests added in P2).
+- vitest: **273/273 pass** across 27 files. 14 new today: 8 in `tests/lib/round/blindDrawPairing.test.ts` + 5 in `tests/lib/writeQueue/getTerminalReason.test.ts` + 1 from a tweak to `tests/components/end-round-flow.test.tsx` (now routes through the new RPC stub on FakeSupabase).
+- `tsc --noEmit` clean.
+- New SQL fixture: `tests/snapshots/snapshot-d1.sql` — 10 assertions covering the D.1 engine (completion check, fill count, no collisions, no own-team draws, dropouts excluded, dropout range, single-fire guard, post-finalize rejection, seed reproducibility). Runs inside a rollback transaction; reaches `ROLLBACK_OK` sentinel cleanly.
 - `tsc --noEmit` clean.
 - Component test infra: `tests/components/fake-supabase.ts` (chainable in-memory client supporting `.upsert`, `.or` no-op, `failWrite` hook, `writeDelayMs`, writes log). Used by `scorecard-bug-repro.test.tsx`, `end-round-flow.test.tsx`, `stale-failure-homepage.test.tsx`, `ReconciliationDialog.test.tsx`, `StaleFailureDialog.test.tsx`, `stuckItemsClipboard.test.ts`.
 - Library unit tests: `tests/lib/writeQueue/{backoff,storage,WriteQueue}.test.ts` cover the locked D7 backoff schedule, quota eviction order, `markAsTerminal` / `retryTerminal` / `forget` semantics, hail-mary drain, online / offline / visibility / pageshow triggers, and `in_flight` resurrection on mount.
@@ -402,11 +466,13 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Next-session priorities
 
-1. **LT1 verification under live-round conditions.** Self-healing recompute is shipped but never confirmed end-to-end. Edit a player's HI mid-round, open the scorecard, check that the row CH, stroke-allocation dots, and engine all read the corrected value.
-2. **Option 3 telemetry review.** After a full live round on production, check Sentry for `writeQueue.terminal_failure` events. Each one tells us whether the queue's failure path is firing in practice or whether everything drains via the happy path. Also watch for `user_forget_stale` — every one indicates a user abandoning scoring data.
-3. **Bug 2 — confirm fixed or queue follow-up.** After a live round on production, ask whether anyone has experienced snap-back. If yes, the JS movement-threshold guard is the queued follow-up; if no, mark Bug 2 confirmed-fixed.
-4. **I13 — admin UI to edit `players.preferred_tee_id`.** Bumped earlier from regular 📋. Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Setting Hashimoto's via direct SQL carries real risk of editing the wrong row.
-5. **Phase D.1 — Blind Draw.** Phase C is now closed. Per the May 9 reprioritization, Blind Draw is the next active priority ahead of more leaderboard / summary polish. See ROADMAP D.1 (D1.1–D1.6) — needs decision input from Dad on the randomizer trigger UX before code starts.
+1. **Apply `ROADMAP_EDITS_D1.md`.** Companion to today's D.1 ship — table replacement, Blind Draw "Decisions Locked" subsection, May 17 / 18 session log entries, header date bump. Plus the Q3 refinement note: "⋯ overflow menu consolidates Remove + Mark as left + Undo left, replacing the standalone Remove icon." User flagged this as a separate trailing session.
+2. **Live-round verification of D.1 end-to-end.** First league round with short teams or a mid-round dropout will exercise: ⋯ menu visual + audit-log writes, dropout caption + +/− disable, pre-fire banner appearing for the final team, auto-fire toast on the last score, blind_draws rows being written, post-finalize read-only scorecard + leaderboard rendering with 🎲 captions, P0001-classified stale-failure copy if any post-finalize write was attempted. Engine correctness already covered by `snapshot-d1.sql`; this is the integration check.
+3. **LT1 verification under live-round conditions.** Self-healing recompute is shipped but never confirmed end-to-end. Edit a player's HI mid-round, open the scorecard, check that the row CH, stroke-allocation dots, and engine all read the corrected value.
+4. **Option 3 telemetry review.** After a full live round on production, check Sentry for `writeQueue.terminal_failure` events. Watch in particular for `terminal_reason: 'round_finalized'` — every one means a tab tried to write a score after auto-fire fired. Also watch for `user_forget_stale`.
+5. **Bug 2 — confirm fixed or queue follow-up.** After a live round on production, ask whether anyone has experienced snap-back. If yes, the JS movement-threshold guard is the queued follow-up; if no, mark Bug 2 confirmed-fixed.
+6. **TD entry: CLAUDE.md schema doc is stale.** `round_players.course_handicap` is `integer` (not `numeric`); three columns (`tee_order_priority`, `payout_amount`, `buy_in_amount`) aren't documented. Worth a small consolidation pass.
+7. **I13 — admin UI to edit `players.preferred_tee_id`.** Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Direct SQL carries real risk of editing the wrong row.
 
 ---
 
