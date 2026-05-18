@@ -15,6 +15,13 @@ export type FormatConfig = {
   best_n?: number;
   point_values?: Record<string, number>;
   override_holes?: number[];
+  // D.1 hotfix (2026-05-18): team_numbers that have tapped "Submit Final
+  // Scores" on their scorecard. The blind-draw RPC is only called once
+  // every team in the round appears in this list. Replaces the previous
+  // auto-fire-on-last-score trigger, which raced A6's first-tap-commits-
+  // par behavior and was locking rounds before players could correct.
+  // Empty/undefined on rounds created before this hotfix → treat as [].
+  submitted_teams?: number[];
 };
 
 export type HoleInfo = {

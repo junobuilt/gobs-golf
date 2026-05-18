@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import DangerModal from "@/app/thomas-admin/components/DangerModal";
 import {
   computeCourseHandicap,
@@ -17,12 +17,6 @@ import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
-import type { QueueItem } from "@/lib/writeQueue";
-import ReconciliationDialog, {
-  type StuckScoreItem,
-} from "@/components/scorecard/ReconciliationDialog";
-import FinishingSpinner from "@/components/scorecard/FinishingSpinner";
-import { formatStuckItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 
@@ -64,7 +58,6 @@ const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 
 export default function ScorecardPage() {
   const params = useParams();
-  const router = useRouter();
   const roundId = params.id as string;
 
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
@@ -79,43 +72,28 @@ export default function ScorecardPage() {
   const [roundFormatConfig, setRoundFormatConfig] = useState<FormatConfig | null>(null);
   const [roundFormatLockedAt, setRoundFormatLockedAt] = useState<string | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [endRoundModal, setEndRoundModal] = useState(false);
   const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
-
-  // --- Phase D: End-Round reconciliation state ---
-  // null = no end-round flow active; otherwise the dialog/spinner phase.
-  const [endRoundPhase, setEndRoundPhase] = useState<
-    null | "draining" | "first-dialog" | "second-dialog"
-  >(null);
-  // Shown ~15s into the hail-mary drain — see D9.
-  const [showSkipDuringDrain, setShowSkipDuringDrain] = useState(false);
-  // Items surfaced in the reconciliation dialog (post-drain stuck writes).
-  const [stuckItems, setStuckItems] = useState<QueueItem[]>([]);
-  // "Copied ✓" feedback on the second-attempt dialog's clipboard button.
-  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-  // Disables dialog buttons while a retry drain is mid-flight.
-  const [retryBusy, setRetryBusy] = useState(false);
-  // Resolves the Promise.race when the user taps "Skip and finish" during
-  // the spinner. Set/cleared by the hail-mary orchestrator.
-  const skipResolveRef = useRef<(() => void) | null>(null);
-  // Date the round was played, surfaced in the clipboard payload.
   const [roundPlayedOn, setRoundPlayedOn] = useState<string | null>(null);
 
-  // D.1 — auto-finalize state. `finalizePending` gates the useEffect so we
-  // only attempt the RPC once per locally-complete state; it resets when the
-  // predicate flips back false (admin undoes a dropout, score gets cleared,
-  // etc.). `finalizedToast` shows S5's confirmation; `poolErrorVisible`
-  // shows the S4 defensive-abort message.
-  const [finalizePending, setFinalizePending] = useState(false);
-  const [autoFinalizing, setAutoFinalizing] = useState(false);
+  // D.1 hotfix (2026-05-18) — per-team submission gate replaces the original
+  // auto-fire-on-last-score trigger. Each team taps "Submit Final Scores"
+  // when their card is done; the blind-draw RPC fires only once every team
+  // in the round appears in `submittedTeams`. Old auto-fire raced A6's
+  // first-tap-commits-par on hole 18 and locked rounds before players
+  // could adjust.
+  const [submittedTeams, setSubmittedTeams] = useState<number[]>([]);
+  const [allTeamNumbers, setAllTeamNumbers] = useState<number[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitModal, setSubmitModal] = useState(false);
+  // S5 post-fire toast (still useful: when MY submit is the one that
+  // completes the set, I see the confirmation).
   const [finalizedToastVisible, setFinalizedToastVisible] = useState(false);
+  // S4 defensive abort — surfaced when finalize_round_with_blind_draws
+  // returns 'pool_too_small' on the all-teams-now-submitted attempt.
   const [poolErrorVisible, setPoolErrorVisible] = useState(false);
-  // D.1 S2 — true when every team other than this one has all required
-  // scores entered. Combined with "this team on hole 17/18" + round not yet
-  // complete, drives the yellow pre-fire banner. Refreshed on mount + on
-  // every score write + after dropout state changes.
-  const [otherTeamsComplete, setOtherTeamsComplete] = useState(false);
+  // Gates re-entry into the "all teams submitted → call RPC" effect.
+  // Reset by submittedTeams membership changes; not user-visible.
+  const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
 
   // D.1 S6 read-only scorecard. After finalize, dropout fills pair with the
   // dropped player by holeRangeStart = droppedAfterHole + 1. Keyed by
@@ -132,24 +110,14 @@ export default function ScorecardPage() {
   // Per-hole manual overrides: which 2 round_player ids count
   const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
 
-  // D.1 auto-fire effect. Locally compute completion; if the predicate flips
-  // true and we haven't already attempted, kick off the drain + RPC. The
-  // pending flag prevents the effect from re-entering during the async call.
-  // It resets when the predicate flips false again (admin undid a dropout,
-  // a score got cleared, etc.) so a later legitimate completion still fires.
+  // D.1 hotfix: trigger the finalize RPC any time submittedTeams (or the
+  // roster) changes such that every team has submitted. Multiple firing
+  // entry points (my submit, refresh-from-another-tab) collapse into this
+  // single effect.
   useEffect(() => {
-    if (isRoundComplete) return;
-    if (autoFinalizing) return;
-    const localComplete = isRoundLocallyComplete();
-    if (!localComplete) {
-      if (finalizePending) setFinalizePending(false);
-      return;
-    }
-    if (finalizePending) return;
-    setFinalizePending(true);
-    void autoFinalizeIfReady();
+    void tryFinalizeIfAllSubmitted();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scores, roundPlayers, isRoundComplete]);
+  }, [submittedTeams, allTeamNumbers, isRoundComplete]);
 
   // A1.7: player rows expanded to show the per-player hole-by-hole grid.
   // Multi-expand — tapping one player does not collapse the others.
@@ -175,12 +143,28 @@ export default function ScorecardPage() {
         .maybeSingle();
       const roundIsComplete = !!roundRow?.is_complete;
       if (roundRow) {
+        const cfg = (roundRow.format_config ?? null) as FormatConfig | null;
         setRoundFormat((roundRow.format ?? null) as Format | null);
-        setRoundFormatConfig((roundRow.format_config ?? null) as FormatConfig | null);
+        setRoundFormatConfig(cfg);
         setRoundFormatLockedAt((roundRow.format_locked_at ?? null) as string | null);
         setIsRoundComplete(roundIsComplete);
         setRoundPlayedOn((roundRow.played_on ?? null) as string | null);
+        // D.1 hotfix: read the team-submission gate. Undefined on rounds
+        // created before the hotfix → treated as [] (no one submitted yet).
+        setSubmittedTeams(Array.isArray(cfg?.submitted_teams) ? cfg!.submitted_teams! : []);
       }
+
+      // D.1 hotfix: load every team_number in the round so we can compute
+      // "this team is the last one not in submitted_teams" for the banner
+      // and "all teams now submitted → fire RPC" for the trigger.
+      const { data: allRps } = await supabase
+        .from("round_players")
+        .select("team_number")
+        .eq("round_id", roundId)
+        .gt("team_number", 0);
+      const teamSet = new Set<number>();
+      (allRps ?? []).forEach((r: any) => teamSet.add(r.team_number as number));
+      setAllTeamNumbers(Array.from(teamSet).sort((a, b) => a - b));
 
       const { data: teesData } = await supabase
         .from("tees")
@@ -307,9 +291,6 @@ export default function ScorecardPage() {
         setHolesByTee(holesMap);
       }
       setLoading(false);
-      // D.1 S2 — initial fetch for the pre-fire banner. Subsequent updates
-      // come from setScore / refreshDropoutStates.
-      void refreshOtherTeamsState();
       // D.1 S6 — load dropout fills for the read-only post-finalize view.
       // Safe to run pre-finalize too: returns no rows.
       void refreshBlindDrawFills();
@@ -423,10 +404,10 @@ export default function ScorecardPage() {
     // UPDATE guards with `WHERE format_locked_at IS NULL` as a safety net.
     void ensureFormatLocked();
 
-    // D.1 S2 — refresh other-teams completion so the pre-fire banner picks
-    // up another group finishing as we score. Cheap and async; doesn't
-    // block the score entry.
-    void refreshOtherTeamsState();
+    // D.1 hotfix: refresh submission state so the pre-fire banner picks up
+    // another group submitting on another device. Cheap single-row read;
+    // async, doesn't block the score entry.
+    void refreshSubmittedTeams();
   };
 
   const removePlayer = async (rpId: number) => {
@@ -449,10 +430,9 @@ export default function ScorecardPage() {
     setRoundPlayers(prev =>
       prev.map(p => ({ ...p, dropped_after_hole: map[p.id] ?? null }))
     );
-    // Dropout state of OTHER teams could have changed (admin marks a player
-    // dropped from the admin tab; refreshDropoutStates fires here). Re-
-    // evaluate the banner.
-    void refreshOtherTeamsState();
+    // Submission gate on another team could also have advanced (admin
+    // working on the admin tab from a different device). Re-sync.
+    void refreshSubmittedTeams();
   };
 
   // D.1: local mirror of the RPC's server-side completion check. Every non-
@@ -547,60 +527,80 @@ export default function ScorecardPage() {
     setFillsByRpId(next);
   };
 
-  // D.1 S2 — refetches completion state for every team OTHER than the one
-  // shown by this scorecard view. Cheap (~2 queries) and runs only on
-  // score-write or dropout-change events, so the once-mounted cost is bounded.
-  // When `teamFilter` is null (whole-round view), the banner does not apply
-  // and we leave the flag false.
-  const refreshOtherTeamsState = async () => {
-    if (!teamFilter) {
-      setOtherTeamsComplete(false);
-      return;
-    }
-    const myTeam = parseInt(teamFilter, 10);
-    const { data: rps } = await supabase
-      .from("round_players")
-      .select("id, team_number, dropped_after_hole")
-      .eq("round_id", roundId)
-      .gt("team_number", 0)
-      .neq("team_number", myTeam);
-    if (!rps || rps.length === 0) {
-      // Lone team — there's no "other" team to wait on. Banner doesn't apply.
-      setOtherTeamsComplete(false);
-      return;
-    }
-    const otherRpIds = (rps as any[]).map(r => r.id as number);
-    const { data: scoreRows } = await supabase
-      .from("scores")
-      .select("round_player_id, hole_number")
-      .in("round_player_id", otherRpIds);
-    const holesByRp: Record<number, Set<number>> = {};
-    (scoreRows ?? []).forEach((s: any) => {
-      if (!holesByRp[s.round_player_id]) holesByRp[s.round_player_id] = new Set();
-      holesByRp[s.round_player_id].add(s.hole_number);
-    });
-    const allComplete = (rps as any[]).every(rp => {
-      const required = rp.dropped_after_hole ?? 18;
-      const got = holesByRp[rp.id] ?? new Set<number>();
-      for (let h = 1; h <= required; h++) {
-        if (!got.has(h)) return false;
-      }
-      return true;
-    });
-    setOtherTeamsComplete(allComplete);
+  // D.1 hotfix: re-read `format_config.submitted_teams` from the DB so this
+  // scorecard picks up another team submitting on another device. Cheap
+  // single-row read. Called after every score write + after my own submit.
+  const refreshSubmittedTeams = async () => {
+    const { data } = await supabase
+      .from("rounds")
+      .select("format_config, is_complete")
+      .eq("id", roundId)
+      .maybeSingle();
+    if (!data) return;
+    const cfg = (data.format_config ?? null) as FormatConfig | null;
+    setSubmittedTeams(Array.isArray(cfg?.submitted_teams) ? cfg!.submitted_teams! : []);
+    if (data.is_complete) setIsRoundComplete(true);
   };
 
-  // D.1 auto-fire (S3 + S5). Drains the queue so the latest score lands
-  // server-side before the RPC reads it, then calls
-  // finalize_round_with_blind_draws. Branches:
-  //   'finalized'       → toast (S5), flip local is_complete
-  //   'already_complete' → silent (another tab raced and won)
-  //   'pool_too_small'  → red banner (S4 defensive abort)
-  //   'not_yet'         → silent (a write hasn't reached the DB yet; the
-  //                       useEffect will re-fire on the next state change)
-  const autoFinalizeIfReady = async () => {
-    if (autoFinalizing) return;
-    setAutoFinalizing(true);
+  // D.1 hotfix: submit MY team. Appends my team_number to
+  // format_config.submitted_teams (read-modify-write — race-prone in theory
+  // but the league plays in person and submissions are essentially serial).
+  // Drains the WriteQueue first so any in-flight scores land before the
+  // team is marked submitted. Subsequent all-teams-now-submitted RPC call
+  // is triggered by the useEffect below, which re-runs when submittedTeams
+  // changes.
+  const submitTeam = async (teamNum: number) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      try { await getWriteQueue().drain(); } catch { /* offline; continue */ }
+      // Read latest config (another team may have submitted between mount
+      // and now) then merge.
+      const { data: row } = await supabase
+        .from("rounds")
+        .select("format_config")
+        .eq("id", roundId)
+        .maybeSingle();
+      const currentCfg = (row?.format_config ?? roundFormatConfig ?? {}) as FormatConfig & Record<string, unknown>;
+      const existing: number[] = Array.isArray(currentCfg.submitted_teams)
+        ? currentCfg.submitted_teams as number[]
+        : [];
+      if (existing.includes(teamNum)) {
+        setSubmittedTeams(existing);
+        return;
+      }
+      const nextSubmitted = [...existing, teamNum].sort((a, b) => a - b);
+      const nextCfg = { ...currentCfg, submitted_teams: nextSubmitted };
+      const { error } = await supabase
+        .from("rounds")
+        .update({ format_config: nextCfg })
+        .eq("id", roundId);
+      if (error) {
+        console.warn("[D.1 hotfix] submit team update failed", error);
+        return;
+      }
+      setRoundFormatConfig(nextCfg as FormatConfig);
+      setSubmittedTeams(nextSubmitted);
+    } finally {
+      setSubmitting(false);
+      setSubmitModal(false);
+    }
+  };
+
+  // D.1 hotfix: fire the finalize RPC when every team in the round has
+  // submitted. Replaces the old auto-fire-on-last-score trigger. Each
+  // submit updates `submittedTeams`; this effect inspects the new value
+  // and, if every entry of `allTeamNumbers` is present, calls the RPC.
+  // RPC is concurrency-safe (SELECT ... FOR UPDATE on rounds), so multiple
+  // tabs detecting "all submitted" simultaneously is fine — one wins and
+  // returns 'finalized', the others return 'already_complete'.
+  const tryFinalizeIfAllSubmitted = async () => {
+    if (allSubmittedRpcInFlight) return;
+    if (isRoundComplete) return;
+    if (allTeamNumbers.length === 0) return;
+    const allIn = allTeamNumbers.every(t => submittedTeams.includes(t));
+    if (!allIn) return;
+    setAllSubmittedRpcInFlight(true);
     try {
       try { await getWriteQueue().drain(); } catch { /* offline; try anyway */ }
       const { data, error } = await supabase.rpc(
@@ -608,11 +608,7 @@ export default function ScorecardPage() {
         { p_round_id: Number(roundId) },
       );
       if (error) {
-        // Unexpected RPC failure. Don't redirect; surface in console for
-        // debugging. The next score-state change will retry.
-        console.warn("[D.1] finalize RPC error", error);
-        // Allow retry on next change.
-        setFinalizePending(false);
+        console.warn("[D.1 hotfix] finalize RPC error", error);
         return;
       }
       const status = (data ?? "") as string;
@@ -620,22 +616,21 @@ export default function ScorecardPage() {
         setIsRoundComplete(true);
         setFinalizedToastVisible(true);
         setTimeout(() => setFinalizedToastVisible(false), 4000);
-        // D.1 S6 — pick up freshly written blind_draws rows so the read-only
-        // view shows the fills without a page reload.
         void refreshBlindDrawFills();
       } else if (status === "already_complete") {
-        // Silent — but reflect the DB state locally.
         setIsRoundComplete(true);
         void refreshBlindDrawFills();
       } else if (status === "pool_too_small") {
         setPoolErrorVisible(true);
         setTimeout(() => setPoolErrorVisible(false), 6000);
       } else if (status === "not_yet") {
-        // Likely a write was still in flight. Let the effect retry.
-        setFinalizePending(false);
+        // Shouldn't happen — all teams submitted implies all scores in.
+        // Score still propagating from another tab maybe; the effect will
+        // retry when refreshSubmittedTeams next runs.
+        console.warn("[D.1 hotfix] all submitted but RPC said not_yet");
       }
     } finally {
-      setAutoFinalizing(false);
+      setAllSubmittedRpcInFlight(false);
     }
   };
 
@@ -806,200 +801,6 @@ export default function ScorecardPage() {
     setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
   };
 
-  // Phase D — End-Round reconciliation flow (D9 step 2 onward).
-  //
-  // Sequence per the design doc:
-  //   1. Show "Finishing up…" spinner.
-  //   2. Hail-mary drain (queue.drain({ ignoreBackoff: true })).
-  //   3. Race against a 30s timeout, with a "Skip and finish" button
-  //      surfacing at 15s.
-  //   4. If everything drained → finalize normally.
-  //   5. Otherwise → mark remaining items terminal, show reconciliation
-  //      dialog with [Retry sync] / [Skip and finish].
-  //   6. On Retry: retryTerminal + another hail-mary; if it works finalize,
-  //      else escalate to second-attempt dialog.
-  //
-  // The DangerModal confirmation step ("Finalize this round?") stays as
-  // the entry point — it's UX-protective against an accidental Finish-
-  // Round tap and consistent with the rest of the app's dangerous-action
-  // pattern. The "disable End Round button" requirement from D9 step 1
-  // is satisfied implicitly by the modal overlay (button is unreachable
-  // while any modal/spinner is up) and additionally by the existing
-  // `disabled={saving}` guard.
-
-  const queueItemsForThisRound = (states: QueueItem["state"][]) => {
-    return getWriteQueue()
-      .getItems()
-      .filter(
-        i =>
-          states.includes(i.state) && i.payload.round_id === Number(roundId),
-      );
-  };
-
-  const runHailMaryWithTimeout = async (
-    timeoutMs: number,
-    skipButtonDelayMs: number,
-  ): Promise<void> => {
-    setShowSkipDuringDrain(false);
-
-    const skipButtonTimer = setTimeout(
-      () => setShowSkipDuringDrain(true),
-      skipButtonDelayMs,
-    );
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<void>(resolve => {
-      timeoutHandle = setTimeout(resolve, timeoutMs);
-    });
-
-    let skipResolve!: () => void;
-    const skipPromise = new Promise<void>(r => {
-      skipResolve = r;
-    });
-    skipResolveRef.current = skipResolve;
-
-    try {
-      await Promise.race([
-        getWriteQueue().drain({ ignoreBackoff: true }),
-        timeoutPromise,
-        skipPromise,
-      ]);
-    } finally {
-      clearTimeout(skipButtonTimer);
-      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-      skipResolveRef.current = null;
-      setShowSkipDuringDrain(false);
-    }
-  };
-
-  const startEndRoundFlow = async () => {
-    setEndRoundModal(false);
-    setEndRoundPhase("draining");
-
-    await runHailMaryWithTimeout(30_000, 15_000);
-
-    const remaining = queueItemsForThisRound(["pending", "in_flight"]);
-    if (remaining.length === 0) {
-      await finalizeRound();
-      return;
-    }
-
-    // D9: items still failing get marked terminal_failure so Phase E can
-    // surface them on the next app open and so the dialog has stable
-    // items to show.
-    getWriteQueue().markAsTerminal(
-      remaining.map(i => i.id),
-      "end_round_timeout",
-    );
-    setStuckItems(queueItemsForThisRound(["terminal_failure"]));
-    setEndRoundPhase("first-dialog");
-  };
-
-  const handleRetrySync = async () => {
-    setRetryBusy(true);
-    setEndRoundPhase("draining");
-
-    const queue = getWriteQueue();
-    const ids = stuckItems.map(i => i.id);
-    await queue.retryTerminal(ids);
-    await runHailMaryWithTimeout(30_000, 15_000);
-
-    const stillStuck = queueItemsForThisRound(["pending", "in_flight"]);
-    if (stillStuck.length === 0) {
-      setRetryBusy(false);
-      await finalizeRound();
-      return;
-    }
-    // Still failing — re-mark and escalate to the second-attempt dialog.
-    queue.markAsTerminal(
-      stillStuck.map(i => i.id),
-      "end_round_retry_timeout",
-    );
-    setStuckItems(queueItemsForThisRound(["terminal_failure"]));
-    setRetryBusy(false);
-    setEndRoundPhase("second-dialog");
-  };
-
-  const handleSkipAndFinalize = async () => {
-    setEndRoundPhase(null);
-    await finalizeRound();
-  };
-
-  const handleCopyDetails = async () => {
-    const text = formatStuckItemsForClipboard(
-      stuckItems.map(i => ({
-        hole_label: i.display.hole_label,
-        player_name: i.display.player_name,
-        strokes: i.payload.strokes,
-      })),
-      roundId,
-      roundPlayedOn,
-    );
-    try {
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText === "function"
-      ) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // Fallback for older browsers / iOS Safari without clipboard
-        // permission. Best-effort: render the text in a textarea, select,
-        // execCommand("copy"). Some browsers no longer support this — if
-        // it fails the user can still read the dialog list directly.
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand?.("copy");
-        document.body.removeChild(ta);
-      }
-      setCopyState("copied");
-      setTimeout(() => setCopyState("idle"), 2000);
-    } catch {
-      // If the copy genuinely failed we leave copyState as idle so the
-      // user sees no false confirmation. They can still read the list.
-    }
-  };
-
-  // D.1: replaces the pre-D.1 client-side completion check + manual
-  // `UPDATE rounds SET is_complete = true`. The RPC owns completion (which
-  // is now stricter: every non-dropped player needs every required hole),
-  // randomization, and the atomic flip. Branches:
-  //   'finalized' / 'already_complete' → redirect to summary
-  //   'pool_too_small'                  → red banner, stay on scorecard
-  //   'not_yet'                          → stay on scorecard (missing scores)
-  const finalizeRound = async () => {
-    setSaving(true);
-
-    const { data, error } = await supabase.rpc(
-      "finalize_round_with_blind_draws",
-      { p_round_id: Number(roundId) },
-    );
-
-    setSaving(false);
-    setEndRoundPhase(null);
-
-    if (error) {
-      console.warn("[D.1] manual finalize RPC error", error);
-      return;
-    }
-    const status = (data ?? "") as string;
-    if (status === "pool_too_small") {
-      setPoolErrorVisible(true);
-      setTimeout(() => setPoolErrorVisible(false), 6000);
-      return;
-    }
-    if (status === "not_yet") {
-      // Missing scores. Stay on the scorecard so the user can fill them.
-      return;
-    }
-    // finalized | already_complete → both mean the round is done in the DB.
-    router.push(`/round/${roundId}/summary`);
-  };
-
   // --- LOADING ---
   if (loading) {
     return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
@@ -1156,6 +957,22 @@ export default function ScorecardPage() {
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
+  // D.1 hotfix — derived booleans for the submit-gate UI:
+  //   myTeamSubmitted: my team is locked (read-only) but round may not be
+  //                    finalized yet (other teams still scoring).
+  //   isLocked:        any reason to render fully read-only (round-finalized
+  //                    OR my team submitted). Used to gate +/− buttons and
+  //                    the ⋯ overflow menu.
+  //   canSubmit:       my team has all required holes scored and hasn't yet
+  //                    submitted. Enables the Submit Final Scores button.
+  const myTeamNum = teamFilter ? parseInt(teamFilter, 10) : null;
+  const myTeamSubmitted = myTeamNum != null && submittedTeams.includes(myTeamNum);
+  const isLocked = isRoundComplete || myTeamSubmitted;
+  const canSubmit =
+    !isLocked &&
+    myTeamNum != null &&
+    isRoundLocallyComplete();
+
   return (
     <div style={{ padding: "15px", maxWidth: "500px", margin: "0 auto", fontFamily: "sans-serif", paddingBottom: "160px" }}>
       {/* Header */}
@@ -1177,37 +994,63 @@ export default function ScorecardPage() {
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
           PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS
         </p>
+        {/* D.1 hotfix: lock indicator near the top so it reads before any
+            score row. Renders for both submitted-but-round-live and
+            round-finalized states. */}
+        {myTeamSubmitted && (
+          <div style={{
+            marginTop: 8,
+            display: "inline-block",
+            background: "#dcfce7",
+            color: "#166534",
+            border: "1px solid #bbf7d0",
+            padding: "4px 12px",
+            borderRadius: 999,
+            fontSize: "0.72rem",
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}>
+            Final scores submitted
+          </div>
+        )}
       </div>
 
-      {/* D.1 S2 — pre-fire warning banner. Only on team-filtered scorecards
-          (?team=N) where every OTHER team is complete and this team has at
-          least one player scored on hole 17 or 18. Disappears the moment
-          the round actually finalizes or another team becomes incomplete. */}
-      {!isRoundComplete && !!teamFilter && otherTeamsComplete && (
-        roundPlayers.some(rp => {
-          const rpScores = scores[rp.id] ?? {};
-          return rpScores[17] != null || rpScores[18] != null;
-        })
-      ) && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            background: "#fef9c3",
-            border: "1px solid #fde68a",
-            borderRadius: 10,
-            padding: "10px 14px",
-            marginBottom: 12,
-            fontSize: "0.82rem",
-            color: "#713f12",
-            fontWeight: 600,
-            lineHeight: 1.45,
-          }}
-        >
-          Last team finishing up. Round will finalize when hole 18 is scored —
-          check earlier holes for typos first.
-        </div>
-      )}
+      {/* D.1 hotfix pre-fire banner — render when this team is the last
+          one not in submitted_teams AND has all 18 holes scored. The Submit
+          button below the player rows is the CTA; the banner just nudges
+          the final group. NOT shown when this team is still mid-round. */}
+      {(() => {
+        if (isRoundComplete) return null;
+        if (!teamFilter) return null;
+        const myTeam = parseInt(teamFilter, 10);
+        if (submittedTeams.includes(myTeam)) return null;
+        if (allTeamNumbers.length === 0) return null;
+        const everyOtherSubmitted = allTeamNumbers
+          .filter(t => t !== myTeam)
+          .every(t => submittedTeams.includes(t));
+        if (!everyOtherSubmitted) return null;
+        if (!isRoundLocallyComplete()) return null;
+        return (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              background: "#fef9c3",
+              border: "1px solid #fde68a",
+              borderRadius: 10,
+              padding: "10px 14px",
+              marginBottom: 12,
+              fontSize: "0.82rem",
+              color: "#713f12",
+              fontWeight: 600,
+              lineHeight: 1.45,
+            }}
+          >
+            All other teams have submitted. Tap Submit Final Scores when ready.
+          </div>
+        );
+      })()}
 
       {/* B3.3: All-scores-count banner — only fires for best-N formats since
           Stableford ignores override_holes (every player already contributes). */}
@@ -1435,7 +1278,7 @@ export default function ScorecardPage() {
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }} onClick={e => e.stopPropagation()}>
-                {!isRoundComplete && (
+                {!isLocked && (
                   <button
                     onClick={() => {
                       if (isPostDropHole) return;
@@ -1504,7 +1347,7 @@ export default function ScorecardPage() {
                   roundPlayerId={rp.id}
                   playerName={rp.display_name}
                   droppedAfterHole={rp.dropped_after_hole}
-                  isRoundComplete={isRoundComplete}
+                  isRoundComplete={isLocked}
                   surface="scorecard"
                   onChanged={refreshDropoutStates}
                   onRemove={() => setRemovePlayerModal(rp.id)}
@@ -1578,7 +1421,10 @@ export default function ScorecardPage() {
         </p>
       )}
 
-      {/* Navigation buttons */}
+      {/* Navigation buttons. D.1 hotfix: hole-18 no longer shows a
+          "Finish Round" button — finalize happens through the Submit
+          Final Scores section below, which gates on the completion
+          predicate AND requires explicit user intent. */}
       <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
         <button onClick={() => setCurrentHole(h => Math.max(1, h - 1))} disabled={currentHole === 1}
           style={{
@@ -1588,44 +1434,61 @@ export default function ScorecardPage() {
           }}>
           ← Back
         </button>
-        {currentHole < 18 ? (
-          <button onClick={() => setCurrentHole(h => h + 1)} style={{
-            flex: 2, padding: "18px", borderRadius: "12px", background: "#0c3057",
-            color: "white", border: "none", fontWeight: 900, cursor: "pointer", fontFamily: "sans-serif",
-          }}>
-            Next Hole →
-          </button>
-        ) : (
-          <button onClick={() => setEndRoundModal(true)} disabled={saving} style={{
-            flex: 2, padding: "18px", borderRadius: "12px", background: "#b45309",
-            color: "white", border: "none", fontWeight: 900, cursor: "pointer",
-            opacity: saving ? 0.6 : 1, fontFamily: "sans-serif",
-          }}>
-            {saving ? "Saving…" : "Finish Round ✓"}
-          </button>
-        )}
+        <button onClick={() => setCurrentHole(h => Math.min(18, h + 1))} disabled={currentHole === 18} style={{
+          flex: 2, padding: "18px", borderRadius: "12px",
+          background: currentHole === 18 ? "#94a3b8" : "#0c3057",
+          color: "white", border: "none", fontWeight: 900,
+          cursor: currentHole === 18 ? "default" : "pointer",
+          opacity: currentHole === 18 ? 0.6 : 1,
+          fontFamily: "sans-serif",
+        }}>
+          Next Hole →
+        </button>
       </div>
 
-      {/* End round early link */}
-      {currentHole < 18 && (
-        <div style={{ textAlign: "center", marginTop: "20px" }}>
+      {/* D.1 hotfix: Submit Final Scores. Per-team commit gate that
+          replaced the old auto-fire-on-last-score trigger. Disabled until
+          this team's completion predicate is true; tap opens a DangerModal
+          (1.5s confirm delay, same as the rest of the app). After submit
+          the button hides entirely — section disappears for the rest of
+          this team's session. Only renders on team-filtered scorecard
+          views (?team=N); the whole-round view has no team to submit. */}
+      {teamFilter && !isRoundComplete && !myTeamSubmitted && (
+        <div style={{ marginTop: "16px" }}>
           <button
-            onClick={() => setEndRoundModal(true)}
-            style={{ background: "none", border: "none", color: "#94a3b8", fontSize: "0.78rem", cursor: "pointer", textDecoration: "underline" }}
+            type="button"
+            onClick={() => setSubmitModal(true)}
+            disabled={!canSubmit || submitting}
+            style={{
+              width: "100%", padding: "18px", borderRadius: "12px",
+              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
+              color: "white", border: "none", fontWeight: 900,
+              fontSize: "1rem",
+              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
+              fontFamily: "sans-serif",
+            }}
           >
-            End round early
+            {submitting ? "Submitting…" : "Submit Final Scores"}
           </button>
+          {!canSubmit && (
+            <p style={{
+              margin: "8px 0 0", textAlign: "center",
+              fontSize: "0.72rem", color: "#94a3b8",
+            }}>
+              Available once every player on this team has scores entered.
+            </p>
+          )}
         </div>
       )}
 
-      {endRoundModal && (
+      {submitModal && myTeamNum != null && (
         <DangerModal
-          title="Finalize this round?"
-          description="This will save all scores. If all teams have completed 18 holes, the round will be marked complete."
-          cannotBeUndone={false}
-          confirmLabel="Finish Round"
-          onConfirm={startEndRoundFlow}
-          onCancel={() => setEndRoundModal(false)}
+          title={`Submit Team ${myTeamNum}'s final scores?`}
+          description="You won't be able to edit these scores after submitting."
+          cannotBeUndone
+          confirmLabel="Submit"
+          onConfirm={() => void submitTeam(myTeamNum)}
+          onCancel={() => setSubmitModal(false)}
         />
       )}
 
@@ -1637,34 +1500,6 @@ export default function ScorecardPage() {
           confirmLabel="Remove from round"
           onConfirm={() => removePlayer(removePlayerModal)}
           onCancel={() => setRemovePlayerModal(null)}
-        />
-      )}
-
-      {/* Phase D — hail-mary spinner + reconciliation dialogs. */}
-      {endRoundPhase === "draining" && (
-        <FinishingSpinner
-          showSkipButton={showSkipDuringDrain}
-          onSkip={() => skipResolveRef.current?.()}
-        />
-      )}
-      {endRoundPhase === "first-dialog" && (
-        <ReconciliationDialog
-          variant="first-attempt"
-          items={stuckItemsToDialogItems(stuckItems)}
-          onRetry={handleRetrySync}
-          onSkip={handleSkipAndFinalize}
-          busy={retryBusy}
-        />
-      )}
-      {endRoundPhase === "second-dialog" && (
-        <ReconciliationDialog
-          variant="second-attempt"
-          items={stuckItemsToDialogItems(stuckItems)}
-          onRetry={handleRetrySync}
-          onSkip={handleSkipAndFinalize}
-          onCopyDetails={handleCopyDetails}
-          copyState={copyState}
-          busy={retryBusy}
         />
       )}
 
@@ -1727,10 +1562,3 @@ export default function ScorecardPage() {
   );
 }
 
-function stuckItemsToDialogItems(items: QueueItem[]): StuckScoreItem[] {
-  return items.map(i => ({
-    player_name: i.display.player_name,
-    hole_label: i.display.hole_label,
-    strokes: i.payload.strokes,
-  }));
-}
