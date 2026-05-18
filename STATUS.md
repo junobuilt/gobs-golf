@@ -2,12 +2,61 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 PM2 (end of Phase C PR 3 session)
-**Session purpose:** Ship Phase C PR 3 — C4 + C5 + C6. Rebuild the round summary page (`/round/[id]/summary`) as an all-teams ranked view with two-level tap-to-expand drill-down, replacing the prior raw-absolute-scores view. Reuses `rankTeams` (PR 2), `formatTeamTotal` (PR 1), `PlayerHoleGrid` (A1.7), `FormatChip`. Phase C closes with this PR.
+**Last updated:** 2026-05-17 PM3 (end of Individual Rankings restoration)
+**Session purpose:** Restore the Individual Rankings cross-team table on `/round/[id]/summary`, which had been removed by PM2's PR 3 rebuild. Read-only flat list of every player across every team, ranked by net (best-N) or points (Stableford), tie-skip semantics matching `rankTeams`, rendered below all team cards.
 
 ---
 
-## Today's work — 2026-05-17 PM2 (Phase C PR 3)
+## Today's work — 2026-05-17 PM3 (Individual Rankings restoration)
+
+### Individual Rankings section restored on /round/[id]/summary
+
+**Change in `src/app/round/[id]/summary/page.tsx`** — `PlayerRow` type gains a new `netTotal: number` field (absolute net stroke total for best-N via `engine.perPlayer.netTotal`; equals `netValue` / points sum for Stableford). The in-team-expanded player row still displays `netValue` (signed delta or pts) so the colored performance indicator is preserved — `netTotal` is solely for the new cross-team ranking section.
+
+**New `IndividualRankings` component:** flattens every player across every team (filtered `holesPlayed > 0`), runs decorate-sort-undecorate + skip-tie rank assignment inlined (same pattern as `rankTeams` in `src/lib/leaderboard/rank.ts`, not extracted to a shared helper since the data shape differs — player rows vs team rows — and there are no other callers yet to justify a generic `rankBy`). Sort direction: best-N ascending (lowest net wins), Stableford descending (highest points wins). Rendered as a single white card directly below the last team card, inside the same `bgWarm` body container.
+
+**Row layout:**
+- Rank number left-aligned in a fixed 28px column; 1st place in gold `#d4a017` (matches team rank badge color), others in `C.textSecondary` `#6b6b6b`.
+- Player name (700 weight) + team name (muted 11px) stacked.
+- Best-N: `Gross [N]` + `Net [N]` side-by-side on the right with small uppercase labels — mirrors the in-team-expanded layout but shows absolute totals (since "lowest net wins" is the only cross-team signal).
+- Stableford: `[N] pts` in blue (`C.accentBlue`) on the right.
+- Subtitle under the section header: "Sorted by net score · lowest wins" or "Sorted by total points · highest wins" depending on format.
+
+**Behavior:**
+- Read-only — no expand, no tap actions.
+- Players with `holesPlayed === 0` are excluded (unplayed rows would rank above played rows under ascending sort).
+- Tie handling: tied entries share a rank, the next rank is skipped (1, 2, 2, 4) — same convention as `rankTeams`.
+- Uses already-loaded data — zero new Supabase queries.
+
+**Why inline the rank logic instead of extracting a shared helper:**
+Spec offered either option. Considered extracting a generic `rankByTotal<T>(items, totalFn, ascending)` helper that both `rankTeams` and this section could share, but:
+1. Refactoring `rankTeams` to use it would touch a tested file purely for de-duplication — anti-drift per CLAUDE.md ("Don't refactor unrelated code, even in files being touched").
+2. Adding a generic helper without converting `rankTeams` leaves the same pattern in two places anyway.
+3. Player ranking and team ranking have slightly different sort-direction semantics (player uses `netTotal`, team uses `total`) — the wrapping for a generic call would be similar in size to inlining.
+
+Trade-off accepted: ~15 lines of inlined pattern over a marginal extraction. Revisit when a third use case appears.
+
+**Confessed scope deviations:**
+- Section uses absolute net stroke total for best-N ranking, not the net-vs-par-of-played delta used inside the team-expanded row. Absolute net is the canonical "who shot the best score" interpretation and matches the previous summary's `gross_total`-based sort. For incomplete rounds where players have different `holesPlayed` counts, the absolute-net comparison favors lower-hole-played players (fewer strokes accrued), but this is also true of the original implementation and is arguably more honest than ranking by delta.
+- The previous summary's table-based markup is gone — replaced with a card layout that matches the rest of the rebuilt summary's visual language (rounded white card on warm background, border, divider lines between rows).
+
+**Verification:**
+- `tsc --noEmit` clean.
+- **251/251 unit tests pass** across 25 files. No new tests added — the section is a pure render over already-tested `PlayerRow` data + an inlined sort/rank pattern matching `rankTeams`'s tested semantics.
+- Browser preview on iPhone SE (375 × 812):
+  - **Round 90 (Best Ball, 5 teams, 10 players):** all 10 players listed, sorted ascending by net: Wayne H 67, Don D 71, Kevin I 72, Ward C 74, Wayne V 74, Thomas Y 76, Dan G 76, Dan S 77, Greg W 82, Bob B 88. Tie-skip ranks verified: Ward C / Wayne V both rank 4 → next is rank 6; Thomas Y / Dan G both rank 6 → next is rank 8. 1st-place rank "1" computed-style `rgb(212,160,23)` = gold `#d4a017`; rank "2" computed-style `rgb(107,107,107)` = `#6b6b6b` secondary text. Section card sits below the last team card via document flow (no positioning hacks).
+  - **Round 95 (Best Ball, 1 team, 2 players):** 2 players listed (Thomas Y 70, Don D 79), ranked 1–2.
+  - Zero console errors.
+- Stableford branch (descending sort + "N pts" display) not exercised live in this session — no Stableford round in the database to test against. The branch is a thin variant: same flatten + filter + sort pattern with `ascending` flipped and a different display block. Engine's per-player Stableford points roll-up is already covered by the 25-test `engine-stableford.test.ts` suite, and the formatting matches `formatTeamTotal`'s Stableford convention (which has its own 5-test suite). Confident in code-review of the branch.
+
+**ROADMAP updated:**
+- C5 row gets a "**Update 2026-05-17 PM3**" annotation describing the restoration.
+- New `May 17 (PM3)` session log entry appended above the `May 17 (PM2)` PR 3 entry.
+- Top-of-file last-updated banner refreshed.
+
+---
+
+## Earlier today — 2026-05-17 PM2 (Phase C PR 3)
 
 ### Phase C PR 3 shipped — C4 + C5 + C6
 
@@ -198,13 +247,14 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-PR-3-commit): `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows. Phase C PR 3 commit + this STATUS.md update will move HEAD forward.
-- Status vs production deployment: **in sync** at A1.7 HEAD. Phase C PR 3 will auto-deploy to Vercel on push.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-PM3-commit): `d322a30` — feat(summary): Phase C PR 3. PM3 Individual Rankings restoration commit + this STATUS.md update will move HEAD forward.
+- Status vs production deployment: **in sync** at PR 3 HEAD. PM3 restoration will auto-deploy to Vercel on push.
+- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
-- (pending) — feat(summary): Phase C PR 3 — ranked all-teams summary with F9/B9 + two-level drill-down (2026-05-17 PM2)
+- (pending) — feat(summary): restore Individual Rankings cross-team section (2026-05-17 PM3)
+- `d322a30` — feat(summary): Phase C PR 3 — ranked all-teams summary with F9/B9 + two-level drill-down (2026-05-17 PM2)
 - `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows (2026-05-17 PM)
 - `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (2026-05-17)
 - `03828ff` — chore: STATUS.md — Option 3 phases A–E + Bug 1 resolution (2026-05-13)

@@ -55,6 +55,11 @@ type PlayerRow = {
   grossTotal: number;
   // For best-N: net delta vs par-of-played (signed). For Stableford: absolute points.
   netValue: number;
+  // Best-N: absolute net stroke total (engine `perPlayer.netTotal`). Stableford:
+  // same as `netValue` (points total). Used by the cross-team Individual
+  // Rankings section for sort + display; the in-team-expanded row keeps
+  // showing `netValue` so the colored delta is preserved.
+  netTotal: number;
   holesPlayed: number;
   // 18-length arrays. scores: strokes or null. par: hole par (uses player tee).
   scores: (number | null)[];
@@ -322,11 +327,17 @@ export default function RoundSummaryPage() {
           const displayName =
             playerRow?.display_name || playerRow?.full_name || "?";
 
+          // netTotal: absolute net stroke total for best-N; points sum for
+          // Stableford (same value as netValue there). Drives the cross-team
+          // Individual Rankings section below.
+          const netTotal = isStableford ? netValue : netTotalStrokes;
+
           return {
             rpId: rp.id as number,
             displayName,
             grossTotal,
             netValue,
+            netTotal,
             holesPlayed,
             scores,
             par,
@@ -446,18 +457,21 @@ function SummaryView({
             No team scores yet.
           </div>
         ) : (
-          state.teams.map(team => (
-            <TeamCard
-              key={team.id}
-              team={team}
-              format={state.format}
-              isFirst={team.rank === 1}
-              isTeamExpanded={expandedTeams.has(team.id)}
-              expandedPlayers={expandedPlayers}
-              onToggleTeam={onToggleTeam}
-              onTogglePlayer={onTogglePlayer}
-            />
-          ))
+          <>
+            {state.teams.map(team => (
+              <TeamCard
+                key={team.id}
+                team={team}
+                format={state.format}
+                isFirst={team.rank === 1}
+                isTeamExpanded={expandedTeams.has(team.id)}
+                expandedPlayers={expandedPlayers}
+                onToggleTeam={onToggleTeam}
+                onTogglePlayer={onTogglePlayer}
+              />
+            ))}
+            <IndividualRankings teams={state.teams} format={state.format} />
+          </>
         )}
       </div>
     </div>
@@ -728,6 +742,163 @@ function PlayerSection({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+// Cross-team flat list of every player, ranked by net (best-N: ascending,
+// lowest wins) or by points (Stableford: descending, highest wins). Tie
+// handling mirrors rankTeams in `src/lib/leaderboard/rank.ts`: tied entries
+// share the same rank, the next position is then skipped (1, 2, 2, 4).
+// Read-only — no expand, no tap actions.
+function IndividualRankings({
+  teams,
+  format,
+}: {
+  teams: ReadonlyArray<RankedTeam<TeamRow>>;
+  format: Format;
+}) {
+  const isStableford = isStablefordFormat(format);
+
+  // Flatten all players (filter holesPlayed > 0 — pre-round/unplayed rows
+  // would otherwise rank above played rows under ascending sort).
+  const rows = teams.flatMap(team =>
+    team.players
+      .filter(p => p.holesPlayed > 0)
+      .map(p => ({
+        rpId: p.rpId,
+        displayName: p.displayName,
+        teamName: team.name,
+        grossTotal: p.grossTotal,
+        netTotal: p.netTotal,
+      })),
+  );
+
+  if (rows.length === 0) return null;
+
+  // Decorate-sort-undecorate (same pattern as rankTeams) so tie ordering is
+  // stable on the input flatten order.
+  const decorated = rows.map((row, idx) => ({ row, idx }));
+  decorated.sort((a, b) => {
+    const diff = isStableford
+      ? b.row.netTotal - a.row.netTotal
+      : a.row.netTotal - b.row.netTotal;
+    if (diff !== 0) return diff;
+    return a.idx - b.idx;
+  });
+
+  // Skip-tie rank assignment.
+  const ranked = decorated.map(({ row }, position) => {
+    const prev = position > 0 ? decorated[position - 1].row : null;
+    const isTieWithPrev = prev !== null && prev.netTotal === row.netTotal;
+    return { ...row, position, isTieWithPrev };
+  });
+  let lastRank = 0;
+  const withRank = ranked.map((row, i) => {
+    const rank = row.isTieWithPrev ? lastRank : i + 1;
+    lastRank = rank;
+    return { ...row, rank };
+  });
+
+  return (
+    <div style={{
+      background: "white",
+      border: `1px solid ${C.cardBorder}`,
+      borderRadius: 12,
+      marginTop: 16,
+      overflow: "hidden",
+    }}>
+      <div style={{
+        padding: "14px 14px 10px 14px",
+        borderBottom: `1px solid ${C.divider}`,
+      }}>
+        <div style={{
+          fontSize: 16, fontWeight: 700, color: C.textPrimary,
+        }}>
+          Individual Rankings
+        </div>
+        <div style={{
+          fontSize: 11, color: C.textMuted,
+          marginTop: 2, letterSpacing: "0.3px",
+        }}>
+          {isStableford
+            ? "Sorted by total points · highest wins"
+            : "Sorted by net score · lowest wins"}
+        </div>
+      </div>
+      {withRank.map((row, i) => (
+        <div
+          key={row.rpId}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 14px",
+            borderBottom: i === withRank.length - 1 ? "none" : `1px solid ${C.divider}`,
+          }}
+        >
+          <div style={{
+            width: 28, textAlign: "right",
+            fontSize: 14, fontWeight: 700,
+            color: row.rank === 1 ? C.goldFirst : C.textSecondary,
+            flexShrink: 0,
+          }}>
+            {row.rank}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 14, fontWeight: 600, color: C.textPrimary,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              lineHeight: 1.2,
+            }}>
+              {row.displayName}
+            </div>
+            <div style={{
+              fontSize: 11, color: C.textMuted, marginTop: 2,
+            }}>
+              {row.teamName}
+            </div>
+          </div>
+          {isStableford ? (
+            <div style={{
+              textAlign: "right",
+              fontSize: 16, fontWeight: 700, color: C.accentBlue,
+              minWidth: 60,
+            }}>
+              {row.netTotal} pts
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{
+                  fontSize: 10, color: C.textMuted,
+                  textTransform: "uppercase", letterSpacing: "0.3px", fontWeight: 600,
+                }}>
+                  Gross
+                </div>
+                <div style={{
+                  fontSize: 16, fontWeight: 700, color: C.textPrimary, lineHeight: 1.1,
+                }}>
+                  {row.grossTotal}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", minWidth: 40 }}>
+                <div style={{
+                  fontSize: 10, color: C.textMuted,
+                  textTransform: "uppercase", letterSpacing: "0.3px", fontWeight: 600,
+                }}>
+                  Net
+                </div>
+                <div style={{
+                  fontSize: 16, fontWeight: 700, color: C.textPrimary, lineHeight: 1.1,
+                }}>
+                  {row.netTotal}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
