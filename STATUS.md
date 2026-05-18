@@ -2,12 +2,65 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 PM3 (end of Individual Rankings restoration)
-**Session purpose:** Restore the Individual Rankings cross-team table on `/round/[id]/summary`, which had been removed by PM2's PR 3 rebuild. Read-only flat list of every player across every team, ranked by net (best-N) or points (Stableford), tie-skip semantics matching `rankTeams`, rendered below all team cards.
+**Last updated:** 2026-05-17 PM4 (end of `<RoundResultsView/>` extraction session)
+**Session purpose:** Extract the round-results surface (round-meta header + ranked team cards with drill-down + Individual Rankings) into a shared `<RoundResultsView/>` component backed by a shared `loadRoundResults` loader, and wire it into both `/round/[id]/summary` and `/leaderboard` so tapping a team on the leaderboard drills in inline (no extra page navigation). Past rounds still route through `/round/[id]/summary` via the not-yet-built History tab.
 
 ---
 
-## Today's work — 2026-05-17 PM3 (Individual Rankings restoration)
+## Today's work — 2026-05-17 PM4 (shared RoundResultsView extraction)
+
+### Shared round-results surface
+
+**New file `src/lib/round/results.ts`** — pure async loader + types:
+- Types: `PlayerRow`, `TeamRow`, `LoadedRoundResults`, `LoadRoundResultsOutcome`.
+- `loadRoundResults(roundId): Promise<LoadRoundResultsOutcome>` — performs the Supabase round / round_players / scores / holes queries, computes engine results, derives F9/B9 leg splits, rolls up per-player Stableford points (when applicable), ranks teams via `rankTeams`, and returns the full shape both pages need.
+- Outcome variants: `{status: "ok", data: LoadedRoundResults}` / `{status: "missing_round"}` / `{status: "missing_format"}`. Page-level `useEffect` wraps the call with a `cancelled` flag.
+
+**New file `src/components/round/RoundResultsView.tsx`** — visual component:
+- Props: `data: LoadedRoundResults`. That's it. The component is fully driven by the loader output.
+- Renders: round-meta header (date "Weekday · Month Day", read-only `FormatChip`, course name "Semiahmoo Golf & Country Club", status tag "Final" / "In progress · thru N"), then a warm-bg body section with ranked team cards (gold rank-1 badge, navy others, F9/B9 row, format-aware total color) and the Individual Rankings section below.
+- Owns the multi-expand state via two internal `useState<Set<number>>` for `expandedTeams` (keyed by `team_number`) and `expandedPlayers` (keyed by `round_player.id`). Same toggle semantics as the previous summary page.
+- TeamCard / PlayerSection / IndividualRankings / RankBadge / Chevron are all internal helpers — not exported. Lifting them out for reuse is not yet warranted.
+
+**Refactored `src/app/round/[id]/summary/page.tsx`** — ~770 lines → ~60 lines:
+- `useEffect` calls `loadRoundResults(roundIdNum)` and stores the outcome.
+- Loading / `missing_round` / `missing_format` outcomes render dedicated centered messages.
+- `ok` outcome renders a wrapper div (maxWidth 600, font, paddingBottom 140 for the bottom nav) with a small "← Back" link strip above `<RoundResultsView data={state.data}/>`.
+- No types or helpers remain in this file — all moved to the shared module.
+
+**Refactored `src/app/leaderboard/page.tsx`** — ~450 lines → ~180 lines:
+- `useCallback` loader does the today's-round Supabase lookup (`played_on = todayLocal()`, latest by `created_at`), branches into the four states (`loading` / `no_round` / `no_format` / `results`), and for `results` calls `loadRoundResults(round.id)` to populate `data`.
+- View component renders the navy state strip ("Semiahmoo · Round in progress" / "Round complete" / "No round today") at the top, then either `<RoundResultsView/>` (results state) or the centered "Today's Round" empty header + ⛳ dashed-border empty card + "View season stats →" link (no_round / no_format states).
+- Race protection: if the today's-round lookup finds a row but `loadRoundResults` then returns `missing_round` (deletion race), the page surfaces as `no_round`. Same for `missing_format`.
+- Deleted: `LeaderboardState` (old type), `TeamForBoard`, `RoundRow`, `Leaderboard`, `RankBadge`, `ScoreLabel` helper functions, FORMAT_LABELS / formatTeamTotal / isStablefordFormat / rankTeams / holesCompleteForTeam / getScoringBasis / computeRoundResult / HoleInfo / FormatConfig imports — all subsumed by the shared module.
+
+### Visual / behavior trade-offs accepted (confessed)
+
+1. **Per-team `thru N` removed from the leaderboard.** Previously each team card on `/leaderboard` showed `thru N` in its right column; now there's a single round-level `thru N` (max across teams) in the header status tag. Visual consistency gain across both routes; slight per-team progress information loss. Per-team progress is still discoverable by expanding a team — its `PlayerHoleGrid` shows exactly which holes have scores.
+2. **Leaderboard date format changed.** Was `prettyDate("May 17, 2026")` centered with a "Today's Round" caption above. Now `formatHeaderDate("Sunday · May 17")` left-aligned (shared header convention). Year dropped — fine since the leaderboard always shows today. The "Today's Round" caption only appears in the empty states (no_round / no_format), which still need the date display to feel grounded.
+3. **Empty states stay on `/leaderboard` only.** Per spec — the shared component assumes a real round exists. The `EmptyHeader` and `EmptyBody` components are leaderboard-local and not exported.
+4. **No new tests.** The extraction is a pure refactor — data shape unchanged, rendering unchanged, behavior unchanged. The underlying helpers (`rankTeams`, `formatTeamTotal`, `holesCompleteForTeam`, `PlayerHoleGrid`) are already covered by their existing test files. The shared loader is effectively the previous summary-page useEffect body lifted out verbatim; the previous tests still cover the data-derivation logic. Adding a component test for `<RoundResultsView/>` would duplicate coverage that already exists at the helper level.
+
+### Verification
+
+- `tsc --noEmit` clean.
+- **251/251 unit tests pass** across 25 files.
+- Browser preview on iPhone SE (375 × 812):
+  - **/leaderboard** loads today's round 95. Navy state strip reads `"Semiahmoo · Round complete"`. `<RoundResultsView/>` renders inline: Team 1 card visible with rank 1 gold badge. Clicking the team chevron flips `aria-expanded` to `true` and reveals 2 player rows ("Expand Thomas Y" + "Expand Don D"). Clicking a player chevron reveals `PlayerHoleGrid` with 2 grid sections (60 cells total). Individual Rankings section renders below with both players ranked.
+  - **/round/90/summary** loads round 90 (Best Ball, complete, 5 teams). `"← Back"` link visible at top above the meta header. 5 teams render in correct rank order (Team 1 → 5 → 2 → 4 → 3). 1st-place card: header bg `rgb(250,248,240)` (cream `#faf8f0`); rank badge `rgb(212,160,23)` (gold `#d4a017`). Individual Rankings section renders with 10 rows below the team cards.
+  - **/round/95/summary** loads single-team round; renders 1 team card + 2 players in Individual Rankings.
+  - Zero console errors on either route.
+- `preview_screenshot` skipped (consistent 30s browser-side timeout in this Windows preview environment); structural verification via accessibility-tree snapshot + `getComputedStyle` covers all visual requirements.
+
+### ROADMAP updates
+
+- C5 row gets an "**Update 2026-05-17 PM4**" annotation describing the extraction + leaderboard wiring.
+- New `May 17 (PM4)` session log entry appended above the `May 17 (PM3)` entry.
+- Top-of-file last-updated banner refreshed.
+
+---
+
+## Earlier today — 2026-05-17 PM3 (Individual Rankings restoration)
 
 ### Individual Rankings section restored on /round/[id]/summary
 
@@ -247,13 +300,14 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-PM3-commit): `d322a30` — feat(summary): Phase C PR 3. PM3 Individual Rankings restoration commit + this STATUS.md update will move HEAD forward.
-- Status vs production deployment: **in sync** at PR 3 HEAD. PM3 restoration will auto-deploy to Vercel on push.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-PM4-commit): `d4cc29a` — feat(summary): restore Individual Rankings cross-team section. PM4 shared-view extraction commit + this STATUS.md update will move HEAD forward.
+- Status vs production deployment: **in sync** at PM3 HEAD. PM4 extraction will auto-deploy to Vercel on push.
+- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 + PM4 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
-- (pending) — feat(summary): restore Individual Rankings cross-team section (2026-05-17 PM3)
+- (pending) — refactor(round-results): extract shared RoundResultsView + use on /leaderboard (2026-05-17 PM4)
+- `d4cc29a` — feat(summary): restore Individual Rankings cross-team section (2026-05-17 PM3)
 - `d322a30` — feat(summary): Phase C PR 3 — ranked all-teams summary with F9/B9 + two-level drill-down (2026-05-17 PM2)
 - `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows (2026-05-17 PM)
 - `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (2026-05-17)
