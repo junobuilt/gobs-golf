@@ -2,12 +2,46 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 (end of session)
-**Session purpose:** Ship A1.6 — F9 / B9 / Tot cumulative net on the scorecard team-net pill.
+**Last updated:** 2026-05-17 PM (end of A1.7 session)
+**Session purpose:** Ship A1.7 — tap-to-expand hole-by-hole player rows on the live scorecard, extracting the grid as a reusable component for Phase C PR3 reuse. Sibling/parallel session also shipped A1.6 (team-pill F9/B9/Tot row) earlier in the day.
 
 ---
 
-## Today's work — 2026-05-17 end-of-session summary
+## Today's work — 2026-05-17 PM (A1.7)
+
+### A1.7 shipped
+
+**New reusable component — `src/components/scorecard/PlayerHoleGrid.tsx`** (extracted so C PR3 can drop it into the post-round drill-in summary unchanged):
+
+- Props: `scores: (number|null)[]` (18 entries), `par: number[]` (18 entries), `currentHoleIndex?: number` (0–17, omit to disable highlight — C PR3 will), `showRunningTotal?: boolean` (defaults true — C PR3 will pass false to hide the bottom Total line).
+- Two stacked 10-column grids (F9 holes 1–9 + F9 subtotal cell; B9 holes 10–18 + B9 subtotal cell) separated by a thin `#e2e8f0` divider.
+- Each grid is 3 rows: hole-number header, par, gross score.
+- Current hole gets `#dbeafe` background on header + score cells only (par row never highlighted).
+- Unplayed holes render `—` in `#94a3b8`.
+- Birdies (`score < par[i]`) render in `#3B6D11`.
+- Bottom-right "Total N" line (or `—` if no holes played), hidden when `showRunningTotal={false}`.
+
+**Scorecard wiring — `src/app/round/[id]/scorecard/page.tsx`:**
+
+- New state `expandedPlayers: Set<number>` + `toggleExpandedPlayer(rpId)` helper. Multi-expand: tapping a row never collapses any other row.
+- Each player row is now a `React.Fragment` with the existing card div + a conditional expanded panel below.
+- Tap targets that toggle expand: (1) the left flex:1 section (name + meta info), (2) a new chevron-down `<button>` on the right after the +/− pair, with `aria-label="Expand hole-by-hole"` / `"Collapse hole-by-hole"` and `aria-expanded` for screen readers.
+- Both expand triggers use `e.stopPropagation()` so they don't bubble to the card body, which still fires `toggleOverride` for best-N ball-counting tie-break. +/− buttons remain inside their existing `onClick={e => e.stopPropagation()}` wrapper — unchanged.
+- Card border-radius flips to `16px 16px 0 0` when expanded so the panel attaches seamlessly.
+
+**Confessed deviation from spec:** the name-span used to be the trigger for the Remove Player modal (`setRemovePlayerModal`). Per spec, "tapping player name" must now expand, so the old `onClick` is gone. To preserve the Remove flow (still needed — players occasionally get added to the wrong team), the Remove trigger moved into the expand panel as a small underlined `Remove from team` link at the bottom-right. Worth a heads-up to Dad in case he had memorized the name-tap shortcut. The flow itself (DangerModal → removePlayer) is unchanged.
+
+**Tests — 11 new in `tests/components/PlayerHoleGrid.test.tsx`** using `react-dom/server`'s `renderToString` (non-DOM, no jsdom — STATUS.md flagged jsdom tests as flaky on master, so non-DOM is the safer source of truth). Coverage: unplayed em-dash count (21 cells: 18 score + F9 sub + B9 sub + Total = 21), played numerals render, birdie color presence when applicable, birdie color absence when no hole beats par, current-hole highlight count (exactly 2 cells: header + score), highlight omission when `currentHoleIndex` is undefined, Total line presence + sum, Total line hidden when `showRunningTotal={false}`, F9 / B9 labels render, F9 / B9 par subtotals computed correctly, subtotal reflects played-hole sum (not par-padded).
+
+**Verification:** `tsc --noEmit` clean. **251/251 unit tests pass** across 25 files (240 prior + 11 new). Browser preview at iPhone SE (375 × 812) on live round 95: chevron renders + toggles expand state, left-section tap expands, multi-expand works (both rows expanded simultaneously), +/− buttons stay independent of expand tap target, clicking dot rail to hole 5 shifts the current-hole highlight to hole 5's column (2 highlighted cells — header + score), birdies render in `rgb(59, 109, 17)` = `#3B6D11`. No console errors. Preview screenshot tool timed out repeatedly (browser-side issue, not the change); structural verification via `preview_eval` against `aria-expanded` + DOM queries covered all spec requirements.
+
+**Out of scope per spec (confessed):** team pill (A1.6 surface), summary page, leaderboard — all untouched. The existing card-body click-to-override flow (best-N ball-counting tie-break) is preserved untouched.
+
+**ROADMAP updated:** A1.7 → ✅, Phase A.1 exit-criteria line reads "fully closed," top-of-file last-updated banner refreshed, new May 17 (PM) session log entry appended above the A1.6 entry.
+
+---
+
+## Earlier today — 2026-05-17 (A1.6, sibling session)
 
 ### A1.6 shipped (commit `0639b57`)
 
@@ -96,12 +130,13 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit: `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (this STATUS.md update will move HEAD forward by one).
-- Status vs production deployment: **in sync.** Each merged PR auto-deployed via Vercel to production. Latest confirmed production deploys: `dpl_GioCMq3TWkTnU5BCRiHasqt6E2Di` (Phase E merge) and `dpl_E3q5pkAyqd86uavSA4cZqpwZDLxV` (prior STATUS.md update), both `state=READY, target=production`.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 added no net schema delta (`option3_phase_a_scores_unique_idx` was created and then reverted in the same session — see migration history). Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-A1.7-commit): `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill. A1.7 commit + this STATUS.md update will move HEAD forward.
+- Status vs production deployment: **in sync** at A1.6 HEAD. A1.7 will auto-deploy to Vercel on push.
+- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
+- (pending) — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows + extract `PlayerHoleGrid` (2026-05-17 PM)
 - `0639b57` — feat(scorecard): A1.6 — F9/B9/Tot cumulative net on team pill (2026-05-17)
 - `03828ff` — chore: STATUS.md — Option 3 phases A–E + Bug 1 resolution (2026-05-13)
 - `668da1e` — feat(homepage): stale-failure prompt (Phase E of Option 3) (2026-05-13)
@@ -119,7 +154,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Test surface on master
 
-- vitest: **240/240 pass** across 24 files. Verified fresh at session end.
+- vitest: **251/251 pass** across 25 files. Verified fresh at session end (11 new `PlayerHoleGrid` tests added in A1.7).
 - `tsc --noEmit` clean.
 - Component test infra: `tests/components/fake-supabase.ts` (chainable in-memory client supporting `.upsert`, `.or` no-op, `failWrite` hook, `writeDelayMs`, writes log). Used by `scorecard-bug-repro.test.tsx`, `end-round-flow.test.tsx`, `stale-failure-homepage.test.tsx`, `ReconciliationDialog.test.tsx`, `StaleFailureDialog.test.tsx`, `stuckItemsClipboard.test.ts`.
 - Library unit tests: `tests/lib/writeQueue/{backoff,storage,WriteQueue}.test.ts` cover the locked D7 backoff schedule, quota eviction order, `markAsTerminal` / `retryTerminal` / `forget` semantics, hail-mary drain, online / offline / visibility / pageshow triggers, and `in_flight` resurrection on mount.
@@ -132,7 +167,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 2. **Option 3 telemetry review.** After a full live round on production, check Sentry for `writeQueue.terminal_failure` events. Each one tells us whether the queue's failure path is firing in practice or whether everything drains via the happy path. Also watch for `user_forget_stale` — every one indicates a user abandoning scoring data.
 3. **Bug 2 — confirm fixed or queue follow-up.** After a live round on production, ask whether anyone has experienced snap-back. If yes, the JS movement-threshold guard is the queued follow-up; if no, mark Bug 2 confirmed-fixed.
 4. **I13 — admin UI to edit `players.preferred_tee_id`.** Bumped earlier from regular 📋. Roster has two Waynes (`id=45 Hashimoto` and `id=55 Vincent`); only Vincent has `preferred_tee_id` set. Setting Hashimoto's via direct SQL carries real risk of editing the wrong row.
-5. **A1.7 — tap player row → expand hole-by-hole on scorecard.** A1.6's sibling, also unblocked. Shares helper code with the Phase C drill-in summary (C4 / C5 / C6).
+5. **Phase C PR 3 — drill-in summary hole-by-hole.** Now unblocked by A1.7: `src/components/scorecard/PlayerHoleGrid.tsx` is the shared component. Pass `currentHoleIndex={undefined}` (no highlight) and `showRunningTotal={false}` to suppress the bottom Total line. C4 / C5 / C6 should consume this component verbatim — no further extraction needed.
 
 ---
 

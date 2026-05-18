@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import DangerModal from "@/app/thomas-admin/components/DangerModal";
@@ -23,6 +23,7 @@ import ReconciliationDialog, {
 } from "@/components/scorecard/ReconciliationDialog";
 import FinishingSpinner from "@/components/scorecard/FinishingSpinner";
 import { formatStuckItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
+import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -105,6 +106,18 @@ export default function ScorecardPage() {
 
   // Per-hole manual overrides: which 2 round_player ids count
   const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
+
+  // A1.7: player rows expanded to show the per-player hole-by-hole grid.
+  // Multi-expand — tapping one player does not collapse the others.
+  const [expandedPlayers, setExpandedPlayers] = useState<Set<number>>(new Set());
+  const toggleExpandedPlayer = (rpId: number) => {
+    setExpandedPlayers(prev => {
+      const next = new Set(prev);
+      if (next.has(rpId)) next.delete(rpId);
+      else next.add(rpId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -1028,93 +1041,176 @@ export default function ScorecardPage() {
 
         const isTied = isCounting && ((countingRank === 0 && tiedForBall1) || (countingRank === 1 && tiedForBall2));
 
+        // A1.7 — per-player hole-by-hole grid data + expand state.
+        const isExpanded = expandedPlayers.has(rp.id);
+        const playerHoles = holesByTee[rp.tee_id || 0] || [];
+        const par18 = Array.from({ length: 18 }, (_, i) =>
+          playerHoles.find(ph => ph.hole_number === i + 1)?.par ?? 4
+        );
+        const scores18: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
+          scores[rp.id]?.[i + 1] ?? null
+        );
+
+        const cardBorderRadius = isExpanded ? "16px 16px 0 0" : "16px";
+        const cardMarginBottom = isExpanded ? "0" : "10px";
+
+        const expandStop = (e: React.MouseEvent) => {
+          e.stopPropagation();
+          toggleExpandedPlayer(rp.id);
+        };
+
         return (
-          <div
-            key={rp.id}
-            onClick={() => gross != null ? toggleOverride(currentHole, rp.id) : undefined}
-            style={{
-              background: isCounting ? countingBg : "white",
-              padding: "12px 16px", borderRadius: "16px",
-              border: isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
-              marginBottom: "10px",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              cursor: gross != null ? "pointer" : "default",
-              transition: "background 0.15s, border-color 0.15s",
-            }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                <span
-                  style={{ fontWeight: 800, fontSize: "0.95rem" }}
-                  onClick={e => { e.stopPropagation(); setRemovePlayerModal(rp.id); }}
+          <React.Fragment key={rp.id}>
+            <div
+              onClick={() => gross != null ? toggleOverride(currentHole, rp.id) : undefined}
+              style={{
+                background: isCounting ? countingBg : "white",
+                padding: "12px 16px",
+                borderRadius: cardBorderRadius,
+                border: isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
+                borderBottom: isExpanded
+                  ? "1px solid #f1f5f9"
+                  : isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
+                marginBottom: cardMarginBottom,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                cursor: gross != null ? "pointer" : "default",
+                transition: "background 0.15s, border-color 0.15s",
+              }}
+            >
+              <div
+                style={{ flex: 1, cursor: "pointer" }}
+                onClick={expandStop}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>
+                    {rp.display_name}
+                  </span>
+                  {isBestNFormat && isCounting && !isTied && (
+                    <span style={{
+                      fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
+                      background: countingBorderColor, color: "white", textTransform: "uppercase",
+                    }}>
+                      {countingRank === 0 ? "Ball 1" : "Ball 2"}
+                    </span>
+                  )}
+                  {isBestNFormat && isTied && (
+                    <span style={{
+                      fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
+                      background: "#f59e0b", color: "white", textTransform: "uppercase",
+                    }}>
+                      Tied
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
+                  <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
+                  <span>·</span>
+                  <span>Handicap Index: {rp.handicap_index != null ? rp.handicap_index.toFixed(1) : "?"}</span>
+                  {teeColor && (
+                    <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
+                  )}
+                  {gross != null && net != null && net !== gross && (
+                    <span style={{ color: "#0c3057" }}>Net: {net}</span>
+                  )}
+                  {playerTotal > 0 && (
+                    <span style={{ color: "#64748b" }}>Tot: {playerTotal}</span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }} onClick={e => e.stopPropagation()}>
+                <button
+                  onClick={() => {
+                    const par = holeInfo?.par ?? 4;
+                    const current = scores[rp.id]?.[currentHole];
+                    setScore(rp.id, currentHole, current == null ? par : current - 1);
+                  }}
+                  style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
                 >
-                  {rp.display_name}
-                </span>
-                {isBestNFormat && isCounting && !isTied && (
-                  <span style={{
-                    fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
-                    background: countingBorderColor, color: "white", textTransform: "uppercase",
-                  }}>
-                    {countingRank === 0 ? "Ball 1" : "Ball 2"}
-                  </span>
-                )}
-                {isBestNFormat && isTied && (
-                  <span style={{
-                    fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
-                    background: "#f59e0b", color: "white", textTransform: "uppercase",
-                  }}>
-                    Tied
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
-                <span>·</span>
-                <span>Handicap Index: {rp.handicap_index != null ? rp.handicap_index.toFixed(1) : "?"}</span>
-                {teeColor && (
-                  <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
-                )}
-                {gross != null && net != null && net !== gross && (
-                  <span style={{ color: "#0c3057" }}>Net: {net}</span>
-                )}
-                {playerTotal > 0 && (
-                  <span style={{ color: "#64748b" }}>Tot: {playerTotal}</span>
-                )}
+                  −
+                </button>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: "35px" }}>
+                  <div style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center", marginBottom: "2px" }}>
+                    {Array.from({ length: hcpStrokes }).map((_, i) => (
+                      <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
+                    ))}
+                  </div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 900, textAlign: "center" }}>
+                    {scores[rp.id]?.[currentHole] || "—"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const par = holeInfo?.par ?? 4;
+                    const current = scores[rp.id]?.[currentHole];
+                    setScore(rp.id, currentHole, current == null ? par : current + 1);
+                  }}
+                  style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
+                >
+                  +
+                </button>
+                <button
+                  aria-label={isExpanded ? "Collapse hole-by-hole" : "Expand hole-by-hole"}
+                  aria-expanded={isExpanded}
+                  onClick={expandStop}
+                  style={{
+                    width: "32px", height: "44px", borderRadius: "8px",
+                    border: "none", background: "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer", color: "#64748b", padding: 0,
+                  }}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{
+                      transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 0.15s ease",
+                    }}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "15px" }} onClick={e => e.stopPropagation()}>
-              <button
-                onClick={() => {
-                  const par = holeInfo?.par ?? 4;
-                  const current = scores[rp.id]?.[currentHole];
-                  setScore(rp.id, currentHole, current == null ? par : current - 1);
+            {isExpanded && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: "white",
+                  border: isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
+                  borderTop: "none",
+                  borderRadius: "0 0 16px 16px",
+                  padding: "4px 14px 10px",
+                  marginBottom: "10px",
                 }}
-                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
               >
-                −
-              </button>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: "35px" }}>
-                <div style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center", marginBottom: "2px" }}>
-                  {Array.from({ length: hcpStrokes }).map((_, i) => (
-                    <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
-                  ))}
-                </div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, textAlign: "center" }}>
-                  {scores[rp.id]?.[currentHole] || "—"}
+                <PlayerHoleGrid
+                  scores={scores18}
+                  par={par18}
+                  currentHoleIndex={currentHole - 1}
+                />
+                <div style={{ textAlign: "right", marginTop: "6px" }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); setRemovePlayerModal(rp.id); }}
+                    style={{
+                      background: "none", border: "none",
+                      color: "#94a3b8", fontSize: "0.7rem",
+                      cursor: "pointer", textDecoration: "underline",
+                      padding: 0, fontFamily: "inherit",
+                    }}
+                  >
+                    Remove from team
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  const par = holeInfo?.par ?? 4;
-                  const current = scores[rp.id]?.[currentHole];
-                  setScore(rp.id, currentHole, current == null ? par : current + 1);
-                }}
-                style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
-              >
-                +
-              </button>
-            </div>
-          </div>
+            )}
+          </React.Fragment>
         );
       })}
 
