@@ -11,6 +11,7 @@ import { FORMAT_LABELS, DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
 import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
+import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 
 interface Props {
   allPlayers: Player[];
@@ -59,6 +60,13 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [undoAction, setUndoAction] = useState<{ player: Player; fromTeam: number; toTeam: number } | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // D.1: per-player round_players row info, used by the active-view ⋯ menu.
+  // Keyed by player_id (since loadedTeams uses Player[] from the allPlayers
+  // join, not the round_players row). Refreshed by refreshDropoutStates()
+  // after a mark/undo write.
+  const [playerRpInfo, setPlayerRpInfo] = useState<
+    Record<number, { rpId: number; droppedAfterHole: number | null }>
+  >({});
 
   // Per-player serialization for round_players writes. toggleInRoster fires
   // INSERT/DELETE; assignToTeam fires UPDATE of team_number. Both used to be
@@ -82,6 +90,27 @@ export default function RoundSetup({ allPlayers }: Props) {
   const drainWrites = useCallback(async () => {
     await Promise.all(Array.from(writeQueueRef.current.values()));
   }, []);
+
+  // D.1: refresh just the dropped_after_hole values for the current round
+  // after the overflow menu writes. Cheaper than reloading roster + teams.
+  const refreshDropoutStates = useCallback(async () => {
+    if (!existingRoundId) return;
+    const { data } = await supabase
+      .from("round_players")
+      .select("id, player_id, dropped_after_hole")
+      .eq("round_id", existingRoundId);
+    if (!data) return;
+    setPlayerRpInfo(prev => {
+      const next = { ...prev };
+      (data as any[]).forEach(r => {
+        next[r.player_id] = {
+          rpId: r.id,
+          droppedAfterHole: r.dropped_after_hole ?? null,
+        };
+      });
+      return next;
+    });
+  }, [existingRoundId]);
 
   // ── Load score status per team ─────────────────────────────────────────────
   const loadScoreStatus = useCallback(async (roundId: number, teamNumList: number[]) => {
@@ -149,7 +178,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       // already-in concern.
       const { data: rps } = await supabase
         .from("round_players")
-        .select("player_id, team_number, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
+        .select("id, player_id, team_number, dropped_after_hole, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
         .eq("round_id", round.id);
 
       if (!rps || rps.length === 0) {
@@ -160,6 +189,7 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       const loadedRoster: Player[] = [];
       const loadedTeams: Record<number, Player[]> = {};
+      const loadedRpInfo: Record<number, { rpId: number; droppedAfterHole: number | null }> = {};
 
       rps.forEach((rp: any) => {
         // PostgREST embed returns the joined row as either an object (single
@@ -176,6 +206,10 @@ export default function RoundSetup({ allPlayers }: Props) {
           preferred_tee_id: playerRow.preferred_tee_id ?? null,
         };
         loadedRoster.push(player);
+        loadedRpInfo[playerRow.id] = {
+          rpId: rp.id as number,
+          droppedAfterHole: rp.dropped_after_hole ?? null,
+        };
         const tn = rp.team_number;
         if (tn >= 1) {
           if (!loadedTeams[tn]) loadedTeams[tn] = [];
@@ -185,6 +219,7 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       setRoster(loadedRoster);
       setTeams(loadedTeams);
+      setPlayerRpInfo(loadedRpInfo);
 
       const teamNumList = Object.keys(loadedTeams).map(Number);
       const maxTn = teamNumList.length > 0 ? Math.max(...teamNumList) : 8;
@@ -800,11 +835,46 @@ export default function RoundSetup({ allPlayers }: Props) {
                       <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                      {players.map(p => (
-                        <span key={p.id} style={{ fontSize: "0.85rem", fontWeight: 500, color: "#1e293b" }}>
-                          {p.display_name || p.full_name}
-                        </span>
-                      ))}
+                      {players.map(p => {
+                        const info = playerRpInfo[p.id];
+                        const dropped = info?.droppedAfterHole ?? null;
+                        return (
+                          <div
+                            key={p.id}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 6,
+                              minHeight: 24,
+                            }}
+                          >
+                            <span style={{
+                              fontSize: "0.85rem", fontWeight: 500,
+                              color: dropped != null ? "#6b7280" : "#1e293b",
+                            }}>
+                              {p.display_name || p.full_name}
+                            </span>
+                            {dropped != null && (
+                              <span style={{
+                                fontSize: "0.7rem", color: "#6b7280",
+                                fontStyle: "italic",
+                              }}>
+                                left after hole {dropped}
+                              </span>
+                            )}
+                            {info && (
+                              <span style={{ marginLeft: "auto" }}>
+                                <PlayerOverflowMenu
+                                  roundPlayerId={info.rpId}
+                                  playerName={p.display_name || p.full_name}
+                                  droppedAfterHole={dropped}
+                                  isRoundComplete={isRoundComplete}
+                                  surface="admin"
+                                  onChanged={refreshDropoutStates}
+                                />
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px", flexShrink: 0, marginLeft: "12px" }}>

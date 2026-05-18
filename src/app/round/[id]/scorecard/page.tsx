@@ -24,6 +24,7 @@ import ReconciliationDialog, {
 import FinishingSpinner from "@/components/scorecard/FinishingSpinner";
 import { formatStuckItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
+import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -33,6 +34,7 @@ interface RoundPlayer {
   handicap_index: number | null;
   course_handicap: number | null;
   preferred_tee_id: number | null;
+  dropped_after_hole: number | null;
 }
 
 interface Tee {
@@ -154,7 +156,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, tee_id, course_handicap, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
+        .select(`id, tee_id, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -168,6 +170,7 @@ export default function ScorecardPage() {
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
+          dropped_after_hole: r.dropped_after_hole ?? null,
         }));
 
         // LT1 fix (2026-05-09): recompute Course Handicap on every load from
@@ -375,6 +378,22 @@ export default function ScorecardPage() {
     await supabase.from("round_players").update({ team_number: 0 }).eq("id", rpId);
     setRoundPlayers(prev => prev.filter(p => p.id !== rpId));
     setRemovePlayerModal(null);
+  };
+
+  // D.1: refresh dropped_after_hole values after the overflow menu writes.
+  // Cheaper than a full reload — only round_players state for this round
+  // needs updating; scores, tees, holes are unchanged.
+  const refreshDropoutStates = async () => {
+    const { data } = await supabase
+      .from("round_players")
+      .select("id, dropped_after_hole")
+      .eq("round_id", roundId);
+    if (!data) return;
+    const map: Record<number, number | null> = {};
+    (data as any[]).forEach(r => { map[r.id] = r.dropped_after_hole ?? null; });
+    setRoundPlayers(prev =>
+      prev.map(p => ({ ...p, dropped_after_hole: map[p.id] ?? null }))
+    );
   };
 
   // --- SCORING HELPERS (engine-backed) ---
@@ -1037,6 +1056,12 @@ export default function ScorecardPage() {
 
         const isTied = isCounting && ((countingRank === 0 && tiedForBall1) || (countingRank === 1 && tiedForBall2));
 
+        // D.1: post-dropout score entry is silently no-op'd. +/− buttons go
+        // visually disabled; entered scores on holes 1..dropped stay visible
+        // on the rest of the scorecard surfaces.
+        const droppedHole = rp.dropped_after_hole;
+        const isPostDropHole = droppedHole != null && currentHole > droppedHole;
+
         // A1.7 — per-player hole-by-hole grid data + expand state.
         const isExpanded = expandedPlayers.has(rp.id);
         const playerHoles = holesByTee[rp.tee_id || 0] || [];
@@ -1078,9 +1103,20 @@ export default function ScorecardPage() {
                 onClick={expandStop}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>
+                  <span style={{
+                    fontWeight: 800, fontSize: "0.95rem",
+                    color: droppedHole != null ? "#6b7280" : undefined,
+                  }}>
                     {rp.display_name}
                   </span>
+                  {droppedHole != null && (
+                    <span style={{
+                      fontSize: "0.7rem", fontWeight: 500, color: "#6b7280",
+                      fontStyle: "italic",
+                    }}>
+                      (left after hole {droppedHole})
+                    </span>
+                  )}
                   {isBestNFormat && isCounting && !isTied && (
                     <span style={{
                       fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
@@ -1116,11 +1152,20 @@ export default function ScorecardPage() {
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }} onClick={e => e.stopPropagation()}>
                 <button
                   onClick={() => {
+                    if (isPostDropHole) return;
                     const par = holeInfo?.par ?? 4;
                     const current = scores[rp.id]?.[currentHole];
                     setScore(rp.id, currentHole, current == null ? par : current - 1);
                   }}
-                  style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
+                  disabled={isPostDropHole}
+                  style={{
+                    width: "44px", height: "44px", borderRadius: "10px",
+                    border: "1px solid #e2e8f0",
+                    background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
+                    color: isPostDropHole ? "#cbd5e1" : undefined,
+                    fontSize: "20px",
+                    cursor: isPostDropHole ? "not-allowed" : "pointer",
+                  }}
                 >
                   −
                 </button>
@@ -1130,20 +1175,41 @@ export default function ScorecardPage() {
                       <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
                     ))}
                   </div>
-                  <div style={{ fontSize: "1.8rem", fontWeight: 900, textAlign: "center" }}>
+                  <div style={{
+                    fontSize: "1.8rem", fontWeight: 900, textAlign: "center",
+                    color: isPostDropHole ? "#cbd5e1" : undefined,
+                  }}>
                     {scores[rp.id]?.[currentHole] || "—"}
                   </div>
                 </div>
                 <button
                   onClick={() => {
+                    if (isPostDropHole) return;
                     const par = holeInfo?.par ?? 4;
                     const current = scores[rp.id]?.[currentHole];
                     setScore(rp.id, currentHole, current == null ? par : current + 1);
                   }}
-                  style={{ width: "44px", height: "44px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: "20px", cursor: "pointer" }}
+                  disabled={isPostDropHole}
+                  style={{
+                    width: "44px", height: "44px", borderRadius: "10px",
+                    border: "1px solid #e2e8f0",
+                    background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
+                    color: isPostDropHole ? "#cbd5e1" : undefined,
+                    fontSize: "20px",
+                    cursor: isPostDropHole ? "not-allowed" : "pointer",
+                  }}
                 >
                   +
                 </button>
+                <PlayerOverflowMenu
+                  roundPlayerId={rp.id}
+                  playerName={rp.display_name}
+                  droppedAfterHole={rp.dropped_after_hole}
+                  isRoundComplete={isRoundComplete}
+                  surface="scorecard"
+                  onChanged={refreshDropoutStates}
+                  onRemove={() => setRemovePlayerModal(rp.id)}
+                />
                 <button
                   aria-label={isExpanded ? "Collapse hole-by-hole" : "Expand hole-by-hole"}
                   aria-expanded={isExpanded}
@@ -1191,19 +1257,6 @@ export default function ScorecardPage() {
                   par={par18}
                   currentHoleIndex={currentHole - 1}
                 />
-                <div style={{ textAlign: "right", marginTop: "6px" }}>
-                  <button
-                    onClick={e => { e.stopPropagation(); setRemovePlayerModal(rp.id); }}
-                    style={{
-                      background: "none", border: "none",
-                      color: "#94a3b8", fontSize: "0.7rem",
-                      cursor: "pointer", textDecoration: "underline",
-                      padding: 0, fontFamily: "inherit",
-                    }}
-                  >
-                    Remove from team
-                  </button>
-                </div>
               </div>
             )}
           </React.Fragment>
