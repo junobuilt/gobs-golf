@@ -55,6 +55,11 @@ const TEE_COLORS: Record<string, { bg: string; text: string }> = {
   Yellow: { bg: "#facc15", text: "#000000" },
 };
 
+// A1.6: F9 / B9 / Tot leg ranges for the team-net pill cumulative row.
+const F9_HOLES = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+const ALL_HOLES = [...F9_HOLES, ...B9_HOLES];
+
 export default function ScorecardPage() {
   const params = useParams();
   const router = useRouter();
@@ -457,6 +462,41 @@ export default function ScorecardPage() {
 
   const getTeamParTotal = (): number => {
     return buildRoundInput("net").teamParAtScored;
+  };
+
+  // A1.6: cumulative net delta for a subset of holes (F9 / B9 / Tot on the
+  // team-net pill). Returns null when no hole in the range has a team score
+  // yet — caller renders "—". For best-N this is teamScoreSubtotal -
+  // teamParSubtotal (same convention as the headline `teamNet - teamPar`).
+  // For Stableford-family teamParAtScored is 0 by engine contract, so the
+  // value collapses to absolute points and `formatTeamTotal` renders "X pts".
+  // Passing all 18 holes here equals the headline delta — Nassau payouts
+  // care about all three legs.
+  const getTeamNetDeltaForHoles = (holeNumbers: number[]): number | null => {
+    if (!roundFormat || !roundFormatConfig) return null;
+    const inRange = new Set(holeNumbers);
+    const isBestN =
+      roundFormat === "2_ball" ||
+      roundFormat === "3_ball" ||
+      roundFormat === "best_ball";
+    const input = buildRoundInput("net");
+    const activeTeeId = roundPlayers[0]?.tee_id || 0;
+    const holesForTee = holesByTee[activeTeeId] || [];
+    let teamScoreSubtotal = 0;
+    let teamParSubtotal = 0;
+    let scored = 0;
+    for (const { holeNumber, result } of input.perHole) {
+      if (!inRange.has(holeNumber)) continue;
+      if (result.teamScore == null) continue;
+      teamScoreSubtotal += result.teamScore;
+      if (isBestN) {
+        const hole = holesForTee.find(h => h.hole_number === holeNumber);
+        if (hole) teamParSubtotal += hole.par * result.contributingPlayerIds.length;
+      }
+      scored++;
+    }
+    if (scored === 0) return null;
+    return teamScoreSubtotal - teamParSubtotal;
   };
 
   const getPlayerTotal = (rpId: number) => {
@@ -905,6 +945,30 @@ export default function ScorecardPage() {
                   expects an absolute value, and this naturally provides it. */}
               {roundFormat ? formatTeamTotal(teamNet - teamPar, roundFormat) : ""}
             </div>
+            {/* A1.6: F9 / B9 / Tot cumulative net. Tot == headline by design
+                (Nassau payouts settle each leg separately). */}
+            {roundFormat && (() => {
+              const fmt = (v: number | null) =>
+                v == null ? "—" : formatTeamTotal(v, roundFormat);
+              const f9 = getTeamNetDeltaForHoles(F9_HOLES);
+              const b9 = getTeamNetDeltaForHoles(B9_HOLES);
+              const tot = getTeamNetDeltaForHoles(ALL_HOLES);
+              const labelStyle = { opacity: 0.65 };
+              const valueStyle = { fontWeight: 500 };
+              const sepStyle = { opacity: 0.65, margin: "0 6px" };
+              return (
+                <div style={{ fontSize: "13px", marginTop: "4px", lineHeight: 1.2 }}>
+                  <span style={labelStyle}>F9 </span>
+                  <span style={valueStyle}>{fmt(f9)}</span>
+                  <span style={sepStyle}>·</span>
+                  <span style={labelStyle}>B9 </span>
+                  <span style={valueStyle}>{fmt(b9)}</span>
+                  <span style={sepStyle}>·</span>
+                  <span style={labelStyle}>Tot </span>
+                  <span style={valueStyle}>{fmt(tot)}</span>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
