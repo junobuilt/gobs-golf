@@ -584,9 +584,13 @@ function IndividualRankings({
 }) {
   const isStableford = isStablefordFormat(format);
 
+  // D.1 S7: only rank players who completed all 18 holes themselves.
+  // Blind-draw fills aren't in team.players at all (no round_players row),
+  // so they're automatically excluded. Dropouts are filtered here. Drawn
+  // players still appear once, on their OWN team, with their own scores.
   const rows = teams.flatMap(team =>
     team.players
-      .filter(p => p.holesPlayed > 0)
+      .filter(p => p.holesPlayed > 0 && p.droppedAfterHole == null)
       .map(p => ({
         rpId: p.rpId,
         displayName: p.displayName,
