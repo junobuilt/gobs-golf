@@ -29,6 +29,10 @@ interface RoundPlayer {
   course_handicap: number | null;
   preferred_tee_id: number | null;
   dropped_after_hole: number | null;
+  // D.1 hotfix follow-up: needed for the client-side post-submit score-
+  // write guard. The whole-round view (no ?team=N) mixes players from
+  // multiple teams, so the per-row check has to be per-player.
+  team_number: number;
 }
 
 interface Tee {
@@ -91,6 +95,11 @@ export default function ScorecardPage() {
   // S4 defensive abort — surfaced when finalize_round_with_blind_draws
   // returns 'pool_too_small' on the all-teams-now-submitted attempt.
   const [poolErrorVisible, setPoolErrorVisible] = useState(false);
+  // D.1 hotfix follow-up: shown when a score write is attempted against a
+  // player whose team has already submitted (but the round isn't yet
+  // finalized, so the DB trigger wouldn't reject it). Closes the
+  // integrity gap between submit and round-finalize.
+  const [lockedToastVisible, setLockedToastVisible] = useState(false);
   // Gates re-entry into the "all teams submitted → call RPC" effect.
   // Reset by submittedTeams membership changes; not user-visible.
   const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
@@ -183,7 +192,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, tee_id, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
+        .select(`id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -198,6 +207,7 @@ export default function ScorecardPage() {
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
           dropped_after_hole: r.dropped_after_hole ?? null,
+          team_number: r.team_number ?? 0,
         }));
 
         // LT1 fix (2026-05-09): recompute Course Handicap on every load from
@@ -365,6 +375,18 @@ export default function ScorecardPage() {
 
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
+    const player = roundPlayers.find(p => p.id === rpId);
+    // D.1 hotfix follow-up: closes the integrity gap between submit and
+    // round-finalize. The DB trigger only rejects writes when
+    // rounds.is_complete is true; a team that submitted but is waiting
+    // for other teams to submit before the RPC fires has format_config.
+    // submitted_teams containing its team_number but is_complete still
+    // false. Abort the write client-side and surface a toast.
+    if (player && submittedTeams.includes(player.team_number)) {
+      setLockedToastVisible(true);
+      setTimeout(() => setLockedToastVisible(false), 3500);
+      return;
+    }
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
     // Clear manual override so best-2 recalculates from the new score
     setCountingOverrides(prev => {
@@ -381,7 +403,6 @@ export default function ScorecardPage() {
     // (Phase D) and the stale-failure prompt (Phase E) will surface any
     // items that fail to drain — for now, the queue retries silently in
     // the background.
-    const player = roundPlayers.find(p => p.id === rpId);
     getWriteQueue().enqueue(
       {
         round_id: Number(roundId),
@@ -1322,7 +1343,7 @@ export default function ScorecardPage() {
                     </div>
                   )}
                 </div>
-                {!isRoundComplete && (
+                {!isLocked && (
                   <button
                     onClick={() => {
                       if (isPostDropHole) return;
@@ -1556,6 +1577,33 @@ export default function ScorecardPage() {
           }}
         >
           Not enough complete rounds to fill blind draws. Contact Jonathan.
+        </div>
+      )}
+
+      {/* D.1 hotfix follow-up — locked-team write rejection. Fires when a
+          score write is attempted client-side against a player whose team
+          has already submitted. 3.5s, matches the finalized toast cadence. */}
+      {lockedToastVisible && (
+        <div
+          role="alert"
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#9a3412",
+            color: "white",
+            padding: "12px 22px",
+            borderRadius: 999,
+            fontWeight: 600,
+            fontSize: "0.9rem",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
+            zIndex: 1100,
+            fontFamily: "DM Sans, system-ui, sans-serif",
+            whiteSpace: "nowrap",
+          }}
+        >
+          This team&apos;s scores are locked.
         </div>
       )}
     </div>

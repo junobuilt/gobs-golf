@@ -51,6 +51,17 @@ export type BlindDrawFill = {
   // 18-length gross-score array for the drawn player. Consumer slices to
   // the fill range when merging with a dropout's partial scores.
   drawnPlayerScores: (number | null)[];
+  // D.1 hotfix follow-up: drawn player's aggregate contribution to the
+  // short team for the fill range. Format-aware:
+  //   - Best-N (net or gross basis): signed delta vs par-in-range using
+  //     the drawn player's own engine output. Same convention as
+  //     PlayerRow.netValue. Gross basis simply runs the engine with the
+  //     player's course_handicap zeroed.
+  //   - Stableford: absolute sum of points awarded across the range.
+  // View renders via formatPlayerNet(value, format) prefixed with
+  // "Net"/"Gross" per the round's scoring_basis (Stableford label is
+  // baked into formatPlayerNet's "X pts" output).
+  drawnPlayerNetValue: number;
 };
 
 export type TeamRow = {
@@ -192,25 +203,42 @@ export async function loadRoundResults(
   const useGross = getScoringBasis(formatConfig) === "gross";
   const isStableford = isStablefordFormat(format);
 
-  const teamRows: TeamRow[] = Object.entries(teamMap).map(([teamNumStr, teamPlayers]) => {
+  // D.1 hotfix follow-up: precompute engine + par lookup per team in a
+  // first pass so the second pass can do cross-team lookups when
+  // computing each blind-draw fill's contribution (the drawn player's
+  // engine output lives on their OWN team, not the short team).
+  type TeamEngineCache = {
+    engine: ReturnType<typeof computeRoundResult>;
+    parByHole: Record<number, number>;
+  };
+  const enginePerTeam: Record<number, TeamEngineCache> = {};
+  Object.entries(teamMap).forEach(([teamNumStr, teamPlayers]) => {
     const teamNum = parseInt(teamNumStr);
-    const firstTeeId = teamPlayers[0]?.tee_id as number;
+    const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
     const teamHoles = holesByTee[firstTeeId] || [];
     const parByHole: Record<number, number> = {};
     teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
-
-    const playersForEngine = teamPlayers.map((rp: any) => ({
+    const playersForEngine = (teamPlayers as any[]).map((rp: any) => ({
       playerId: String(rp.id),
       courseHandicap: useGross ? 0 : rp.course_handicap,
       grossScores: scoresByRpId[rp.id] || {},
     }));
+    enginePerTeam[teamNum] = {
+      engine: computeRoundResult({
+        format,
+        formatConfig: { ...formatConfig, basis: useGross ? "gross" : "net" },
+        holes: teamHoles,
+        players: playersForEngine,
+      }),
+      parByHole,
+    };
+  });
 
-    const result = computeRoundResult({
-      format,
-      formatConfig: { ...formatConfig, basis: useGross ? "gross" : "net" },
-      holes: teamHoles,
-      players: playersForEngine,
-    });
+  const teamRows: TeamRow[] = Object.entries(teamMap).map(([teamNumStr, teamPlayers]) => {
+    const teamNum = parseInt(teamNumStr);
+    const firstTeeId = teamPlayers[0]?.tee_id as number;
+    const teamHoles = holesByTee[firstTeeId] || [];
+    const { engine: result, parByHole } = enginePerTeam[teamNum];
 
     const rawTeamScore = result.teamScore ?? 0;
     const teamPar = result.teamParAtScored;
@@ -314,13 +342,42 @@ export async function loadRoundResults(
           { length: 18 },
           (_, i) => drawnScoresMap[i + 1] ?? null,
         );
+        const holeRangeStart = bd.hole_range_start as number;
+        const holeRangeEnd = bd.hole_range_end as number;
+
+        // D.1 hotfix follow-up: aggregate the drawn player's contribution
+        // to the short team over the fill range. Engine output lives on
+        // the drawn player's OWN team (where their handicap was applied
+        // during the engine call); we look up via fromTeamNumber.
+        let drawnPlayerNetValue = 0;
+        const drawnCache = lookup ? enginePerTeam[lookup.teamNumber] : undefined;
+        if (lookup && drawnCache) {
+          const drawnRpIdStr = String(lookup.rpId);
+          let scoreSum = 0;
+          let parSum = 0;
+          for (let h = holeRangeStart; h <= holeRangeEnd; h++) {
+            const holeEngine = drawnCache.engine.perHole.find(p => p.holeNumber === h);
+            if (!holeEngine) continue;
+            const pp = holeEngine.result.perPlayer.find(p => p.playerId === drawnRpIdStr);
+            if (!pp) continue;
+            if (isStableford) {
+              if (pp.points != null) scoreSum += pp.points;
+            } else if (pp.netScore != null) {
+              scoreSum += pp.netScore;
+              parSum += drawnCache.parByHole[h] ?? 0;
+            }
+          }
+          drawnPlayerNetValue = isStableford ? scoreSum : scoreSum - parSum;
+        }
+
         return {
           drawnPlayerId,
           drawnPlayerName,
           fromTeamNumber: lookup?.teamNumber ?? 0,
-          holeRangeStart: bd.hole_range_start as number,
-          holeRangeEnd: bd.hole_range_end as number,
+          holeRangeStart,
+          holeRangeEnd,
           drawnPlayerScores,
+          drawnPlayerNetValue,
         };
       });
 

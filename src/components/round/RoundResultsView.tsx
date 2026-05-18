@@ -16,7 +16,8 @@
 import { useState } from "react";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { isStablefordFormat, type RankedTeam } from "@/lib/leaderboard/rank";
-import type { Format } from "@/lib/scoring";
+import { getScoringBasis } from "@/lib/format/helpers";
+import type { Format, FormatConfig } from "@/lib/scoring";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import type {
@@ -26,6 +27,23 @@ import type {
   BlindDrawFill,
 } from "@/lib/round/results";
 import { pairBlindDraws, rangeCopy } from "@/lib/round/blindDrawPairing";
+
+// D.1 hotfix follow-up: turn a fill's aggregate score into the
+// caption-ready trailing label, e.g. "— Net −2" / "— Gross +5" / "— 12 pts".
+// Stableford's per-player display already includes "pts" via formatPlayerNet,
+// so it gets no prefix; best-N gets a "Net" or "Gross" prefix per the
+// round's scoring_basis.
+function fillScoreCopy(
+  value: number,
+  format: Format,
+  formatConfig: FormatConfig,
+): string {
+  const isStableford = isStablefordFormat(format);
+  const valueStr = formatPlayerNet(value, format);
+  if (isStableford) return valueStr;
+  const prefix = getScoringBasis(formatConfig) === "gross" ? "Gross" : "Net";
+  return `${prefix} ${valueStr}`;
+}
 
 const COURSE_NAME = "Semiahmoo Golf & Country Club";
 
@@ -118,6 +136,7 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
                 key={team.id}
                 team={team}
                 format={data.format}
+                formatConfig={data.formatConfig}
                 isFirst={team.rank === 1}
                 isTeamExpanded={expandedTeams.has(team.id)}
                 expandedPlayers={expandedPlayers}
@@ -204,6 +223,7 @@ function StatusTag({ isComplete, maxThru }: { isComplete: boolean; maxThru: numb
 function TeamCard({
   team,
   format,
+  formatConfig,
   isFirst,
   isTeamExpanded,
   expandedPlayers,
@@ -212,6 +232,7 @@ function TeamCard({
 }: {
   team: RankedTeam<TeamRow>;
   format: Format;
+  formatConfig: FormatConfig;
   isFirst: boolean;
   isTeamExpanded: boolean;
   expandedPlayers: Set<number>;
@@ -279,6 +300,8 @@ function TeamCard({
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
                   🎲 Blind draw: {bd.drawnPlayerName} ({rangeCopy(bd)})
+                  {" — "}
+                  {fillScoreCopy(bd.drawnPlayerNetValue, format, formatConfig)}
                 </div>
               ))}
             </div>
@@ -323,6 +346,7 @@ function TeamCard({
                 key={player.rpId}
                 player={player}
                 format={format}
+                formatConfig={formatConfig}
                 expanded={expandedPlayers.has(player.rpId)}
                 isLast={isLastRow}
                 onToggle={() => onTogglePlayer(player.rpId)}
@@ -335,6 +359,8 @@ function TeamCard({
             <BlindDrawPseudoPlayerSection
               key={`bd-fill-${idx}`}
               fill={fill}
+              format={format}
+              formatConfig={formatConfig}
               isLast={idx === roundStartFills.length - 1}
             />
           ))}
@@ -347,6 +373,7 @@ function TeamCard({
 function PlayerSection({
   player,
   format,
+  formatConfig,
   expanded,
   isLast,
   onToggle,
@@ -355,6 +382,7 @@ function PlayerSection({
 }: {
   player: PlayerRow;
   format: Format;
+  formatConfig: FormatConfig;
   expanded: boolean;
   isLast: boolean;
   onToggle: () => void;
@@ -460,6 +488,8 @@ function PlayerSection({
               🎲 Holes {dropoutFill.holeRangeStart}–{dropoutFill.holeRangeEnd}:
               {" "}blind draw from {dropoutFill.drawnPlayerName}
               {" "}(Team {dropoutFill.fromTeamNumber})
+              {" — "}
+              {fillScoreCopy(dropoutFill.drawnPlayerNetValue, format, formatConfig)}
             </div>
           )}
           <PlayerHoleGrid
@@ -480,9 +510,13 @@ function PlayerSection({
 // expansion is locally managed.
 function BlindDrawPseudoPlayerSection({
   fill,
+  format,
+  formatConfig,
   isLast,
 }: {
   fill: BlindDrawFill;
+  format: Format;
+  formatConfig: FormatConfig;
   isLast: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -518,6 +552,8 @@ function BlindDrawPseudoPlayerSection({
               marginLeft: 6, fontStyle: "italic",
             }}>
               blind draw fill ({rangeCopy(fill)}, from Team {fill.fromTeamNumber})
+              {" — "}
+              {fillScoreCopy(fill.drawnPlayerNetValue, format, formatConfig)}
             </span>
           </div>
         </div>
