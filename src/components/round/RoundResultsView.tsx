@@ -25,41 +25,7 @@ import type {
   TeamRow,
   BlindDrawFill,
 } from "@/lib/round/results";
-
-// D.1: copy helper. "all 18 holes" for round-start fills, "holes N+1–18"
-// for mid-round dropout fills. Used in both pill and caption forms.
-function rangeCopy(fill: BlindDrawFill): string {
-  if (fill.holeRangeStart === 1 && fill.holeRangeEnd === 18) return "all 18 holes";
-  return `holes ${fill.holeRangeStart}–${fill.holeRangeEnd}`;
-}
-
-// D.1: pair each dropout fill with its dropped player by matching
-// dropped_after_hole = holeRangeStart - 1. Multiple dropouts with the
-// same hole pair greedily in order. Round-start fills (holeRangeStart=1)
-// render as synthetic pseudo-player rows below the real roster.
-function pairBlindDraws(team: TeamRow): {
-  dropoutPairings: { player: PlayerRow; fill: BlindDrawFill }[];
-  roundStartFills: BlindDrawFill[];
-  unmatchedPlayers: PlayerRow[];
-} {
-  const droppedPool: PlayerRow[] = team.players.filter(p => p.droppedAfterHole != null);
-  const dropoutFills = team.blindDraws.filter(b => b.holeRangeStart > 1);
-  const roundStartFills = team.blindDraws.filter(b => b.holeRangeStart === 1);
-  const dropoutPairings: { player: PlayerRow; fill: BlindDrawFill }[] = [];
-  for (const fill of dropoutFills) {
-    const target = fill.holeRangeStart - 1;
-    const idx = droppedPool.findIndex(p => p.droppedAfterHole === target);
-    if (idx >= 0) {
-      dropoutPairings.push({ player: droppedPool[idx], fill });
-      droppedPool.splice(idx, 1);
-    }
-  }
-  return {
-    dropoutPairings,
-    roundStartFills,
-    unmatchedPlayers: droppedPool,
-  };
-}
+import { pairBlindDraws, rangeCopy } from "@/lib/round/blindDrawPairing";
 
 const COURSE_NAME = "Semiahmoo Golf & Country Club";
 
