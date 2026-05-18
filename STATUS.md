@@ -2,12 +2,75 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-17 PM4 (end of `<RoundResultsView/>` extraction session)
-**Session purpose:** Extract the round-results surface (round-meta header + ranked team cards with drill-down + Individual Rankings) into a shared `<RoundResultsView/>` component backed by a shared `loadRoundResults` loader, and wire it into both `/round/[id]/summary` and `/leaderboard` so tapping a team on the leaderboard drills in inline (no extra page navigation). Past rounds still route through `/round/[id]/summary` via the not-yet-built History tab.
+**Last updated:** 2026-05-17 PM5 (end of Phase A.1 polish session)
+**Session purpose:** Three small scorecard polish commits — drop redundant `Tot` from the team-pill F9/B9 row, replace green-text birdie with traditional concentric notation marks on `PlayerHoleGrid` score cells, and refresh the three-row visual hierarchy on hole/par/gross.
 
 ---
 
-## Today's work — 2026-05-17 PM4 (shared RoundResultsView extraction)
+## Today's work — 2026-05-17 PM5 (Phase A.1 polish)
+
+Three small commits to refine the surfaces introduced by A1.6 + A1.7. All three are scorecard-only at the file level; `PlayerHoleGrid` changes in P2 + P3 naturally propagate to `<RoundResultsView/>` consumers (`/leaderboard` + `/round/[id]/summary`) since it's the shared per-player grid — that propagation is the intended consequence of the A1.7 extraction, not a separate edit.
+
+### P1 — Drop "Tot" from team-pill F9/B9/Tot row (commit `370c7df`)
+
+File: `src/app/round/[id]/scorecard/page.tsx`. The headline team-net delta on the navy pill IS the total by construction (Nassau settles each leg separately; F9 + B9 = headline always), so the trailing `· Tot [val]` segment was redundant. Row is now `F9 [val] · B9 [val]`. Removed the `getTeamNetDeltaForHoles(ALL_HOLES)` call and the now-unused `ALL_HOLES` constant. Empty state preserved as `F9 — · B9 —`.
+
+### P2 — Traditional notation marks on score cells (commit `00a54c3`)
+
+File: `src/components/scorecard/PlayerHoleGrid.tsx`. Replaces the prior `COLOR_BIRDIE = #3B6D11` text-color treatment with concentric circles (under-par) or squares (over-par). The shape now carries the over/under-par signal uniformly across all cells.
+
+Mapping by `delta = score − par`:
+
+| delta | mark |
+| --- | --- |
+| ≤ −3 (incl. par-4/5 ace) | triple circle |
+| −2 (incl. par-3 ace) | double circle |
+| −1 | single circle |
+| 0 | bare number |
+| +1 | single square |
+| +2 | double square |
+| ≥ +3 | triple square |
+
+New internal `<ScoreMark>` subcomponent wraps the number in nested fixed-size divs (`1px solid currentColor`, `boxSizing: border-box`) with `borderRadius: 50%` for circles or `"0"` for squares. Tiered sizing 22 / [26, 20] / [28, 22, 18] per spec. Score cell `minHeight: 32px` so triple notation has breathing room above the F9/B9 divider; the cell is now flex-centered so the shape sits in the middle. Notation renders on top of the current-hole highlight via currentColor. `COLOR_BIRDIE` constant removed.
+
+### P3 — Three-row visual hierarchy (commit `23d7379`)
+
+Same file. Restyles the three rows so the eye reads header → reference → data without labels:
+
+| Row | Treatment |
+| --- | --- |
+| Hole numbers + F9/B9 label | navy primary `#042C53`, weight 500 |
+| Par + par subtotal | italic, muted `#94a3b8`, weight 500 |
+| Gross + gross subtotal | primary `#1e293b`, weight 600 |
+
+Hole-number cells no longer special-case the current-hole color (was `#1e40af`) — the `#dbeafe` background still marks the current hole on its own, and keeping the navy uniform reads cleaner. The new `COLOR_NAVY = #042C53` constant.
+
+### Verification
+
+- `tsc --noEmit` clean across all three commits.
+- **259/259 unit tests pass** across 25 files (251 prior + 8 new in `tests/components/PlayerHoleGrid.test.tsx`). New tests cover each notation tier (single/double/triple for both circle + square), par no-mark, ace cap (par-5 score=1 → triple circle), +5 cap (still triple square), and that the legacy `#3B6D11` is absent regardless of birdies.
+- Browser preview at iPhone SE (375 × 812) on round 95 team 1:
+  - **Team pill:** renders `TEAM NET −5` headline + `F9 −6 · B9 +1` row (no Tot segment).
+  - **Expanded grid:** 1 birdie circle (22px), 10 single-square bogeys (22px), 1 double-square double-bogey (26 outer + 20 inner). Distribution captured via `getComputedStyle`.
+  - **No green `#3B6D11`** anywhere in the rendered HTML (confirmed via DOM scan).
+  - **Hierarchy verification** via `getComputedStyle` on representative cells: hole `rgb(4,44,83)` / weight 500 / normal; par `rgb(148,163,184)` / weight 500 / italic; gross `rgb(30,41,59)` / weight 600 / normal. F9/B9 subtotal column tracks the same per-row treatment.
+- `preview_screenshot` skipped (consistent 30s browser-side timeout on this Windows preview; same as PM2/PM3/PM4 sessions); structural verification via `preview_eval` covers all spec requirements.
+
+### Side-effect propagation (worth flagging for the next session)
+
+P2 and P3 touch the shared `PlayerHoleGrid` component. This is the same component consumed by `<RoundResultsView/>` on `/leaderboard` and `/round/[id]/summary`. The visual changes therefore propagate to those routes uniformly — birdies on the summary expand-grids now show as circles instead of green text, and the hole/par/gross rows on those routes pick up the new hierarchy. The spec marked leaderboard / summary as out of scope; this propagation is the intended consequence of the A1.7 extraction, not a separate edit. Behavior unchanged on those routes — only visuals shift.
+
+### ROADMAP updates
+
+- New `### Phase A.1 polish — 2026-05-17 (post-A1.7)` subsection at the bottom of the Phase A.1 block, with a 3-row table summarizing P1 / P2 / P3 + commit hashes.
+- A1.6 row gets an `**Update 2026-05-17 (polish P1):**` annotation noting Tot was removed.
+- A1.7 row gets an `**Update 2026-05-17 (polish P2 + P3):**` annotation noting the notation marks + hierarchy refresh.
+- New `May 17 (PM5)` session log entry above the `May 17 (PM4)` entry.
+- Top-of-file last-updated banner refreshed.
+
+---
+
+## Earlier today — 2026-05-17 PM4 (shared RoundResultsView extraction)
 
 ### Shared round-results surface
 
@@ -300,13 +363,16 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Master branch state
 
-- HEAD commit (pre-PM4-commit): `d4cc29a` — feat(summary): restore Individual Rankings cross-team section. PM4 shared-view extraction commit + this STATUS.md update will move HEAD forward.
-- Status vs production deployment: **in sync** at PM3 HEAD. PM4 extraction will auto-deploy to Vercel on push.
-- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 + PM4 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
+- HEAD commit (pre-STATUS-update): `23d7379` — style(scorecard): clarify hole/par/gross visual hierarchy. The trailing STATUS.md / ROADMAP commit will move HEAD forward by one.
+- Status vs production deployment: **in sync** through P3 (`23d7379`) after the push. Each commit auto-deploys to Vercel.
+- Schema state: Track A migrations 005 / 006 / 007 applied; Option 3 + PR 3 + PM3 + PM4 + PM5 added no net schema delta. Round 90 holds 10 players across 5 teams (T1–T5) with 180 scores; `rounds.played_on` is UNIQUE; `rounds.updated_at` is auto-maintained.
 
 ## Last commits on master
 
-- (pending) — refactor(round-results): extract shared RoundResultsView + use on /leaderboard (2026-05-17 PM4)
+- `23d7379` — style(scorecard): clarify hole/par/gross visual hierarchy (P3, 2026-05-17 PM5)
+- `00a54c3` — feat(scorecard): add traditional notation marks to score cells (P2, 2026-05-17 PM5)
+- `370c7df` — feat(scorecard): remove redundant Tot from team pill (P1, 2026-05-17 PM5)
+- `cce58d9` — refactor(round-results): extract shared RoundResultsView + use on /leaderboard (2026-05-17 PM4)
 - `d4cc29a` — feat(summary): restore Individual Rankings cross-team section (2026-05-17 PM3)
 - `d322a30` — feat(summary): Phase C PR 3 — ranked all-teams summary with F9/B9 + two-level drill-down (2026-05-17 PM2)
 - `34699b2` — feat(scorecard): A1.7 — tap-to-expand hole-by-hole player rows (2026-05-17 PM)
@@ -327,7 +393,7 @@ Sentry instrumentation per D14 now live for: terminal failures (with `reason` di
 
 ## Test surface on master
 
-- vitest: **251/251 pass** across 25 files. Verified fresh at session end. No new tests added in Phase C PR 3 — page is a thin consumer of already-tested helpers (`rankTeams`, `formatTeamTotal`, `PlayerHoleGrid`).
+- vitest: **259/259 pass** across 25 files. Verified fresh at session end (8 new `PlayerHoleGrid` notation-mark tests added in P2).
 - `tsc --noEmit` clean.
 - Component test infra: `tests/components/fake-supabase.ts` (chainable in-memory client supporting `.upsert`, `.or` no-op, `failWrite` hook, `writeDelayMs`, writes log). Used by `scorecard-bug-repro.test.tsx`, `end-round-flow.test.tsx`, `stale-failure-homepage.test.tsx`, `ReconciliationDialog.test.tsx`, `StaleFailureDialog.test.tsx`, `stuckItemsClipboard.test.ts`.
 - Library unit tests: `tests/lib/writeQueue/{backoff,storage,WriteQueue}.test.ts` cover the locked D7 backoff schedule, quota eviction order, `markAsTerminal` / `retryTerminal` / `forget` semantics, hail-mary drain, online / offline / visibility / pageshow triggers, and `in_flight` resurrection on mount.
