@@ -345,8 +345,12 @@ export class WriteQueue {
       } else if (result.classification === "terminal") {
         next.state = "terminal_failure";
         next.last_attempt_at = this.now();
+        // D.1: carry the known sub-reason (e.g., 'round_finalized') onto
+        // the item so the stale-failure dialog can swap in specific copy.
+        next.terminal_reason = result.terminalReason ?? null;
         this.sentry.captureMessage("writeQueue.terminal_failure", {
           reason: "classified_terminal",
+          terminal_reason: next.terminal_reason ?? "unknown",
           item_id: next.id,
           payload: next.payload,
           attempts: next.attempts,

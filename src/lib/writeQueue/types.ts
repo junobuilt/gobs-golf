@@ -21,6 +21,14 @@ export interface QueueItemDisplay {
   round_date?: string | null;
 }
 
+/**
+ * D.1: known terminal-failure causes that the UI specializes copy for.
+ * `round_finalized` is the only specialized reason today (P0001 raised by
+ * the scores_reject_on_complete trigger when the parent round is locked).
+ * Other terminal failures stay as null.
+ */
+export type TerminalReason = "round_finalized" | null;
+
 export interface QueueItem {
   id: string;
   kind: "score_upsert";
@@ -31,13 +39,26 @@ export interface QueueItem {
   next_attempt_at: number;
   state: "pending" | "in_flight" | "terminal_failure";
   display: QueueItemDisplay;
+  /**
+   * D.1: set when the item transitioned to terminal_failure with a known
+   * cause. Used by StaleFailureDialog to swap in specific copy ("Round
+   * was finalized — scores can no longer be edited") instead of the
+   * generic "needs to sync" framing.
+   */
+  terminal_reason?: TerminalReason;
 }
 
 export type WriteClassification = "retry" | "terminal";
 
 export type WriteResult =
   | { success: true }
-  | { success: false; classification: WriteClassification; error?: unknown };
+  | {
+      success: false;
+      classification: WriteClassification;
+      /** Optional sub-classification carried into QueueItem.terminal_reason. */
+      terminalReason?: TerminalReason;
+      error?: unknown;
+    };
 
 export type WriterFn = (item: QueueItem) => Promise<WriteResult>;
 

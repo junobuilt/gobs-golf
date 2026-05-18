@@ -6,7 +6,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { supabase } from "@/lib/supabase";
 import { WriteQueue } from "./WriteQueue";
-import type { QueueItem, SentryReporter, WriteResult } from "./types";
+import type { QueueItem, SentryReporter, TerminalReason, WriteResult } from "./types";
 
 let instance: WriteQueue | null = null;
 
@@ -55,12 +55,33 @@ const supabaseUpsertWriter = async (item: QueueItem): Promise<WriteResult> => {
         { onConflict: "round_player_id,hole_number" },
       );
     if (!error) return { success: true };
-    return { success: false, classification: classifySupabaseError(error), error };
+    return {
+      success: false,
+      classification: classifySupabaseError(error),
+      terminalReason: getTerminalReason(error),
+      error,
+    };
   } catch (err) {
     // Thrown errors (network failure before HTTP response) are retryable.
     return { success: false, classification: "retry", error: err };
   }
 };
+
+/**
+ * D.1: extract a known terminal sub-reason from a Supabase error so the
+ * UI can show specialized copy. Today only `round_finalized` is recognized
+ * (raised by the BEFORE INSERT/UPDATE trigger on `scores` when the parent
+ * round is locked). Returns null when the error has no known sub-reason.
+ */
+export function getTerminalReason(err: unknown): TerminalReason {
+  if (!err || typeof err !== "object") return null;
+  const e = err as { code?: string; message?: string };
+  if (e.code === "P0001" && typeof e.message === "string" &&
+      e.message.includes("round_finalized")) {
+    return "round_finalized";
+  }
+  return null;
+}
 
 /**
  * D8: 4xx-equivalent → terminal; 5xx + network → retry. Supabase's REST

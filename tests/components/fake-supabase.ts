@@ -31,6 +31,10 @@ export interface FakeOptions {
   // If set, the supplied function decides whether a given write should fail
   // (and reject the promise). Called once per insert/update, in order.
   failWrite?: (op: WriteOp, callIndex: number) => boolean;
+  // D.1: response for supabase.rpc('finalize_round_with_blind_draws', ...).
+  // Defaults to { data: 'finalized', error: null } so legacy tests that
+  // walked the End-Round flow continue to redirect to /summary.
+  rpcFinalizeResult?: { data: string | null; error: unknown };
 }
 
 export class FakeSupabase {
@@ -60,6 +64,20 @@ export class FakeSupabase {
 
   from(table: string) {
     return new QueryBuilder(this, table);
+  }
+
+  /**
+   * D.1: minimal RPC mock. The scorecard calls
+   *   supabase.rpc('finalize_round_with_blind_draws', { p_round_id })
+   * after every score write that locally completes the round, and from
+   * the End-Round flow. The default response ('finalized', no error)
+   * mirrors a successful end-of-round so the existing test assertions
+   * about router.push('/round/N/summary') continue to hold without
+   * per-test wiring. Override with setOptions({ rpcFinalizeResult }).
+   */
+  async rpc(_name: string, _args: any): Promise<{ data: string | null; error: unknown }> {
+    if (this.options.rpcFinalizeResult) return this.options.rpcFinalizeResult;
+    return { data: "finalized", error: null };
   }
 
   _allocId(table: string): number {

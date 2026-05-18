@@ -138,36 +138,55 @@ export default function StaleFailureDialog({
             </div>
           </div>
 
-          <h2
-            id="stale-failure-title"
-            style={{
-              margin: "0 0 8px",
-              textAlign: "center",
-              fontSize: "1.1rem",
-              fontWeight: 700,
-              color: "#0c3057",
-              lineHeight: 1.35,
-            }}
-          >
-            {variant === "first"
-              ? `${items.length} ${items.length === 1 ? "score" : "scores"} from your last round still need${items.length === 1 ? "s" : ""} to sync`
-              : `Still couldn't sync ${items.length} ${items.length === 1 ? "score" : "scores"}.`}
-          </h2>
-
-          {variant === "second" && (
-            <p
-              style={{
-                margin: "0 0 14px",
-                textAlign: "center",
-                fontSize: "0.88rem",
-                color: "#4b5563",
-                lineHeight: 1.5,
-              }}
-            >
-              Try again later when you have better signal. If this keeps
-              happening, contact admin.
-            </p>
-          )}
+          {/* D.1: when every stuck item failed because the round was
+              already finalized, the user can never "sync" these — the DB
+              rejects them. Show specific copy and route Retry/Try Again
+              into a no-op the user can ignore. Forget is still useful to
+              clear them from the queue. */}
+          {(() => {
+            const allFinalized = items.length > 0
+              && items.every(i => i.terminal_reason === "round_finalized");
+            const title = allFinalized
+              ? `Round was finalized — ${items.length} ${items.length === 1 ? "score" : "scores"} can no longer be edited`
+              : variant === "first"
+                ? `${items.length} ${items.length === 1 ? "score" : "scores"} from your last round still need${items.length === 1 ? "s" : ""} to sync`
+                : `Still couldn't sync ${items.length} ${items.length === 1 ? "score" : "scores"}.`;
+            const subtitle = allFinalized
+              ? "These edits were attempted after the round closed. Tap Forget to clear them, or contact Jonathan if a real correction is needed."
+              : variant === "second"
+                ? "Try again later when you have better signal. If this keeps happening, contact admin."
+                : null;
+            return (
+              <>
+                <h2
+                  id="stale-failure-title"
+                  style={{
+                    margin: "0 0 8px",
+                    textAlign: "center",
+                    fontSize: "1.1rem",
+                    fontWeight: 700,
+                    color: "#0c3057",
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {title}
+                </h2>
+                {subtitle && (
+                  <p
+                    style={{
+                      margin: "0 0 14px",
+                      textAlign: "center",
+                      fontSize: "0.88rem",
+                      color: "#4b5563",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {subtitle}
+                  </p>
+                )}
+              </>
+            );
+          })()}
 
           <ul
             data-testid="stale-failure-list"
