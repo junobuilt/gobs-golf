@@ -32,6 +32,25 @@ export type PlayerRow = {
   // 18-length arrays. scores: strokes or null. par: hole par (uses player tee).
   scores: (number | null)[];
   par: number[];
+  // D.1: NULL = played all 18 (or hasn't dropped). 1..17 = walked off after
+  // that hole. Drives the "Left after hole N" badge and the mid-round
+  // dropout merge with a blind_draws fill in PlayerHoleGrid.
+  droppedAfterHole: number | null;
+};
+
+// D.1: one blind-draw fill on a short team. Display layer (RoundResultsView,
+// read-only scorecard) reads this to render the 🎲 caption, the merged
+// PlayerHoleGrid for mid-round dropouts, and the pseudo-player row for
+// round-start fills.
+export type BlindDrawFill = {
+  drawnPlayerId: number;
+  drawnPlayerName: string;
+  fromTeamNumber: number;
+  holeRangeStart: number; // 1 for full-18 fill, N+1 for mid-round dropout
+  holeRangeEnd: number;   // always 18
+  // 18-length gross-score array for the drawn player. Consumer slices to
+  // the fill range when merging with a dropout's partial scores.
+  drawnPlayerScores: (number | null)[];
 };
 
 export type TeamRow = {
@@ -46,6 +65,10 @@ export type TeamRow = {
   f9Total: number | null; // delta or absolute pts; null if no F9 hole has team score
   b9Total: number | null;
   players: PlayerRow[];
+  // D.1: empty when this team had no fills. Multiple fills ordered to match
+  // the engine's draw order (round-start first, then dropouts by ascending
+  // dropout hole). Roster rendering uses this list to lay out 🎲 captions.
+  blindDraws: BlindDrawFill[];
 };
 
 export type LoadedRoundResults = {
@@ -82,7 +105,7 @@ export async function loadRoundResults(
   const { data: rps } = await supabase
     .from("round_players")
     .select(`
-      id, team_number, tee_id, course_handicap,
+      id, player_id, team_number, tee_id, course_handicap, dropped_after_hole,
       players ( display_name, full_name )
     `)
     .eq("round_id", roundId)
@@ -104,6 +127,33 @@ export async function loadRoundResults(
       },
     };
   }
+
+  // D.1: load blind-draw fills for this round. Returns [] for any round that
+  // either hasn't been finalized yet or had no short teams. Joined with
+  // players to display the drawn player's name.
+  const { data: blindDrawRows } = await supabase
+    .from("blind_draws")
+    .select(`
+      short_team_number, drawn_player_id, hole_range_start, hole_range_end,
+      players ( display_name, full_name )
+    `)
+    .eq("round_id", roundId)
+    .order("id");
+
+  // playerId -> { rpId, teamNumber, displayName }. Used to look up the
+  // drawn player's round_players row for their score array and their own
+  // team_number ("from Team N" caption).
+  const playerLookup: Record<number, {
+    rpId: number; teamNumber: number; displayName: string;
+  }> = {};
+  (rps as any[]).forEach(rp => {
+    const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+    playerLookup[rp.player_id as number] = {
+      rpId: rp.id as number,
+      teamNumber: rp.team_number as number,
+      displayName: playerRow?.display_name || playerRow?.full_name || "?",
+    };
+  });
 
   const rpIds = (rps as any[]).map(r => r.id as number);
   const { data: allScores } = await supabase
@@ -241,8 +291,38 @@ export async function loadRoundResults(
         holesPlayed,
         scores,
         par,
+        droppedAfterHole: rp.dropped_after_hole ?? null,
       };
     });
+
+    // D.1: fills for this team (matched by short_team_number). Drawn player's
+    // 18-score array comes from the same scoresByRpId map already built —
+    // looked up via player_id → round_players.id.
+    const blindDraws: BlindDrawFill[] = (blindDrawRows ?? [])
+      .filter((bd: any) => bd.short_team_number === teamNum)
+      .map((bd: any) => {
+        const drawnPlayerId = bd.drawn_player_id as number;
+        const lookup = playerLookup[drawnPlayerId];
+        const drawnPlayerRow = Array.isArray(bd.players) ? bd.players[0] : bd.players;
+        const drawnPlayerName =
+          drawnPlayerRow?.display_name ||
+          drawnPlayerRow?.full_name ||
+          lookup?.displayName ||
+          "?";
+        const drawnScoresMap = lookup ? (scoresByRpId[lookup.rpId] || {}) : {};
+        const drawnPlayerScores: (number | null)[] = Array.from(
+          { length: 18 },
+          (_, i) => drawnScoresMap[i + 1] ?? null,
+        );
+        return {
+          drawnPlayerId,
+          drawnPlayerName,
+          fromTeamNumber: lookup?.teamNumber ?? 0,
+          holeRangeStart: bd.hole_range_start as number,
+          holeRangeEnd: bd.hole_range_end as number,
+          drawnPlayerScores,
+        };
+      });
 
     return {
       id: teamNum,
@@ -255,6 +335,7 @@ export async function loadRoundResults(
       f9Total: legTotal(F9),
       b9Total: legTotal(B9),
       players,
+      blindDraws,
     };
   });
 
