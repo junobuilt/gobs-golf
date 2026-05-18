@@ -56,10 +56,9 @@ const TEE_COLORS: Record<string, { bg: string; text: string }> = {
   Yellow: { bg: "#facc15", text: "#000000" },
 };
 
-// A1.6: F9 / B9 / Tot leg ranges for the team-net pill cumulative row.
+// F9 / B9 leg ranges for the team-net pill cumulative row.
 const F9_HOLES = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
-const ALL_HOLES = [...F9_HOLES, ...B9_HOLES];
 
 export default function ScorecardPage() {
   const params = useParams();
@@ -958,14 +957,14 @@ export default function ScorecardPage() {
                   expects an absolute value, and this naturally provides it. */}
               {roundFormat ? formatTeamTotal(teamNet - teamPar, roundFormat) : ""}
             </div>
-            {/* A1.6: F9 / B9 / Tot cumulative net. Tot == headline by design
-                (Nassau payouts settle each leg separately). */}
+            {/* F9 / B9 cumulative net beneath the headline delta. Tot was
+                redundant with the big headline number (Nassau settles each
+                leg separately; total = headline by construction). */}
             {roundFormat && (() => {
               const fmt = (v: number | null) =>
                 v == null ? "—" : formatTeamTotal(v, roundFormat);
               const f9 = getTeamNetDeltaForHoles(F9_HOLES);
               const b9 = getTeamNetDeltaForHoles(B9_HOLES);
-              const tot = getTeamNetDeltaForHoles(ALL_HOLES);
               const labelStyle = { opacity: 0.65 };
               const valueStyle = { fontWeight: 500 };
               const sepStyle = { opacity: 0.65, margin: "0 6px" };
@@ -976,9 +975,6 @@ export default function ScorecardPage() {
                   <span style={sepStyle}>·</span>
                   <span style={labelStyle}>B9 </span>
                   <span style={valueStyle}>{fmt(b9)}</span>
-                  <span style={sepStyle}>·</span>
-                  <span style={labelStyle}>Tot </span>
-                  <span style={valueStyle}>{fmt(tot)}</span>
                 </div>
               );
             })()}
