@@ -43,23 +43,99 @@ describe("PlayerHoleGrid", () => {
     expect(html).toMatch(/>6</);
   });
 
-  it("uses the birdie color #3B6D11 when score < par for a played hole", () => {
+  it("no longer paints the legacy birdie green color (#3B6D11) — shape carries the signal now", () => {
     const scores = [...ALL_NULL];
     scores[0] = 3; // par 4 → birdie
     const html = renderToString(
       <PlayerHoleGrid scores={scores} par={PAR_18} />
     );
-    expect(html).toContain("#3B6D11");
+    expect(html).not.toContain("#3B6D11");
   });
 
-  it("does NOT paint birdie color when no played hole beats par", () => {
+  it("birdie (delta −1) renders a single circle", () => {
     const scores = [...ALL_NULL];
-    scores[0] = 5; // par 4 → bogey
-    scores[3] = 3; // par 3 → par, not birdie
+    scores[0] = 3; // par 4 → birdie, delta -1
     const html = renderToString(
       <PlayerHoleGrid scores={scores} par={PAR_18} />
     );
-    expect(html).not.toContain("#3B6D11");
+    expect(countOccurrences(html, "border-radius:50%")).toBe(1);
+    expect(countOccurrences(html, "border:1px solid currentColor")).toBe(1);
+  });
+
+  it("eagle (delta −2) renders a double circle (two nested)", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 2; // par 4 → eagle, delta -2
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border-radius:50%")).toBe(2);
+  });
+
+  it("albatross (delta −3) renders a triple circle (three nested)", () => {
+    const scores = [...ALL_NULL];
+    scores[4] = 2; // par 5 → albatross, delta -3
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border-radius:50%")).toBe(3);
+  });
+
+  it("hole-in-one on a par 5 (delta −4) caps at triple circle", () => {
+    const scores = [...ALL_NULL];
+    scores[4] = 1; // par 5 ace → delta -4, still triple circle
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border-radius:50%")).toBe(3);
+  });
+
+  it("par (delta 0) renders no notation marks", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 4; // par 4 → par, delta 0
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(html).not.toContain("border-radius:50%");
+    expect(html).not.toContain("border:1px solid currentColor");
+  });
+
+  it("bogey (delta +1) renders a single square", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 5; // par 4 → bogey, delta +1
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border:1px solid currentColor")).toBe(1);
+    expect(html).not.toContain("border-radius:50%"); // square, not circle
+  });
+
+  it("double bogey (delta +2) renders a double square", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 6; // par 4 → double bogey, delta +2
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border:1px solid currentColor")).toBe(2);
+    expect(html).not.toContain("border-radius:50%");
+  });
+
+  it("triple bogey (delta +3) renders a triple square", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 7; // par 4 → triple bogey, delta +3
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border:1px solid currentColor")).toBe(3);
+  });
+
+  it("delta +5 caps at triple square (no four-tier explosion)", () => {
+    const scores = [...ALL_NULL];
+    scores[0] = 9; // par 4 → +5
+    const html = renderToString(
+      <PlayerHoleGrid scores={scores} par={PAR_18} />
+    );
+    expect(countOccurrences(html, "border:1px solid currentColor")).toBe(3);
+    expect(html).not.toContain("border-radius:50%");
   });
 
   it("highlights the current hole header + score when currentHoleIndex is set", () => {

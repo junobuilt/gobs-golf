@@ -4,14 +4,13 @@ import React from "react";
 
 // A1.7 — reusable per-player hole-by-hole grid.
 // Used inline under each player row on the live scorecard (with
-// currentHoleIndex set + showRunningTotal=true) and will be reused in
-// Phase C PR3 drill-in summary (with currentHoleIndex omitted +
-// showRunningTotal=false).
+// currentHoleIndex set + showRunningTotal=true) and in the Phase C PR3
+// drill-in summary (with currentHoleIndex omitted + showRunningTotal=false).
 
 export interface PlayerHoleGridProps {
   // 18 entries, in hole order 1..18. null = unplayed (renders "—").
   scores: (number | null)[];
-  // 18 entries, hole order 1..18. Used for birdie detection + subtotals.
+  // 18 entries, hole order 1..18. Used for notation + subtotals.
   par: number[];
   // 0..17 — highlight that hole's header + score cells. Omit to disable.
   currentHoleIndex?: number;
@@ -21,12 +20,12 @@ export interface PlayerHoleGridProps {
 }
 
 const COLOR_TERTIARY = "#94a3b8";
-const COLOR_BIRDIE = "#3B6D11";
 const COLOR_TEXT = "#1e293b";
 const COLOR_HIGHLIGHT = "#dbeafe";
 const COLOR_DIVIDER = "#e2e8f0";
 
 const GRID_COLS = "repeat(9, minmax(0, 1fr)) minmax(0, 1.15fr)";
+const SCORE_CELL_MIN_HEIGHT = 32;
 
 function sumPlayed(values: (number | null)[]): number | null {
   let total = 0;
@@ -38,6 +37,47 @@ function sumPlayed(values: (number | null)[]): number | null {
     }
   }
   return any ? total : null;
+}
+
+// Traditional golf scorecard notation. Delta = score − par.
+// Negative deltas → concentric circle(s); positive deltas → concentric
+// square(s). Par (delta 0) renders bare. Stroke uses currentColor so the
+// notation inherits the cell's text color and renders on top of the
+// current-hole highlight background.
+function ScoreMark({ delta, score }: { delta: number; score: number }) {
+  if (delta === 0) {
+    return <>{score}</>;
+  }
+
+  const isCircle = delta < 0;
+  const tier = Math.min(Math.abs(delta), 3); // cap at triple
+  const sizes =
+    tier === 1 ? [22] : tier === 2 ? [26, 20] : [28, 22, 18];
+
+  const borderRadius = isCircle ? "50%" : "0";
+
+  let content: React.ReactNode = <span>{score}</span>;
+  for (let i = sizes.length - 1; i >= 0; i--) {
+    const size = sizes[i];
+    content = (
+      <div
+        key={i}
+        style={{
+          width: size,
+          height: size,
+          borderRadius,
+          border: "1px solid currentColor",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+        }}
+      >
+        {content}
+      </div>
+    );
+  }
+  return <>{content}</>;
 }
 
 function NineGrid({
@@ -118,28 +158,27 @@ function NineGrid({
         {parSubtotal}
       </div>
 
-      {/* Row 3 — gross score */}
+      {/* Row 3 — gross score with traditional notation */}
       {indices.map((i, j) => {
         const s = scoreSlice[j];
         const isCurrent = currentHoleIndex === i;
-        const isBirdie = s != null && s < par[i];
         const unplayed = s == null;
         return (
           <div
             key={`s-${i}`}
             style={{
               background: isCurrent ? COLOR_HIGHLIGHT : "transparent",
-              color: unplayed
-                ? COLOR_TERTIARY
-                : isBirdie
-                ? COLOR_BIRDIE
-                : COLOR_TEXT,
+              color: unplayed ? COLOR_TERTIARY : COLOR_TEXT,
               fontWeight: 700,
-              padding: "3px 0",
+              padding: "1px 0",
               borderRadius: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: SCORE_CELL_MIN_HEIGHT,
             }}
           >
-            {unplayed ? "—" : s}
+            {unplayed ? "—" : <ScoreMark delta={s - par[i]} score={s} />}
           </div>
         );
       })}
@@ -148,6 +187,10 @@ function NineGrid({
           color: scoreSubtotal == null ? COLOR_TERTIARY : COLOR_TEXT,
           fontWeight: 800,
           padding: "3px 0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: SCORE_CELL_MIN_HEIGHT,
         }}
       >
         {scoreSubtotal == null ? "—" : scoreSubtotal}
