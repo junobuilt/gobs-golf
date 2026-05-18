@@ -117,6 +117,15 @@ export default function ScorecardPage() {
   // every score write + after dropout state changes.
   const [otherTeamsComplete, setOtherTeamsComplete] = useState(false);
 
+  // D.1 S6 read-only scorecard. After finalize, dropout fills pair with the
+  // dropped player by holeRangeStart = droppedAfterHole + 1. Keyed by
+  // round_players.id so the per-hole big number + expanded PlayerHoleGrid
+  // can render the drawn player's scores in the post-drop range, with
+  // a 🎲 (blind draw) caption.
+  const [fillsByRpId, setFillsByRpId] = useState<
+    Record<number, { drawnPlayerName: string; drawnScores: (number | null)[]; holeRangeStart: number; holeRangeEnd: number }>
+  >({});
+
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
 
@@ -301,6 +310,9 @@ export default function ScorecardPage() {
       // D.1 S2 — initial fetch for the pre-fire banner. Subsequent updates
       // come from setScore / refreshDropoutStates.
       void refreshOtherTeamsState();
+      // D.1 S6 — load dropout fills for the read-only post-finalize view.
+      // Safe to run pre-finalize too: returns no rows.
+      void refreshBlindDrawFills();
     }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -459,6 +471,82 @@ export default function ScorecardPage() {
     });
   };
 
+  // D.1 S6 — load all dropout fills for this round and pair each with its
+  // dropped player (by droppedAfterHole = holeRangeStart - 1). Round-start
+  // fills (holeRangeStart=1) don't pair to a scorecard slot since the team
+  // has no round_players row for them; those surfaces live in the summary
+  // view's pseudo-player rows.
+  const refreshBlindDrawFills = async () => {
+    const { data: fills } = await supabase
+      .from("blind_draws")
+      .select(`
+        short_team_number, drawn_player_id, hole_range_start, hole_range_end,
+        players ( display_name, full_name )
+      `)
+      .eq("round_id", roundId)
+      .gt("hole_range_start", 1);
+    if (!fills || fills.length === 0) {
+      setFillsByRpId({});
+      return;
+    }
+    // Pair each dropout fill to a round_players row in this team filter
+    // (or the whole round if no filter). Fetch fresh data: rp.id +
+    // droppedAfterHole + scores for the drawn player.
+    const { data: localRps } = await supabase
+      .from("round_players")
+      .select("id, team_number, dropped_after_hole")
+      .eq("round_id", roundId)
+      .gt("team_number", 0);
+    if (!localRps) return;
+    // Look up the drawn player's round_players row to get their 18-hole
+    // scores. The drawn player is on another team in the same round.
+    const drawnPlayerIds = (fills as any[]).map(f => f.drawn_player_id as number);
+    const { data: drawnRps } = await supabase
+      .from("round_players")
+      .select("id, player_id")
+      .eq("round_id", roundId)
+      .in("player_id", drawnPlayerIds);
+    const drawnRpIdByPlayer: Record<number, number> = {};
+    (drawnRps ?? []).forEach((r: any) => { drawnRpIdByPlayer[r.player_id] = r.id; });
+    const { data: drawnScoreRows } = await supabase
+      .from("scores")
+      .select("round_player_id, hole_number, strokes")
+      .in("round_player_id", Object.values(drawnRpIdByPlayer));
+    const drawnScoresByRp: Record<number, Record<number, number>> = {};
+    (drawnScoreRows ?? []).forEach((s: any) => {
+      if (!drawnScoresByRp[s.round_player_id]) drawnScoresByRp[s.round_player_id] = {};
+      drawnScoresByRp[s.round_player_id][s.hole_number] = s.strokes;
+    });
+
+    const next: typeof fillsByRpId = {};
+    const droppedPool = (localRps as any[]).filter(
+      r => r.dropped_after_hole != null,
+    );
+    for (const fill of fills as any[]) {
+      const target = (fill.hole_range_start as number) - 1;
+      const idx = droppedPool.findIndex(
+        r => r.team_number === fill.short_team_number && r.dropped_after_hole === target,
+      );
+      if (idx < 0) continue;
+      const matched = droppedPool[idx];
+      droppedPool.splice(idx, 1);
+      const drawnRpId = drawnRpIdByPlayer[fill.drawn_player_id];
+      const drawnScoresMap = drawnRpId != null ? (drawnScoresByRp[drawnRpId] || {}) : {};
+      const drawnScores: (number | null)[] = Array.from(
+        { length: 18 }, (_, i) => drawnScoresMap[i + 1] ?? null,
+      );
+      const drawnPlayerRow = Array.isArray(fill.players) ? fill.players[0] : fill.players;
+      const drawnName = drawnPlayerRow?.display_name || drawnPlayerRow?.full_name || "?";
+      next[matched.id] = {
+        drawnPlayerName: drawnName,
+        drawnScores,
+        holeRangeStart: fill.hole_range_start,
+        holeRangeEnd: fill.hole_range_end,
+      };
+    }
+    setFillsByRpId(next);
+  };
+
   // D.1 S2 — refetches completion state for every team OTHER than the one
   // shown by this scorecard view. Cheap (~2 queries) and runs only on
   // score-write or dropout-change events, so the once-mounted cost is bounded.
@@ -532,9 +620,13 @@ export default function ScorecardPage() {
         setIsRoundComplete(true);
         setFinalizedToastVisible(true);
         setTimeout(() => setFinalizedToastVisible(false), 4000);
+        // D.1 S6 — pick up freshly written blind_draws rows so the read-only
+        // view shows the fills without a page reload.
+        void refreshBlindDrawFills();
       } else if (status === "already_complete") {
         // Silent — but reflect the DB state locally.
         setIsRoundComplete(true);
+        void refreshBlindDrawFills();
       } else if (status === "pool_too_small") {
         setPoolErrorVisible(true);
         setTimeout(() => setPoolErrorVisible(false), 6000);
@@ -1234,15 +1326,36 @@ export default function ScorecardPage() {
         const droppedHole = rp.dropped_after_hole;
         const isPostDropHole = droppedHole != null && currentHole > droppedHole;
 
+        // D.1 S6 — read-only post-finalize. After is_complete:
+        //   1. +/− buttons disappear (no more edits, period).
+        //   2. For a dropped player on a hole within a paired fill, render
+        //      the drawn player's score with a 🎲 (blind draw) caption.
+        //   3. The expanded PlayerHoleGrid uses the merged 18-hole array.
+        const fillForRp = fillsByRpId[rp.id];
+        const isFillHole = fillForRp != null
+          && currentHole >= fillForRp.holeRangeStart
+          && currentHole <= fillForRp.holeRangeEnd;
+        const fillScoreForHole = isFillHole
+          ? fillForRp.drawnScores[currentHole - 1]
+          : null;
+
         // A1.7 — per-player hole-by-hole grid data + expand state.
         const isExpanded = expandedPlayers.has(rp.id);
         const playerHoles = holesByTee[rp.tee_id || 0] || [];
         const par18 = Array.from({ length: 18 }, (_, i) =>
           playerHoles.find(ph => ph.hole_number === i + 1)?.par ?? 4
         );
-        const scores18: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
+        const ownScores18: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
           scores[rp.id]?.[i + 1] ?? null
         );
+        // D.1 S6: merge dropout fill into the 18-hole grid when present.
+        const scores18: (number | null)[] = fillForRp
+          ? ownScores18.map((s, i) =>
+              i + 1 >= fillForRp.holeRangeStart && i + 1 <= fillForRp.holeRangeEnd
+                ? fillForRp.drawnScores[i]
+                : s,
+            )
+          : ownScores18;
 
         const cardBorderRadius = isExpanded ? "16px 16px 0 0" : "16px";
         const cardMarginBottom = isExpanded ? "0" : "10px";
@@ -1322,25 +1435,27 @@ export default function ScorecardPage() {
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }} onClick={e => e.stopPropagation()}>
-                <button
-                  onClick={() => {
-                    if (isPostDropHole) return;
-                    const par = holeInfo?.par ?? 4;
-                    const current = scores[rp.id]?.[currentHole];
-                    setScore(rp.id, currentHole, current == null ? par : current - 1);
-                  }}
-                  disabled={isPostDropHole}
-                  style={{
-                    width: "44px", height: "44px", borderRadius: "10px",
-                    border: "1px solid #e2e8f0",
-                    background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
-                    color: isPostDropHole ? "#cbd5e1" : undefined,
-                    fontSize: "20px",
-                    cursor: isPostDropHole ? "not-allowed" : "pointer",
-                  }}
-                >
-                  −
-                </button>
+                {!isRoundComplete && (
+                  <button
+                    onClick={() => {
+                      if (isPostDropHole) return;
+                      const par = holeInfo?.par ?? 4;
+                      const current = scores[rp.id]?.[currentHole];
+                      setScore(rp.id, currentHole, current == null ? par : current - 1);
+                    }}
+                    disabled={isPostDropHole}
+                    style={{
+                      width: "44px", height: "44px", borderRadius: "10px",
+                      border: "1px solid #e2e8f0",
+                      background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
+                      color: isPostDropHole ? "#cbd5e1" : undefined,
+                      fontSize: "20px",
+                      cursor: isPostDropHole ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    −
+                  </button>
+                )}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: "35px" }}>
                   <div style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center", marginBottom: "2px" }}>
                     {Array.from({ length: hcpStrokes }).map((_, i) => (
@@ -1349,30 +1464,42 @@ export default function ScorecardPage() {
                   </div>
                   <div style={{
                     fontSize: "1.8rem", fontWeight: 900, textAlign: "center",
-                    color: isPostDropHole ? "#cbd5e1" : undefined,
+                    color: isPostDropHole && fillScoreForHole == null ? "#cbd5e1" : undefined,
                   }}>
-                    {scores[rp.id]?.[currentHole] || "—"}
+                    {fillScoreForHole != null
+                      ? fillScoreForHole
+                      : (scores[rp.id]?.[currentHole] || "—")}
                   </div>
+                  {fillScoreForHole != null && (
+                    <div style={{
+                      fontSize: "0.6rem", color: "#6b7280",
+                      fontStyle: "italic", marginTop: 2, whiteSpace: "nowrap",
+                    }}>
+                      🎲 (blind draw)
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={() => {
-                    if (isPostDropHole) return;
-                    const par = holeInfo?.par ?? 4;
-                    const current = scores[rp.id]?.[currentHole];
-                    setScore(rp.id, currentHole, current == null ? par : current + 1);
-                  }}
-                  disabled={isPostDropHole}
-                  style={{
-                    width: "44px", height: "44px", borderRadius: "10px",
-                    border: "1px solid #e2e8f0",
-                    background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
-                    color: isPostDropHole ? "#cbd5e1" : undefined,
-                    fontSize: "20px",
-                    cursor: isPostDropHole ? "not-allowed" : "pointer",
-                  }}
-                >
-                  +
-                </button>
+                {!isRoundComplete && (
+                  <button
+                    onClick={() => {
+                      if (isPostDropHole) return;
+                      const par = holeInfo?.par ?? 4;
+                      const current = scores[rp.id]?.[currentHole];
+                      setScore(rp.id, currentHole, current == null ? par : current + 1);
+                    }}
+                    disabled={isPostDropHole}
+                    style={{
+                      width: "44px", height: "44px", borderRadius: "10px",
+                      border: "1px solid #e2e8f0",
+                      background: isPostDropHole ? "#f1f5f9" : "#f8fafc",
+                      color: isPostDropHole ? "#cbd5e1" : undefined,
+                      fontSize: "20px",
+                      cursor: isPostDropHole ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    +
+                  </button>
+                )}
                 <PlayerOverflowMenu
                   roundPlayerId={rp.id}
                   playerName={rp.display_name}
@@ -1424,6 +1551,15 @@ export default function ScorecardPage() {
                   marginBottom: "10px",
                 }}
               >
+                {fillForRp && (
+                  <div style={{
+                    fontSize: "0.72rem", color: "#6b7280",
+                    fontStyle: "italic", marginBottom: 6,
+                  }}>
+                    🎲 Holes {fillForRp.holeRangeStart}–{fillForRp.holeRangeEnd}:
+                    {" "}blind draw from {fillForRp.drawnPlayerName}
+                  </div>
+                )}
                 <PlayerHoleGrid
                   scores={scores18}
                   par={par18}

@@ -23,7 +23,43 @@ import type {
   LoadedRoundResults,
   PlayerRow,
   TeamRow,
+  BlindDrawFill,
 } from "@/lib/round/results";
+
+// D.1: copy helper. "all 18 holes" for round-start fills, "holes N+1–18"
+// for mid-round dropout fills. Used in both pill and caption forms.
+function rangeCopy(fill: BlindDrawFill): string {
+  if (fill.holeRangeStart === 1 && fill.holeRangeEnd === 18) return "all 18 holes";
+  return `holes ${fill.holeRangeStart}–${fill.holeRangeEnd}`;
+}
+
+// D.1: pair each dropout fill with its dropped player by matching
+// dropped_after_hole = holeRangeStart - 1. Multiple dropouts with the
+// same hole pair greedily in order. Round-start fills (holeRangeStart=1)
+// render as synthetic pseudo-player rows below the real roster.
+function pairBlindDraws(team: TeamRow): {
+  dropoutPairings: { player: PlayerRow; fill: BlindDrawFill }[];
+  roundStartFills: BlindDrawFill[];
+  unmatchedPlayers: PlayerRow[];
+} {
+  const droppedPool: PlayerRow[] = team.players.filter(p => p.droppedAfterHole != null);
+  const dropoutFills = team.blindDraws.filter(b => b.holeRangeStart > 1);
+  const roundStartFills = team.blindDraws.filter(b => b.holeRangeStart === 1);
+  const dropoutPairings: { player: PlayerRow; fill: BlindDrawFill }[] = [];
+  for (const fill of dropoutFills) {
+    const target = fill.holeRangeStart - 1;
+    const idx = droppedPool.findIndex(p => p.droppedAfterHole === target);
+    if (idx >= 0) {
+      dropoutPairings.push({ player: droppedPool[idx], fill });
+      droppedPool.splice(idx, 1);
+    }
+  }
+  return {
+    dropoutPairings,
+    roundStartFills,
+    unmatchedPlayers: droppedPool,
+  };
+}
 
 const COURSE_NAME = "Semiahmoo Golf & Country Club";
 
@@ -218,6 +254,12 @@ function TeamCard({
 }) {
   const isStableford = isStablefordFormat(format);
   const totalColor = scoreColor(team.total, isStableford);
+  const { dropoutPairings, roundStartFills, unmatchedPlayers } = pairBlindDraws(team);
+  // Map for quick lookup during PlayerSection rendering.
+  const dropoutFillByRpId = new Map<number, BlindDrawFill>(
+    dropoutPairings.map(p => [p.player.rpId, p.fill]),
+  );
+  const unmatchedSet = new Set<number>(unmatchedPlayers.map(p => p.rpId));
 
   return (
     <div style={{
@@ -261,6 +303,20 @@ function TeamCard({
           }}>
             {team.rosterDisplay}
           </div>
+          {team.blindDraws.length > 0 && (
+            <div style={{
+              fontSize: 11, color: C.textMuted,
+              marginBottom: 4, lineHeight: 1.4,
+            }}>
+              {team.blindDraws.map((bd, i) => (
+                <div key={i} style={{
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  🎲 Blind draw: {bd.drawnPlayerName} ({rangeCopy(bd)})
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{
             fontSize: 11, color: C.textMuted,
             letterSpacing: "0.3px",
@@ -292,14 +348,28 @@ function TeamCard({
 
       {isTeamExpanded && (
         <div style={{ borderTop: `1px solid ${C.divider}`, background: "white" }}>
-          {team.players.map((player, idx) => (
-            <PlayerSection
-              key={player.rpId}
-              player={player}
-              format={format}
-              expanded={expandedPlayers.has(player.rpId)}
-              isLast={idx === team.players.length - 1}
-              onToggle={() => onTogglePlayer(player.rpId)}
+          {team.players.map((player, idx) => {
+            const fill = dropoutFillByRpId.get(player.rpId);
+            const isLastRow =
+              idx === team.players.length - 1 && roundStartFills.length === 0;
+            return (
+              <PlayerSection
+                key={player.rpId}
+                player={player}
+                format={format}
+                expanded={expandedPlayers.has(player.rpId)}
+                isLast={isLastRow}
+                onToggle={() => onTogglePlayer(player.rpId)}
+                dropoutFill={fill}
+                isUnmatchedDropout={unmatchedSet.has(player.rpId)}
+              />
+            );
+          })}
+          {roundStartFills.map((fill, idx) => (
+            <BlindDrawPseudoPlayerSection
+              key={`bd-fill-${idx}`}
+              fill={fill}
+              isLast={idx === roundStartFills.length - 1}
             />
           ))}
         </div>
@@ -314,15 +384,38 @@ function PlayerSection({
   expanded,
   isLast,
   onToggle,
+  dropoutFill,
+  isUnmatchedDropout,
 }: {
   player: PlayerRow;
   format: Format;
   expanded: boolean;
   isLast: boolean;
   onToggle: () => void;
+  // D.1: when present, the expanded grid merges the dropped player's
+  // pre-drop scores with this fill's post-drop scores, and shows the
+  // "Holes N+1–18: blind draw from [Name]" caption above the grid.
+  dropoutFill?: BlindDrawFill;
+  // D.1: dropped player whose fill we couldn't pair (round not finalized,
+  // or pairing skipped). Show the "left after hole N" caption but no
+  // merge. Display falls back to the player's own scores only.
+  isUnmatchedDropout?: boolean;
 }) {
   const isStableford = isStablefordFormat(format);
   const netColor = scoreColor(player.netValue, isStableford);
+
+  // For mid-round dropouts with a paired fill, construct the merged
+  // 18-hole array. Holes 1..N use the dropped player's actual scores
+  // (already in player.scores); holes N+1..18 use the drawn player's
+  // scores from the fill.
+  const gridScores: (number | null)[] = (() => {
+    if (!dropoutFill) return player.scores;
+    const merged = [...player.scores];
+    for (let i = dropoutFill.holeRangeStart - 1; i <= dropoutFill.holeRangeEnd - 1; i++) {
+      merged[i] = dropoutFill.drawnPlayerScores[i];
+    }
+    return merged;
+  })();
 
   return (
     <div style={{ borderBottom: isLast ? "none" : `1px solid ${C.divider}` }}>
@@ -350,6 +443,14 @@ function PlayerSection({
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
             {player.displayName}
+            {(dropoutFill || isUnmatchedDropout) && player.droppedAfterHole != null && (
+              <span style={{
+                fontSize: 11, fontWeight: 500, color: C.textMuted,
+                marginLeft: 6, fontStyle: "italic",
+              }}>
+                left after hole {player.droppedAfterHole}
+              </span>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
@@ -385,9 +486,82 @@ function PlayerSection({
 
       {expanded && (
         <div style={{ padding: "0 14px 12px" }}>
+          {dropoutFill && (
+            <div style={{
+              fontSize: 11, color: C.textMuted,
+              marginBottom: 6, fontStyle: "italic",
+            }}>
+              🎲 Holes {dropoutFill.holeRangeStart}–{dropoutFill.holeRangeEnd}:
+              {" "}blind draw from {dropoutFill.drawnPlayerName}
+              {" "}(Team {dropoutFill.fromTeamNumber})
+            </div>
+          )}
           <PlayerHoleGrid
-            scores={player.scores}
+            scores={gridScores}
             par={player.par}
+            showRunningTotal={false}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// D.1: synthetic player row for a round-start blind-draw fill. Renders the
+// drawn player's full 18-hole scores under the team. Mirrors PlayerSection's
+// chrome (header + chevron + expandable grid) but uses a different identity
+// pattern: no rpId (the team doesn't have a round_players row for the fill),
+// expansion is locally managed.
+function BlindDrawPseudoPlayerSection({
+  fill,
+  isLast,
+}: {
+  fill: BlindDrawFill;
+  isLast: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // Drawn player's par baseline isn't tracked here (would require the drawn
+  // player's tee, which isn't loaded on this team's row). Use par 4 as a
+  // neutral fallback for the notation marks — the data point is the score
+  // values, not the +/− delta against par. Acceptable trade-off because
+  // round-start fills are full-18 from a complete player; the deltas would
+  // be derivable from /summary on the drawn player's own team.
+  const neutralPar = Array.from({ length: 18 }, () => 4);
+  return (
+    <div style={{ borderBottom: isLast ? "none" : `1px solid ${C.divider}` }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        aria-expanded={expanded}
+        aria-label={expanded ? "Collapse blind-draw fill" : "Expand blind-draw fill"}
+        style={{
+          width: "100%", background: "transparent", border: "none",
+          padding: "12px 14px",
+          display: "flex", alignItems: "center", gap: 10,
+          cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 14, fontWeight: 600, color: C.textPrimary,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            🎲 {fill.drawnPlayerName}
+            <span style={{
+              fontSize: 11, fontWeight: 500, color: C.textMuted,
+              marginLeft: 6, fontStyle: "italic",
+            }}>
+              blind draw fill ({rangeCopy(fill)}, from Team {fill.fromTeamNumber})
+            </span>
+          </div>
+        </div>
+        <Chevron expanded={expanded} small />
+      </button>
+      {expanded && (
+        <div style={{ padding: "0 14px 12px" }}>
+          <PlayerHoleGrid
+            scores={fill.drawnPlayerScores}
+            par={neutralPar}
             showRunningTotal={false}
           />
         </div>
