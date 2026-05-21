@@ -140,6 +140,7 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
                 team={team}
                 format={data.format}
                 formatConfig={data.formatConfig}
+                isComplete={data.isComplete}
                 isFirst={team.rank === 1}
                 isTeamExpanded={expandedTeams.has(team.id)}
                 expandedPlayers={expandedPlayers}
@@ -277,6 +278,7 @@ function TeamCard({
   team,
   format,
   formatConfig,
+  isComplete,
   isFirst,
   isTeamExpanded,
   expandedPlayers,
@@ -286,6 +288,7 @@ function TeamCard({
   team: RankedTeam<TeamRow>;
   format: Format;
   formatConfig: FormatConfig;
+  isComplete: boolean;
   isFirst: boolean;
   isTeamExpanded: boolean;
   expandedPlayers: Set<number>;
@@ -382,7 +385,11 @@ function TeamCard({
             textTransform: "uppercase", letterSpacing: "0.3px",
             marginTop: 4, fontWeight: 600,
           }}>
-            {isStableford ? "Net pts" : "Net"}
+            {isComplete
+              ? "FINAL"
+              : team.thru > 0
+                ? `THRU ${team.thru}`
+                : "—"}
           </div>
         </div>
         <Chevron expanded={isTeamExpanded} />
