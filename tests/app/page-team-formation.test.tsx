@@ -3,8 +3,8 @@
  * Homepage team-formation integration tests.
  *
  * Covers:
- * - 0-teams state: shows "Form a team" CTA
- * - N-teams state: shows team rows + "Form a new team"
+ * - 0-teams state: shows ⛳ empty state copy
+ * - N-teams state: shows team rows; hero button disabled when round complete
  * - Tapping a team row routes to the correct scorecard URL
  * - create_new resolution inserts correct round_players rows
  * - silent_join makes zero writes and routes correctly
@@ -229,50 +229,24 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("hero pill '+ Start a Scorecard' button", () => {
-  it("opens PlayerPickerSheet instead of navigating to /round/new", async () => {
+describe("hero pill '+ Form a Team' button", () => {
+  it("opens PlayerPickerSheet when round is not complete", async () => {
     fakeRef.current = new MiniFake(makeSeed());
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    // The hero button must exist as a button element (not a link)
-    const heroBtn = screen.getByRole("button", { name: "+ Start a Scorecard" });
+    const heroBtn = screen.getByRole("button", { name: "+ Form a Team" });
     expect(heroBtn).toBeInTheDocument();
+    expect(heroBtn).not.toHaveAttribute("aria-disabled");
 
-    // Clicking it should open the picker without calling router.push
     fireEvent.click(heroBtn);
     await act(async () => { await flush(); });
 
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: /Who's playing/i })).toBeInTheDocument();
   });
-});
 
-describe("0-teams homepage", () => {
-  it("shows 'Form a team' CTA in empty state when no round exists today", async () => {
-    fakeRef.current = new MiniFake(makeSeed());
-    render(<HomePage />);
-    await act(async () => { await flush(); });
-    expect(screen.getByRole("button", { name: "Form a team" })).toBeInTheDocument();
-  });
-
-  it("shows 'Form a new team' inside round card when round exists but no teams", async () => {
-    fakeRef.current = new MiniFake(makeSeed({ todayRoundId: 42 }));
-    render(<HomePage />);
-    await act(async () => { await flush(); });
-    expect(screen.getByRole("button", { name: "Form a new team" })).toBeInTheDocument();
-  });
-});
-
-describe("N-teams homepage", () => {
-  it("shows 'Form a new team' button when teams exist and round is not complete", async () => {
-    fakeRef.current = new MiniFake(makeSeedWithTeams());
-    render(<HomePage />);
-    await act(async () => { await flush(); });
-    expect(screen.getByRole("button", { name: "Form a new team" })).toBeInTheDocument();
-  });
-
-  it("hides 'Form a new team' when round is complete", async () => {
+  it("shows amber toast and does not open picker when round is complete", async () => {
     const seed = {
       ...makeSeedWithTeams(),
       rounds: [{ id: 42, played_on: "2026-05-20", is_complete: true }],
@@ -280,7 +254,55 @@ describe("N-teams homepage", () => {
     fakeRef.current = new MiniFake(seed);
     render(<HomePage />);
     await act(async () => { await flush(); });
+
+    const heroBtn = screen.getByRole("button", { name: "+ Form a Team" });
+    expect(heroBtn).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.click(heroBtn);
+    await act(async () => { await flush(); });
+
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: /Who's playing/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Round is complete/)).toBeInTheDocument();
+  });
+});
+
+describe("0-teams homepage", () => {
+  it("shows ⛳ empty state copy when no round exists today", async () => {
+    fakeRef.current = new MiniFake(makeSeed());
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+    expect(screen.getByText(/No teams exist yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Form a team" })).not.toBeInTheDocument();
+  });
+
+  it("shows round card without in-card form button when round exists but no teams", async () => {
+    fakeRef.current = new MiniFake(makeSeed({ todayRoundId: 42 }));
+    render(<HomePage />);
+    await act(async () => { await flush(); });
     expect(screen.queryByRole("button", { name: "Form a new team" })).not.toBeInTheDocument();
+  });
+});
+
+describe("N-teams homepage", () => {
+  it("hero button is enabled when teams exist and round is not complete", async () => {
+    fakeRef.current = new MiniFake(makeSeedWithTeams());
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+    const heroBtn = screen.getByRole("button", { name: "+ Form a Team" });
+    expect(heroBtn).not.toHaveAttribute("aria-disabled");
+    expect(screen.queryByRole("button", { name: "Form a new team" })).not.toBeInTheDocument();
+  });
+
+  it("hero button is aria-disabled when round is complete", async () => {
+    const seed = {
+      ...makeSeedWithTeams(),
+      rounds: [{ id: 42, played_on: "2026-05-20", is_complete: true }],
+    };
+    fakeRef.current = new MiniFake(seed);
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+    expect(screen.getByRole("button", { name: "+ Form a Team" })).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -292,8 +314,8 @@ describe("create_new resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    // Open picker (no round exists → calls ensureRoundShell)
-    fireEvent.click(screen.getByRole("button", { name: "Form a team" }));
+    // Open picker via hero button (no round exists → calls ensureRoundShell)
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     // Picker should be open: select Alice
@@ -330,8 +352,8 @@ describe("silent_join resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    // Open picker
-    fireEvent.click(screen.getByRole("button", { name: "Form a new team" }));
+    // Open picker via hero button
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     // Select both Alice and Bob (both on team 1 → silent_join)
@@ -368,8 +390,8 @@ describe("confirm_join resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    // Open picker
-    fireEvent.click(screen.getByRole("button", { name: "Form a new team" }));
+    // Open picker via hero button
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     // Select Alice (team 1) + Bob (unassigned) → confirm_join
@@ -416,7 +438,7 @@ describe("confirm_join resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    fireEvent.click(screen.getByRole("button", { name: "Form a new team" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     const pickerDialog2 = screen.getByRole("dialog", { name: /Who's playing/i });
@@ -453,7 +475,7 @@ describe("mixed_teams_error resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    fireEvent.click(screen.getByRole("button", { name: "Form a new team" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     // Select Alice (team 1) + Carol (team 2) → mixed_teams_error
@@ -487,7 +509,7 @@ describe("mixed_teams_error resolution", () => {
     render(<HomePage />);
     await act(async () => { await flush(); });
 
-    fireEvent.click(screen.getByRole("button", { name: "Form a new team" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
     await act(async () => { await flush(); });
 
     const pickerD = screen.getByRole("dialog", { name: /Who's playing/i });

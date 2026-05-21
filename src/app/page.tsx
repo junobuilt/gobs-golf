@@ -51,6 +51,7 @@ export default function HomePage() {
   const [confirmJoinModal, setConfirmJoinModal] = useState<Extract<SmartJoinResult, { kind: "confirm_join" }> | null>(null);
   const [mixedTeamsModal, setMixedTeamsModal] = useState<Extract<SmartJoinResult, { kind: "mixed_teams_error" }> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [toastVariant, setToastVariant] = useState<"dark" | "amber">("dark");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Per-player write queue — canonical shape from CLAUDE.md "Locked patterns".
@@ -70,10 +71,11 @@ export default function HomePage() {
   const [staleItems, setStaleItems] = useState<QueueItem[]>([]);
   const [staleCopyState, setStaleCopyState] = useState<"idle" | "copied">("idle");
 
-  function showToast(msg: string) {
+  function showToast(msg: string, duration = 5000, variant: "dark" | "amber" = "dark") {
     setToast(msg);
+    setToastVariant(variant);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToast(null), 5000);
+    toastTimerRef.current = setTimeout(() => setToast(null), duration);
   }
 
   const loadTodayRoundPlayers = useCallback(async (roundId: number) => {
@@ -382,6 +384,16 @@ export default function HomePage() {
     return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   }
 
+  const todayRoundComplete = recentRounds.find(r => r.id === todayRoundId)?.is_complete ?? false;
+
+  function handleFormTeamClick() {
+    if (todayRoundComplete) {
+      showToast("Round is complete — new teams can't be formed.", 3000, "amber");
+      return;
+    }
+    void handleOpenPicker();
+  }
+
   const F = {
     font: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
   };
@@ -396,7 +408,8 @@ export default function HomePage() {
           display: "flex", justifyContent: "center", pointerEvents: "none",
         }}>
           <div style={{
-            background: "#1f2937", color: "white",
+            background: toastVariant === "amber" ? "#fdf0cc" : "#1f2937",
+            color: toastVariant === "amber" ? "#854f0b" : "white",
             padding: "10px 18px", borderRadius: 10,
             fontSize: "0.85rem", fontWeight: 500,
             boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
@@ -412,8 +425,12 @@ export default function HomePage() {
         <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800 }}>Good Ole Boys</h2>
         <p style={{ opacity: 0.8, fontSize: "0.85rem", marginBottom: "20px", marginTop: "4px" }}>{playerCount} Players · Semiahmoo GCC</p>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button onClick={handleOpenPicker} style={{ backgroundColor: "white", color: "#0c3057", padding: "10px 16px", borderRadius: "8px", fontWeight: 700, border: "none", fontSize: "0.85rem", cursor: "pointer", fontFamily: F.font }}>
-            + Start a Scorecard
+          <button
+            onClick={handleFormTeamClick}
+            aria-disabled={todayRoundComplete ? "true" : undefined}
+            style={{ backgroundColor: "#e8a800", color: "#1a1a1a", padding: "10px 16px", borderRadius: "8px", fontWeight: 700, border: "none", fontSize: "0.85rem", cursor: todayRoundComplete ? "default" : "pointer", fontFamily: F.font, opacity: todayRoundComplete ? 0.4 : 1 }}
+          >
+            + Form a Team
           </button>
           <Link href="/admin" style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white", padding: "10px 16px", borderRadius: "8px", fontWeight: 600, textDecoration: "none", fontSize: "0.85rem", border: "1px solid rgba(255,255,255,0.25)" }}>
             Admin
@@ -426,20 +443,11 @@ export default function HomePage() {
       {loading ? (
         <div style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>Loading…</div>
       ) : recentRounds.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", fontSize: "0.9rem" }}>
-          <p style={{ marginBottom: 16 }}>No rounds today. Set one up in Admin.</p>
-          <button
-            onClick={handleOpenPicker}
-            style={{
-              padding: "14px 24px",
-              background: "#e8a800", color: "#1a1a1a",
-              border: "none", borderRadius: 10,
-              fontSize: "1rem", fontWeight: 700,
-              cursor: "pointer", fontFamily: F.font,
-            }}
-          >
-            Form a team
-          </button>
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#94a3b8" }}>
+          <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.5 }}>⛳</div>
+          <p style={{ fontSize: "0.9rem", color: "#64748b", maxWidth: 240, margin: "0 auto" }}>
+            No teams exist yet. Set one up by clicking &quot;+ Form a Team&quot; above.
+          </p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -498,22 +506,6 @@ export default function HomePage() {
                     );
                   })}
                 </div>
-
-                {round.id === todayRoundId && !round.is_complete && (
-                  <button
-                    onClick={handleOpenPicker}
-                    style={{
-                      display: "block", width: "100%", textAlign: "center", marginTop: "10px",
-                      padding: "10px 16px", borderRadius: 10,
-                      background: "white", color: "#0b2d50",
-                      border: "1.5px solid #e8a800",
-                      fontSize: "0.9rem", fontWeight: 700,
-                      cursor: "pointer", fontFamily: F.font,
-                    }}
-                  >
-                    Form a new team
-                  </button>
-                )}
 
                 {round.is_complete && (
                   <Link href={`/round/${round.id}/summary`} style={{
