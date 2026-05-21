@@ -30,6 +30,7 @@ interface RoundPlayer {
   tee_id: number | null;
   display_name: string;
   handicap_index: number | null;
+  handicap_index_snapshot: number | null;
   course_handicap: number | null;
   preferred_tee_id: number | null;
   dropped_after_hole: number | null;
@@ -229,7 +230,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
+        .select(`id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -242,6 +243,7 @@ export default function ScorecardPage() {
           tee_id: r.tee_id,
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
+          handicap_index_snapshot: r.handicap_index_snapshot != null ? Number(r.handicap_index_snapshot) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
           dropped_after_hole: r.dropped_after_hole ?? null,
@@ -249,24 +251,22 @@ export default function ScorecardPage() {
         }));
 
         // LT1 fix (2026-05-09): recompute Course Handicap on every load from
-        // the player's current handicap_index + selected tee. The stored
-        // round_players.course_handicap is a snapshot captured at round-
-        // creation and goes stale if admin edits HI after the round is
-        // created (the original LT1 symptom on Kevin/Wayne, May 8 round).
+        // round_players.handicap_index_snapshot + selected tee. The snapshot
+        // stores the HI in effect at round-creation time and is updated by
+        // the H2.5.5 cascade if admin edits HI while a round is still active.
+        // Gated on !roundIsComplete (H2.5.4): finalized rounds are frozen.
         // Self-healing per page load. Single source of truth in this file:
         // row CH display, dots, and engine all read rp.course_handicap from
         // state, so updating playersData here corrects all three sites.
-        // Skip on completed rounds (frozen historical data) and on players
-        // missing HI or tee. DB writeback is fire-and-forget so downstream
-        // consumers (summary, leaderboard, season) read the corrected value
-        // on their next load — they don't currently recompute themselves.
+        // DB writeback is fire-and-forget so downstream consumers (summary,
+        // leaderboard, season) read the corrected value on their next load.
         if (!roundIsComplete) {
           playersData = playersData.map(p => {
-            if (p.handicap_index == null || p.tee_id == null) return p;
+            if (p.handicap_index_snapshot == null || p.tee_id == null) return p;
             const tee = formattedTees.find(t => t.id === p.tee_id);
             if (!tee) return p;
             const expected = computeCourseHandicap(
-              p.handicap_index, tee.slope_rating, tee.course_rating, tee.par,
+              p.handicap_index_snapshot, tee.slope_rating, tee.course_rating, tee.par,
             );
             if (expected === p.course_handicap) return p;
             // Fire-and-forget DB writeback. Local state already corrected
@@ -352,7 +352,7 @@ export default function ScorecardPage() {
     const tee = allTees.find(t => t.id === teeId);
     if (!player || !tee) return;
 
-    const hcIndex = player.handicap_index ?? (tempHandicaps[rpId] !== undefined ? parseFloat(tempHandicaps[rpId]) : null);
+    const hcIndex = player.handicap_index_snapshot ?? (tempHandicaps[rpId] !== undefined ? parseFloat(tempHandicaps[rpId]) : null);
     const newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
 
     setRoundPlayers(current =>
@@ -384,11 +384,13 @@ export default function ScorecardPage() {
     }
 
     setRoundPlayers(current =>
-      current.map(p => p.id === rpId ? { ...p, handicap_index: hcIndex, course_handicap: newCH } : p)
+      current.map(p => p.id === rpId ? { ...p, handicap_index: hcIndex, handicap_index_snapshot: hcIndex, course_handicap: newCH } : p)
     );
-    if (newCH !== null) {
-      await supabase.from("round_players").update({ course_handicap: newCH }).eq("id", rpId);
-    }
+    // Write snapshot + CH in one round_players update.
+    await supabase.from("round_players").update({
+      handicap_index_snapshot: hcIndex,
+      ...(newCH !== null ? { course_handicap: newCH } : {}),
+    }).eq("id", rpId);
     // Persist HC index to player record (best-effort)
     const { data: playerRef } = await supabase
       .from("round_players").select("player_id").eq("id", rpId).single();
@@ -935,11 +937,13 @@ export default function ScorecardPage() {
               .eq("id", existing.id);
           }
         } else {
+          const hi = manageTeamActivePlayers.find(p => p.id === pid)?.handicap_index ?? null;
           await supabase.from("round_players").insert({
             round_id: roundIdNum,
             player_id: pid,
             team_number: teamNum,
             tee_id: null,
+            handicap_index_snapshot: hi,
           });
         }
       });
@@ -948,7 +952,7 @@ export default function ScorecardPage() {
     const { data: refreshed } = await supabase
       .from("round_players")
       .select(
-        `id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`,
+        `id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, players ( full_name, display_name, handicap_index, preferred_tee_id )`,
       )
       .eq("round_id", roundId)
       .eq("team_number", teamNum)
@@ -962,6 +966,7 @@ export default function ScorecardPage() {
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index:
             r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
+          handicap_index_snapshot: r.handicap_index_snapshot != null ? Number(r.handicap_index_snapshot) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
           dropped_after_hole: r.dropped_after_hole ?? null,

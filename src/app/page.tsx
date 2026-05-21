@@ -200,7 +200,7 @@ export default function HomePage() {
   // Insert if the player is not yet in the round; update team_number if they
   // are and currently unassigned (team_number = 0). Skips already-assigned rows
   // so a create_new result never clobbers an existing team assignment.
-  async function upsertPlayerToTeam(roundId: number, playerId: number, teamNumber: number) {
+  async function upsertPlayerToTeam(roundId: number, playerId: number, teamNumber: number, handicapIndex: number | null) {
     const { data: existing } = await supabase
       .from("round_players")
       .select("id, team_number")
@@ -214,6 +214,7 @@ export default function HomePage() {
         player_id: playerId,
         team_number: teamNumber,
         tee_id: null,
+        handicap_index_snapshot: handicapIndex,
       });
     } else if (existing.team_number === 0) {
       await supabase
@@ -248,8 +249,9 @@ export default function HomePage() {
     if (result.kind === "create_new") {
       setPickerOpen(false);
       for (const playerId of result.playerIds) {
+        const hi = activePlayers.find(p => p.id === playerId)?.handicap_index ?? null;
         enqueuePlayerWrite(playerId, () =>
-          upsertPlayerToTeam(roundId, playerId, result.nextTeamNumber)
+          upsertPlayerToTeam(roundId, playerId, result.nextTeamNumber, hi)
         );
       }
       await drainWrites();
@@ -287,8 +289,9 @@ export default function HomePage() {
     const roundId = todayRoundId;
     if (!roundId || !confirmJoinModal) return;
     for (const playerId of confirmJoinModal.playerIdsToAdd) {
+      const hi = activePlayers.find(p => p.id === playerId)?.handicap_index ?? null;
       enqueuePlayerWrite(playerId, () =>
-        upsertPlayerToTeam(roundId, playerId, confirmJoinModal.teamNumber)
+        upsertPlayerToTeam(roundId, playerId, confirmJoinModal.teamNumber, hi)
       );
     }
     await drainWrites();

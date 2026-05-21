@@ -63,6 +63,18 @@ export default function Players({ players, onRefresh }: Props) {
     const raw = editingHC[p.id].trim();
     const value = raw === "" ? null : parseFloat(raw);
     await supabase.from("players").update({ handicap_index: value }).eq("id", p.id);
+    // H2.5.5: cascade snapshot to every active (is_complete = false) round.
+    const { data: activeRounds } = await supabase
+      .from("rounds")
+      .select("id")
+      .eq("is_complete", false);
+    if (activeRounds && activeRounds.length > 0) {
+      await supabase
+        .from("round_players")
+        .update({ handicap_index_snapshot: value })
+        .eq("player_id", p.id)
+        .in("round_id", activeRounds.map((r: { id: number }) => r.id));
+    }
     cancelEditHC(p.id);
     setSavingHC(null);
     onRefresh();

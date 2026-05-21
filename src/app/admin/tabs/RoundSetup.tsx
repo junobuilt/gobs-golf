@@ -323,6 +323,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         enqueueWrite(player.id, () =>
           supabase.from("round_players").insert({
             round_id: existingRoundId, player_id: player.id, team_number: 0, tee_id: null,
+            handicap_index_snapshot: player.handicap_index ?? null,
           })
         );
       }
@@ -436,6 +437,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           player_id: p.id,
           team_number: 0,
           tee_id: null,
+          handicap_index_snapshot: p.handicap_index ?? null,
         }))
       );
     }

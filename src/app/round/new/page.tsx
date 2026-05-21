@@ -238,6 +238,7 @@ export default function NewRoundPage() {
         tee_id: s.tee_id,
         team_number: teamNumber,
         course_handicap: ch,
+        handicap_index_snapshot: s.player.handicap_index ?? null,
       };
     });
 
