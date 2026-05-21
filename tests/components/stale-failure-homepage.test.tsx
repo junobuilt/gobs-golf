@@ -23,6 +23,10 @@ vi.mock("@sentry/nextjs", () => ({
   captureException: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
 import HomePage from "@/app/page";
 import { resetWriteQueueForTesting } from "@/lib/writeQueue";
 
