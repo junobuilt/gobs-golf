@@ -52,7 +52,7 @@ export default function ActiveRoundPage() {
           <p style={{ fontSize: "0.85rem", marginBottom: "16px" }}>
             Start a new round to begin entering scores
           </p>
-          <Link href="/round/new" className="btn btn-primary">
+          <Link href="/" className="btn btn-primary">
             Start New Round
           </Link>
         </div>

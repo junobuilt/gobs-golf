@@ -3,7 +3,7 @@
  *
  * Covers:
  * (a) snapshot is set on insert — verified via MiniFake write inspection in
- *     the round/new page test (see tests/components/h25-insert-snapshot.test.tsx)
+ *     the homepage PlayerPickerSheet integration (see tests/app/page-team-formation.test.tsx)
  * (b) self-heal does not fire on finalized rounds
  * (c) admin HI edit cascades to active rounds only
  * (d) CH math reads from snapshot, not live players.handicap_index

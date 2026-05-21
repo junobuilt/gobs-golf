@@ -229,6 +229,25 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe("hero pill '+ Start a Scorecard' button", () => {
+  it("opens PlayerPickerSheet instead of navigating to /round/new", async () => {
+    fakeRef.current = new MiniFake(makeSeed());
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+
+    // The hero button must exist as a button element (not a link)
+    const heroBtn = screen.getByRole("button", { name: "+ Start a Scorecard" });
+    expect(heroBtn).toBeInTheDocument();
+
+    // Clicking it should open the picker without calling router.push
+    fireEvent.click(heroBtn);
+    await act(async () => { await flush(); });
+
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Who's playing/i })).toBeInTheDocument();
+  });
+});
+
 describe("0-teams homepage", () => {
   it("shows 'Form a team' CTA in empty state when no round exists today", async () => {
     fakeRef.current = new MiniFake(makeSeed());

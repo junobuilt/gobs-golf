@@ -412,9 +412,9 @@ export default function HomePage() {
         <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800 }}>Good Ole Boys</h2>
         <p style={{ opacity: 0.8, fontSize: "0.85rem", marginBottom: "20px", marginTop: "4px" }}>{playerCount} Players · Semiahmoo GCC</p>
         <div style={{ display: "flex", gap: "8px" }}>
-          <Link href="/round/new" style={{ backgroundColor: "white", color: "#0c3057", padding: "10px 16px", borderRadius: "8px", fontWeight: 700, textDecoration: "none", fontSize: "0.85rem" }}>
+          <button onClick={handleOpenPicker} style={{ backgroundColor: "white", color: "#0c3057", padding: "10px 16px", borderRadius: "8px", fontWeight: 700, border: "none", fontSize: "0.85rem", cursor: "pointer", fontFamily: F.font }}>
             + Start a Scorecard
-          </Link>
+          </button>
           <Link href="/admin" style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white", padding: "10px 16px", borderRadius: "8px", fontWeight: 600, textDecoration: "none", fontSize: "0.85rem", border: "1px solid rgba(255,255,255,0.25)" }}>
             Admin
           </Link>
