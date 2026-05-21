@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
-import DangerModal from "@/app/thomas-admin/components/DangerModal";
+import DangerModal from "@/app/admin/components/DangerModal";
+import { useIsAdmin, useIsRoundEditMode } from "@/lib/admin";
 import {
   computeCourseHandicap,
   computeHoleResult,
@@ -63,6 +64,8 @@ const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 export default function ScorecardPage() {
   const params = useParams();
   const roundId = params.id as string;
+  const isAdmin = useIsAdmin();
+  const isRoundEditMode = useIsRoundEditMode();
 
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [roundPlayers, setRoundPlayers] = useState<RoundPlayer[]>([]);
@@ -95,11 +98,6 @@ export default function ScorecardPage() {
   // S4 defensive abort — surfaced when finalize_round_with_blind_draws
   // returns 'pool_too_small' on the all-teams-now-submitted attempt.
   const [poolErrorVisible, setPoolErrorVisible] = useState(false);
-  // D.1 hotfix follow-up: shown when a score write is attempted against a
-  // player whose team has already submitted (but the round isn't yet
-  // finalized, so the DB trigger wouldn't reject it). Closes the
-  // integrity gap between submit and round-finalize.
-  const [lockedToastVisible, setLockedToastVisible] = useState(false);
   // Gates re-entry into the "all teams submitted → call RPC" effect.
   // Reset by submittedTeams membership changes; not user-visible.
   const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
@@ -376,17 +374,6 @@ export default function ScorecardPage() {
   const setScore = async (rpId: number, hole: number, strokes: number) => {
     if (strokes < 1 || strokes > 20) return;
     const player = roundPlayers.find(p => p.id === rpId);
-    // D.1 hotfix follow-up: closes the integrity gap between submit and
-    // round-finalize. The DB trigger only rejects writes when
-    // rounds.is_complete is true; a team that submitted but is waiting
-    // for other teams to submit before the RPC fires has format_config.
-    // submitted_teams containing its team_number but is_complete still
-    // false. Abort the write client-side and surface a toast.
-    if (player && submittedTeams.includes(player.team_number)) {
-      setLockedToastVisible(true);
-      setTimeout(() => setLockedToastVisible(false), 3500);
-      return;
-    }
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
     // Clear manual override so best-2 recalculates from the new score
     setCountingOverrides(prev => {
@@ -988,9 +975,14 @@ export default function ScorecardPage() {
   //                    submitted. Enables the Submit Final Scores button.
   const myTeamNum = teamFilter ? parseInt(teamFilter, 10) : null;
   const myTeamSubmitted = myTeamNum != null && submittedTeams.includes(myTeamNum);
-  const isLocked = isRoundComplete || myTeamSubmitted;
+  // Admin edit mode bypasses the read-only gate on finalized rounds only.
+  // A stray ?edit=1 on a live round is a no-op — the per-team submit gate
+  // still applies. Same for non-admin views.
+  const adminEditModeActive = isAdmin && isRoundEditMode && isRoundComplete;
+  const isLocked = !adminEditModeActive && (isRoundComplete || myTeamSubmitted);
   const canSubmit =
     !isLocked &&
+    !adminEditModeActive &&
     myTeamNum != null &&
     isRoundLocallyComplete();
 
@@ -1580,32 +1572,6 @@ export default function ScorecardPage() {
         </div>
       )}
 
-      {/* D.1 hotfix follow-up — locked-team write rejection. Fires when a
-          score write is attempted client-side against a player whose team
-          has already submitted. 3.5s, matches the finalized toast cadence. */}
-      {lockedToastVisible && (
-        <div
-          role="alert"
-          style={{
-            position: "fixed",
-            bottom: 80,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "#9a3412",
-            color: "white",
-            padding: "12px 22px",
-            borderRadius: 999,
-            fontWeight: 600,
-            fontSize: "0.9rem",
-            boxShadow: "0 10px 28px rgba(0,0,0,0.25)",
-            zIndex: 1100,
-            fontFamily: "DM Sans, system-ui, sans-serif",
-            whiteSpace: "nowrap",
-          }}
-        >
-          This team&apos;s scores are locked.
-        </div>
-      )}
     </div>
   );
 }

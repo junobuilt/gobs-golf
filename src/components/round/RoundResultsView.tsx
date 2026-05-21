@@ -14,12 +14,15 @@
 // call `loadRoundResults` from `@/lib/round/results`).
 
 import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { isStablefordFormat, type RankedTeam } from "@/lib/leaderboard/rank";
 import { getScoringBasis } from "@/lib/format/helpers";
 import type { Format, FormatConfig } from "@/lib/scoring";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
+import DangerModal from "@/app/admin/components/DangerModal";
+import { buildSearchString, useIsAdmin } from "@/lib/admin";
 import type {
   LoadedRoundResults,
   PlayerRow,
@@ -154,6 +157,11 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
 
 function Header({ data }: { data: LoadedRoundResults }) {
   const dateLabel = formatHeaderDate(data.playedOn);
+  const isAdmin = useIsAdmin();
+  const showEditButton = data.isComplete && isAdmin;
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [editModalOpen, setEditModalOpen] = useState(false);
   return (
     <div style={{
       background: "white",
@@ -184,8 +192,53 @@ function Header({ data }: { data: LoadedRoundResults }) {
             {COURSE_NAME}
           </div>
         </div>
-        <StatusTag isComplete={data.isComplete} maxThru={data.maxThru} />
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 8,
+          flexShrink: 0,
+        }}>
+          <StatusTag isComplete={data.isComplete} maxThru={data.maxThru} />
+          {showEditButton && (
+            <button
+              onClick={() => setEditModalOpen(true)}
+              data-testid="edit-round-scores-button"
+              style={{
+                background: "#e8a800",
+                color: "#1a1a1a",
+                border: "none",
+                borderRadius: 6,
+                padding: "8px 12px",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Edit Round Scores
+            </button>
+          )}
+        </div>
       </div>
+      {editModalOpen && (
+        <DangerModal
+          title="Edit finalized round?"
+          description="Blind draw assignments stay locked. Team totals will recalculate automatically as you edit."
+          confirmLabel="Edit Scores"
+          cannotBeUndone={false}
+          onConfirm={() => {
+            setEditModalOpen(false);
+            // Confirming the modal sends the admin to the scorecard, which
+            // is where +/− editing actually happens. ?admin=1&edit=1 stays
+            // on the URL; the EditModeBanner pins to the top of every
+            // round-scoped page until Done is tapped.
+            const search = buildSearchString(searchParams, { admin: "1", edit: "1" });
+            router.replace(`/round/${data.roundId}/scorecard${search}`);
+          }}
+          onCancel={() => setEditModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

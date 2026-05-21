@@ -238,7 +238,7 @@ TEAM_COLORS is defined in `src/lib/teamColors.ts` and imported wherever needed.
 src/app/
   page.tsx                    — Homepage (today's scorecards)
   layout.tsx                  — Root layout, global nav
-  thomas-admin/
+  admin/
     page.tsx                  — Admin shell, loads settings
     tabs/
       RoundSetup.tsx          — Round setup (three-state flow)

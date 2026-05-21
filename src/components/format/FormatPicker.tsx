@@ -7,7 +7,7 @@ import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 import { FORMAT_ORDER, FORMAT_LABELS } from "@/lib/format/copy";
 import { defaultConfigFor, getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
-import DangerModal from "@/app/thomas-admin/components/DangerModal";
+import DangerModal from "@/app/admin/components/DangerModal";
 
 // GOBS Stableford editable point-value rows. Order is best-result-first so
 // admins reading the section see albatross → double bogey top-to-bottom.

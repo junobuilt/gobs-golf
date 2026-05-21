@@ -28,7 +28,9 @@ vi.mock("@sentry/nextjs", () => ({
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "1" }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(""),
+  usePathname: () => "/round/1/scorecard",
 }));
 
 import ScorecardPage from "@/app/round/[id]/scorecard/page";

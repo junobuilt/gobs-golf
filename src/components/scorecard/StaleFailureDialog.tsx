@@ -19,7 +19,7 @@
 
 import { useEffect, useState } from "react";
 import type { QueueItem } from "@/lib/writeQueue";
-import DangerModal from "@/app/thomas-admin/components/DangerModal";
+import DangerModal from "@/app/admin/components/DangerModal";
 
 interface StaleFailureDialogProps {
   items: QueueItem[];

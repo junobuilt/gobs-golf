@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import DangerModal from "@/app/thomas-admin/components/DangerModal";
+import DangerModal from "@/app/admin/components/DangerModal";
 
 export interface PlayerOverflowMenuProps {
   roundPlayerId: number;

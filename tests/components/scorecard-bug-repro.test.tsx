@@ -34,7 +34,9 @@ vi.mock("@sentry/nextjs", () => ({
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "1" }),
-  useRouter: () => ({ push: routerPush }),
+  useRouter: () => ({ push: routerPush, replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(""),
+  usePathname: () => "/round/1/scorecard",
 }));
 
 // Import AFTER mocks so the scorecard picks up the fakes.

@@ -2,12 +2,85 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-18 PM (Phase D.1 / Blind Draw shipped to production after overnight ship session covering A1 polish + Phase C close + D.1 + same-night hotfix + post-launch UX fixes)
-**Session purpose:** Overnight multi-sub-session ship. Started ~May 17 evening with A1.6 + A1.7 + Phase C PR 3 + Individual Rankings restore + `RoundResultsView` extraction + 3 polish commits; rolled into D.1 (Blind Draw) full ship; same-night hotfix replaced the initial auto-fire trigger with explicit per-team Submit Final Scores after live testing surfaced A6's first-tap-commits-par regression; capped with post-launch UX fixes (missed `isLocked` gate on the `+` button, client-side score-write guard for submitted teams, drawn player's aggregate score surfaced inline on every 🎲 caption). 14 commits to master between the close of PM5 and the hotfix landing.
+**Last updated:** 2026-05-20 PM (D1.11 + H1 — replaced DB-level finalize lock with UI lock + admin edit mode; `/thomas-admin` → `/admin` rename folded in)
+**Session purpose:** Single-focus ship covering one spec: drop the D.1 DB trigger that blocks any score write on finalized rounds, replace with a UI-only lock, gate admin edit affordance behind `?admin=1` + DangerModal. Same session also delivered H1 rename (`/thomas-admin` → `/admin`) since DangerModal imports needed to be re-pathed regardless.
 
 ---
 
-## Today's work — 2026-05-17 / 18 (consolidated overnight ship)
+## Today's work — 2026-05-20
+
+### What landed
+
+**Migration `009_phase_d1_drop_scores_finalize_trigger.sql`** — drops trigger `scores_reject_on_complete` and function `reject_scores_on_complete_round`. (Note: spec text named the function `reject_scores_on_complete()` — verified against migration 008 line 75, the actual name has the `_round` suffix.) Migration is the only schema change; rollback is "re-create from migration 008 lines 75-98." **Not yet applied to prod — pending user authorization (destructive migration).**
+
+**Client-side score-write guard removed** in `src/app/round/[id]/scorecard/page.tsx`:
+- The `submittedTeams.includes(player.team_number)` abort + 3.5s orange toast inside `setScore` (was lines 385-389).
+- The `lockedToastVisible` state + `setLockedToastVisible` setter (was line 102).
+- The toast JSX (was lines 1582-1608).
+
+The per-team UI gate (`isLocked` from `myTeamSubmitted`) still hides +/− buttons on submitted teams. The deleted guard was defense-in-depth after the UI already hid the buttons; with the DB trigger also gone, the only remaining lock is UI rendering.
+
+**`isLocked` derivation rewritten** to support admin edit mode:
+
+```ts
+const adminEditModeActive = isAdmin && isRoundEditMode && isRoundComplete;
+const isLocked = !adminEditModeActive && (isRoundComplete || myTeamSubmitted);
+```
+
+Admin edit mode is intentionally scoped to finalized rounds — a stray `?admin=1&edit=1` on a live scorecard is a no-op.
+
+**New `src/lib/admin.ts`** — reactive admin/edit-mode hooks via `useSearchParams` from `next/navigation` (the existing one-shot `URLSearchParams(window.location.search)` reads in scorecard load are not reactive; left intact since they only capture `?team=N` on mount):
+- `useIsAdmin()` / `useIsRoundEditMode()`
+- `enterRoundEditMode(router, pathname, params)` / `exitRoundEditMode(router, pathname, params)` — preserve every other URL param while flipping flags
+- `buildSearchString(current, changes)` — pure helper
+- `withAdminFlags(href, current)` — propagate flags onto a relative href; not currently used in production code (no scorecard ↔ summary links exist), but exported for future use
+
+**New `src/components/round/EditModeBanner.tsx`** — pinned yellow banner (`#e8a800` background, sticky top, `data-testid="edit-mode-banner"`) with a Done button that calls `exitRoundEditMode`. Self-gates on `useIsAdmin() && useIsRoundEditMode()`.
+
+**New `src/app/round/[id]/layout.tsx`** — wraps `summary/` and `scorecard/` so the banner pins across navigation within a round. Banner self-gates internally; no props passed.
+
+**`RoundResultsView.Header` extended** (`src/components/round/RoundResultsView.tsx`) — yellow "Edit Round Scores" button on the right-side flex slot, conditional on `data.isComplete && useIsAdmin()`. Tap opens `<DangerModal>` with `cannotBeUndone={false}` (editing scores can be undone by editing back), title "Edit finalized round?", description "Blind draw assignments stay locked. Team totals will recalculate automatically as you edit.", confirmLabel "Edit Scores". Confirm calls `router.replace(/round/${data.roundId}/scorecard?admin=1&edit=1)` — direct navigation to the scorecard (where +/− editing actually happens) since no in-app scorecard ↔ summary link exists today.
+
+**Rename `/thomas-admin` → `/admin`** (folds in H1):
+- `git mv` per-file (the parent-directory rename hit `EPERM: Permission denied` on Windows due to the dev server's open file handles; per-file move worked cleanly).
+- 4 DangerModal import paths updated: `scorecard/page.tsx:6`, `FormatPicker.tsx:10`, `PlayerOverflowMenu.tsx:21`, `StaleFailureDialog.tsx:22`.
+- 1 navigation link updated: `src/app/page.tsx:221` `<Link href="/thomas-admin">` → `/admin`.
+- Doc updates via blanket `replace_all`: CLAUDE.md (1 hit), ROADMAP.md (~10 hits including historical session log entries).
+- Final grep for `thomas-admin` returns hits only inside `.claude/worktrees/funny-nightingale-895061/` (untracked separate worktree).
+
+**Test scaffolding:** existing `submit-flow.test.tsx` and `scorecard-bug-repro.test.tsx` `vi.mock("next/navigation", …)` blocks updated to also expose `useSearchParams: () => new URLSearchParams("")` and `usePathname: () => "/round/1/scorecard"` (the scorecard now reads these via the admin hooks).
+
+### New tests (26)
+
+| File | Cases |
+| --- | --- |
+| `tests/lib/admin.test.tsx` | 14 — `useIsAdmin` (3), `useIsRoundEditMode` (2), `buildSearchString` (3), `enterRoundEditMode`/`exitRoundEditMode` (2), `withAdminFlags` (3) |
+| `tests/components/edit-mode-banner.test.tsx` | 4 — banner gating on `?admin=1&edit=1` combinations + Done click drops `?edit=1` |
+| `tests/components/admin-edit-flow.test.tsx` | 5 — Edit Round Scores button visibility (3), Cancel preserves state, Confirm navigates to scorecard with `?admin=1&edit=1` after 1.5s |
+| `tests/components/admin-edit-scorecard.test.tsx` | 4 — finalized round read-only by default, finalized + admin edit shows +/−, +/− tap enqueues to WriteQueue, banner renders alongside scorecard |
+
+WriteQueue P0001 classifier left unchanged per spec (defensive scaffolding); `tests/lib/writeQueue/getTerminalReason.test.ts` still passes verbatim.
+
+### Verification
+
+- `tsc --noEmit` clean.
+- vitest **298/298 across 35 files** (was 272 across 27 files before this session).
+- Browser-verified on prod data (round 103, finalized): Admin link routes to `/admin`; summary `?admin=1` shows the yellow Edit button; modal opens with correct copy + 1.5s delay; confirm navigates to scorecard with `?admin=1&edit=1`; banner pins; 18× +/− visible per team; Done drops `?edit=1` and affordances unmount; non-admin URL (no `?admin=1`) shows no edit affordances. **Score writes to prod return 400 P0001** from the still-installed trigger until migration 009 is applied — exactly the expected pre-migration state.
+
+### Migration application (pending)
+
+Migration 009 is in `supabase/migrations/` but **not yet applied to prod**. Until applied, +/− taps in admin edit mode fail with 400 P0001 (DB rejects). UI shows no error to the user because the WriteQueue swallows P0001 silently — the score in the UI optimistically updates but the DB row doesn't change. Apply via Supabase MCP before declaring D1.11 production-complete.
+
+### Known follow-ups carried over from the May 18 ship (still open)
+
+- CLAUDE.md schema doc partially stale (course_handicap type, undocumented columns).
+- `format_config.submitted_teams` read-modify-write race (atomic RPC documented as fallback).
+- Sentry watch list: monitor `writeQueue.terminal_failure` events post-D1.11; the `round_finalized` discriminator should no longer fire in practice.
+- Sentry dev-only Fast Refresh regressions still pending cleanup.
+
+---
+
+## Previous session — 2026-05-17 / 18 (consolidated overnight D.1 ship)
 
 Single consolidated section covering everything that landed across PM1–PM5 sub-sessions on May 17 plus the D.1 ship + hotfix + post-launch UX fixes that bled into May 18. Replaced the per-PM fragmented sections during the 2026-05-20 reconciliation pass; all per-PM detail still lives in commit messages and in the consolidated narrative below.
 
