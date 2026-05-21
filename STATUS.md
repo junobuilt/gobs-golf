@@ -2,12 +2,38 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-20 (late night PT)
-**Session purpose:** Beta feedback sprint for Thursday May 21 round. Shipped player-driven team formation (#4), blind-draw par display fix (#2), and per-team THRU N / FINAL leaderboard caption (#3). 344/344 tests green.
+**Last updated:** 2026-05-21
+**Session purpose:** Phase H.2.5 — handicap_index snapshot on round_players. All 6 items (H2.5.1–H2.5.6) shipped in one commit. 354/354 tests green.
 
 ---
 
-## Today's work — 2026-05-20
+## Today's work — 2026-05-21
+
+### What landed
+
+**Phase H.2.5 — Handicap Index snapshot** shipped end-to-end.
+
+- **Migration `010`** — `ADD COLUMN handicap_index_snapshot numeric NULL` on `round_players` + backfill `UPDATE` from `players.handicap_index`. **Not yet applied to prod — Jonathan applies manually via Supabase SQL Editor.**
+- **H2.5.2** — All 5 `round_players` INSERT paths now write `handicap_index_snapshot` at insert time: `RoundSetup.tsx` (toggleInRoster, goToTeams), `page.tsx` (upsertPlayerToTeam + both callers), `round/new/page.tsx` (startRound), `scorecard/page.tsx` (handleManageTeamAdd).
+- **H2.5.3+4** — Scorecard self-heal (LT1 fix) switched from `players.handicap_index` to `handicap_index_snapshot`. `updatePlayerTee` and `applyTempHandicap` also use snapshot. Both SELECT queries updated. Gate on `is_complete = false` was already present (confirmed).
+- **H2.5.5** — `Players.tsx` `saveHC` cascades the new value to `round_players.handicap_index_snapshot` for every active round the player appears in.
+- **H2.5.6** — 10 unit tests in `tests/lib/handicap-snapshot.test.ts` covering (b) self-heal guard, (c) cascade selection logic, (d) CH from snapshot, (e) finalized round CH unchanged.
+
+### Shipped commit
+
+- `3495720` — feat: Phase H.2.5 — snapshot handicap_index on round_players
+
+---
+
+## Next priority
+
+1. **Apply migration `010`** — run the SQL in Supabase SQL Editor (paste from `supabase/migrations/010_phase_h25_handicap_index_snapshot.sql`). This is the only thing needed to make H2.5 live on prod.
+2. **Smoke-test** on live round: start a scorecard, verify `handicap_index_snapshot` is populated on the new `round_players` row.
+3. Mark H2.5.1–H2.5.6 as ✅ in ROADMAP.md after migration applied and verified.
+
+---
+
+## Previous session — 2026-05-20 (late night PT)
 
 ### What landed
 
