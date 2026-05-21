@@ -323,6 +323,31 @@ formation), `src/app/scorecard/page.tsx` (Manage Team).
 
 ---
 
+### Date-mock requirement for tests
+
+Any test that exercises code calling `todayLocal()` or `yesterdayLocal()`
+from `src/lib/date.ts` **must** pin the date via `vi.mock('@/lib/date')`.
+
+```ts
+vi.mock("@/lib/date", () => ({
+  todayLocal: () => "2026-05-20",
+  yesterdayLocal: () => "2026-05-19",
+}));
+```
+
+Why: without the mock, tests pass on the day they are written (the real
+`todayLocal()` matches the hardcoded test fixture), then silently fail on
+every subsequent day. Caught 2026-05-20 when `page-team-formation.test.tsx`
+started failing after the `3b5c5e0` commit — the test had been written the
+same day as the fixture and no mock was added.
+
+Surfaces affected: any component or hook that reads today's round date
+(`page.tsx` homepage, `leaderboard/page.tsx`, `admin/tabs/RoundSetup.tsx`,
+`round/new/page.tsx`, `round/active/page.tsx`) and any test that renders
+or calls those surfaces.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round
