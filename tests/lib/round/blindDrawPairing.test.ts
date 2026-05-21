@@ -44,6 +44,7 @@ function fill(
     holeRangeStart,
     holeRangeEnd: 18,
     drawnPlayerScores: Array.from({ length: 18 }, () => 4),
+    drawnPlayerPar: Array.from({ length: 18 }, () => 4),
     drawnPlayerNetValue: 0,
   };
 }

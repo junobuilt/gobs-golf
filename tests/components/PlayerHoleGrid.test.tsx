@@ -180,6 +180,17 @@ describe("PlayerHoleGrid", () => {
     expect(html).not.toContain("Total");
   });
 
+  it("par row reflects real per-hole pars, not all par 4 (blind-draw fill regression)", () => {
+    // F9 = all par-3 (sum 27). If the grid hardcoded par 4 the subtotal would be 36.
+    const pars = [3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+    const html = renderToString(
+      <PlayerHoleGrid scores={ALL_NULL} par={pars} showRunningTotal={false} />
+    );
+    expect(html).toMatch(/>27</); // F9 par subtotal
+    expect(html).toMatch(/>36</); // B9 par subtotal
+    // All-par-4 hardcoding would produce 36 for F9 — this would fail.
+  });
+
   it("renders the F9 and B9 subtotal labels", () => {
     const html = renderToString(
       <PlayerHoleGrid scores={ALL_NULL} par={PAR_18} />

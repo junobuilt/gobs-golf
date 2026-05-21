@@ -51,6 +51,9 @@ export type BlindDrawFill = {
   // 18-length gross-score array for the drawn player. Consumer slices to
   // the fill range when merging with a dropout's partial scores.
   drawnPlayerScores: (number | null)[];
+  // 18-length per-hole par array for the drawn player's tee. Used by
+  // BlindDrawPseudoPlayerSection to pass real pars to PlayerHoleGrid.
+  drawnPlayerPar: number[];
   // D.1 hotfix follow-up: drawn player's aggregate contribution to the
   // short team for the fill range. Format-aware:
   //   - Best-N (net or gross basis): signed delta vs par-in-range using
@@ -151,17 +154,18 @@ export async function loadRoundResults(
     .eq("round_id", roundId)
     .order("id");
 
-  // playerId -> { rpId, teamNumber, displayName }. Used to look up the
-  // drawn player's round_players row for their score array and their own
-  // team_number ("from Team N" caption).
+  // playerId -> { rpId, teamNumber, teeId, displayName }. Used to look up
+  // the drawn player's round_players row for their score array, par array,
+  // and own team_number ("from Team N" caption).
   const playerLookup: Record<number, {
-    rpId: number; teamNumber: number; displayName: string;
+    rpId: number; teamNumber: number; teeId: number; displayName: string;
   }> = {};
   (rps as any[]).forEach(rp => {
     const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
     playerLookup[rp.player_id as number] = {
       rpId: rp.id as number,
       teamNumber: rp.team_number as number,
+      teeId: rp.tee_id as number,
       displayName: playerRow?.display_name || playerRow?.full_name || "?",
     };
   });
@@ -345,6 +349,13 @@ export async function loadRoundResults(
         const holeRangeStart = bd.hole_range_start as number;
         const holeRangeEnd = bd.hole_range_end as number;
 
+        const drawnPlayerPar: number[] = (() => {
+          const drawnHoles = lookup ? (holesByTee[lookup.teeId] || []) : [];
+          return Array.from({ length: 18 }, (_, i) =>
+            drawnHoles.find(h => h.holeNumber === i + 1)?.par ?? 4
+          );
+        })();
+
         // D.1 hotfix follow-up: aggregate the drawn player's contribution
         // to the short team over the fill range. Engine output lives on
         // the drawn player's OWN team (where their handicap was applied
@@ -377,6 +388,7 @@ export async function loadRoundResults(
           holeRangeStart,
           holeRangeEnd,
           drawnPlayerScores,
+          drawnPlayerPar,
           drawnPlayerNetValue,
         };
       });

@@ -573,13 +573,6 @@ function BlindDrawPseudoPlayerSection({
   isLast: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // Drawn player's par baseline isn't tracked here (would require the drawn
-  // player's tee, which isn't loaded on this team's row). Use par 4 as a
-  // neutral fallback for the notation marks — the data point is the score
-  // values, not the +/− delta against par. Acceptable trade-off because
-  // round-start fills are full-18 from a complete player; the deltas would
-  // be derivable from /summary on the drawn player's own team.
-  const neutralPar = Array.from({ length: 18 }, () => 4);
   return (
     <div style={{ borderBottom: isLast ? "none" : `1px solid ${C.divider}` }}>
       <button
@@ -616,7 +609,7 @@ function BlindDrawPseudoPlayerSection({
         <div style={{ padding: "0 14px 12px" }}>
           <PlayerHoleGrid
             scores={fill.drawnPlayerScores}
-            par={neutralPar}
+            par={fill.drawnPlayerPar}
             showRunningTotal={false}
           />
         </div>
