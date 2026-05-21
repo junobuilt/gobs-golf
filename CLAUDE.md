@@ -336,3 +336,16 @@ where appropriate.
   live only in Settings.tsx
 - Never bundle multiple unrelated changes in one commit
 - Never skip the tsc --noEmit check
+
+---
+
+## AI workflow patterns
+
+Jonathan is learning AI-assisted-dev patterns. When you notice a fit, proactively suggest:
+
+- `/plan` mode at the start of any multi-file change or new feature
+- A subagent for read-only investigation that would consume >5 min of main-session context
+- Building a skill (`.claude/skills/<name>/SKILL.md`) when a workflow gets repeated 3+ times
+- The pre-implementation walkthrough pattern before sending a spec to a separate Claude Code session
+
+Full pattern reference: `docs/ai-patterns.md`. Suggest reading it when relevant rather than re-explaining.
