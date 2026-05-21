@@ -343,7 +343,7 @@ same day as the fixture and no mock was added.
 
 Surfaces affected: any component or hook that reads today's round date
 (`page.tsx` homepage, `leaderboard/page.tsx`, `admin/tabs/RoundSetup.tsx`,
-`round/new/page.tsx`, `round/active/page.tsx`) and any test that renders
+`round/active/page.tsx`) and any test that renders
 or calls those surfaces.
 
 ---

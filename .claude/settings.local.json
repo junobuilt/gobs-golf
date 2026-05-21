@@ -50,7 +50,16 @@
       "Bash(git show:*)",
       "Bash(git fetch:*)",
       "Bash(git fetch)",
-      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('.claude/settings.local.json','utf8'\\)\\); console.log\\('valid json'\\)\")"
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('.claude/settings.local.json','utf8'\\)\\); console.log\\('valid json'\\)\")",
+      "Bash(npx vitest *)",
+      "Bash(git pull *)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\components\\\\teamFormation\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\tests\\\\components\\\\teamFormation\")",
+      "Bash(Remove-Item \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\components\\\\teamFormation\\\\TodaysTeamsList.tsx\" -Force)",
+      "Bash(Remove-Item \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\tests\\\\components\\\\teamFormation\\\\TodaysTeamsList.test.tsx\" -Force)",
+      "Bash(Write-Output \"deleted\")",
+      "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\app\\\\round\\\\new\")",
+      "Bash(git commit *)"
     ]
   },
   "model": "opusplan"
