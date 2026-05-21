@@ -222,47 +222,38 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("0-teams homepage", () => {
-  it("shows 'Form a team' CTA when no round exists today", async () => {
+  it("shows 'Form a team' CTA in empty state when no round exists today", async () => {
     fakeRef.current = new MiniFake(makeSeed());
     render(<HomePage />);
     await act(async () => { await flush(); });
     expect(screen.getByRole("button", { name: "Form a team" })).toBeInTheDocument();
   });
 
-  it("shows 'Form a team' CTA when round exists but no teams", async () => {
+  it("shows 'Form a new team' inside round card when round exists but no teams", async () => {
     fakeRef.current = new MiniFake(makeSeed({ todayRoundId: 42 }));
     render(<HomePage />);
     await act(async () => { await flush(); });
-    // TodaysTeamsList renders "Today's round — no teams yet" + "Form a team"
-    expect(screen.getByRole("button", { name: "Form a team" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Form a new team" })).toBeInTheDocument();
   });
 });
 
 describe("N-teams homepage", () => {
-  it("shows team rows and 'Form a new team'", async () => {
+  it("shows 'Form a new team' button when teams exist and round is not complete", async () => {
     fakeRef.current = new MiniFake(makeSeedWithTeams());
     render(<HomePage />);
     await act(async () => { await flush(); });
-    expect(screen.getByText("Today's teams")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Team 1/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Team 2/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Form a new team" })).toBeInTheDocument();
   });
 
-  it("tapping a team row routes to /round/{id}/scorecard?team={N}", async () => {
-    fakeRef.current = new MiniFake(makeSeedWithTeams());
+  it("hides 'Form a new team' when round is complete", async () => {
+    const seed = {
+      ...makeSeedWithTeams(),
+      rounds: [{ id: 42, played_on: "2026-05-20", is_complete: true }],
+    };
+    fakeRef.current = new MiniFake(seed);
     render(<HomePage />);
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: /Team 1/ }));
-    expect(mockPush).toHaveBeenCalledWith("/round/42/scorecard?team=1");
-  });
-
-  it("tapping team 2 routes with team=2", async () => {
-    fakeRef.current = new MiniFake(makeSeedWithTeams());
-    render(<HomePage />);
-    await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: /Team 2/ }));
-    expect(mockPush).toHaveBeenCalledWith("/round/42/scorecard?team=2");
+    expect(screen.queryByRole("button", { name: "Form a new team" })).not.toBeInTheDocument();
   });
 });
 
@@ -317,7 +308,6 @@ describe("silent_join resolution", () => {
     await act(async () => { await flush(); });
 
     // Select both Alice and Bob (both on team 1 → silent_join)
-    // Scope to picker to avoid matching TodaysTeamsList team button ("Team 1Alice, Bob→")
     const pickerS = screen.getByRole("dialog", { name: /Who's playing/i });
     const aliceBtnS = within(pickerS).getAllByRole("button").find(b => b.textContent?.includes("Alice"));
     const bobBtnS = within(pickerS).getAllByRole("button").find(b => b.textContent?.includes("Bob"));
@@ -356,7 +346,6 @@ describe("confirm_join resolution", () => {
     await act(async () => { await flush(); });
 
     // Select Alice (team 1) + Bob (unassigned) → confirm_join
-    // Scope to picker dialog to avoid matching TodaysTeamsList team buttons
     const pickerDialog = screen.getByRole("dialog", { name: /Who's playing/i });
     const aliceBtn = within(pickerDialog).getAllByRole("button").find(b => b.textContent?.includes("Alice"));
     const bobBtn = within(pickerDialog).getAllByRole("button").find(b => b.textContent?.includes("Bob"));
@@ -441,7 +430,6 @@ describe("mixed_teams_error resolution", () => {
     await act(async () => { await flush(); });
 
     // Select Alice (team 1) + Carol (team 2) → mixed_teams_error
-    // Scope to picker to avoid matching TodaysTeamsList team buttons
     const pickerM = screen.getByRole("dialog", { name: /Who's playing/i });
     const aliceBtnM = within(pickerM).getAllByRole("button").find(b => b.textContent?.includes("Alice"));
     const carolBtnM = within(pickerM).getAllByRole("button").find(b => b.textContent?.includes("Carol"));

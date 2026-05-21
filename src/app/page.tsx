@@ -14,8 +14,6 @@ import { ensureRoundShell } from "@/lib/round/ensureRoundShell";
 import type { Player } from "@/app/admin/page";
 import { RoundPlayer, SmartJoinResult } from "@/lib/teamFormation/smartJoin";
 import PlayerPickerSheet from "@/components/teamFormation/PlayerPickerSheet";
-import TodaysTeamsList from "@/components/teamFormation/TodaysTeamsList";
-import type { TeamEntry } from "@/components/teamFormation/TodaysTeamsList";
 import JoinTeamConfirmModal from "@/components/teamFormation/JoinTeamConfirmModal";
 import MixedTeamsErrorModal from "@/components/teamFormation/MixedTeamsErrorModal";
 
@@ -302,22 +300,6 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayRoundId, confirmJoinModal, loadTodayRoundPlayers, router]);
 
-  // ── Build today's teams list for TodaysTeamsList ───────────────────────────
-  const todayTeams: TeamEntry[] = (() => {
-    const map = new Map<number, RoundPlayer[]>();
-    for (const rp of todayRoundPlayers) {
-      if (rp.team_number > 0) {
-        if (!map.has(rp.team_number)) map.set(rp.team_number, []);
-        map.get(rp.team_number)!.push(rp);
-      }
-    }
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([teamNumber, roster]) => ({ teamNumber, roster }));
-  })();
-
-  const hasTeamsToday = todayTeams.length > 0;
-
   const handleStaleRetry = useCallback(async (): Promise<boolean> => {
     const queue = getWriteQueue();
     const ids = staleItems.map(i => i.id);
@@ -404,39 +386,6 @@ export default function HomePage() {
   return (
     <div style={{ padding: "20px", maxWidth: "600px", margin: "0 auto", fontFamily: F.font, color: "#1e293b", paddingBottom: "140px" }}>
 
-      {/* ── Today's teams section ──────────────────────────────────────────── */}
-      {!loading && (
-        <div style={{ marginBottom: 24, background: "white", borderRadius: 14, border: "1px solid rgba(0,0,0,0.07)", padding: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
-          {todayRoundId === null ? (
-            <div>
-              <h3 style={{ margin: "0 0 12px", fontSize: "1rem", fontWeight: 700, color: "#0b2d50" }}>Form a team</h3>
-              <p style={{ margin: "0 0 12px", fontSize: "0.85rem", color: "#64748b" }}>No round today yet — tap below to create one and pick your group.</p>
-              <button
-                onClick={handleOpenPicker}
-                style={{
-                  width: "100%", padding: "14px 16px",
-                  background: "#e8a800", color: "#1a1a1a",
-                  border: "none", borderRadius: 10,
-                  fontSize: "1rem", fontWeight: 700,
-                  cursor: "pointer", fontFamily: F.font,
-                }}
-              >
-                Form a team
-              </button>
-            </div>
-          ) : (
-            <TodaysTeamsList
-              roundId={todayRoundId}
-              teams={todayTeams}
-              onFormTeam={handleOpenPicker}
-              onTapTeam={(teamNumber) =>
-                router.push(`/round/${todayRoundId}/scorecard?team=${teamNumber}`)
-              }
-            />
-          )}
-        </div>
-      )}
-
       {/* ── Toast ─────────────────────────────────────────────────────────── */}
       {toast && (
         <div style={{
@@ -469,13 +418,25 @@ export default function HomePage() {
         </div>
       </div>
 
-      <h3 style={{ color: "#0c3057", fontSize: "1rem", marginBottom: "14px", fontWeight: 700 }}>Today's Scorecards</h3>
+      <h3 style={{ color: "#0c3057", fontSize: "1rem", marginBottom: "14px", fontWeight: 700 }}>Today's Scorecards / Teams</h3>
 
       {loading ? (
         <div style={{ textAlign: "center", padding: "40px", color: "#64748b" }}>Loading…</div>
       ) : recentRounds.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", fontSize: "0.9rem" }}>
-          No rounds today. Set one up in Admin.
+          <p style={{ marginBottom: 16 }}>No rounds today. Set one up in Admin.</p>
+          <button
+            onClick={handleOpenPicker}
+            style={{
+              padding: "14px 24px",
+              background: "#e8a800", color: "#1a1a1a",
+              border: "none", borderRadius: 10,
+              fontSize: "1rem", fontWeight: 700,
+              cursor: "pointer", fontFamily: F.font,
+            }}
+          >
+            Form a team
+          </button>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -534,6 +495,22 @@ export default function HomePage() {
                     );
                   })}
                 </div>
+
+                {round.id === todayRoundId && !round.is_complete && (
+                  <button
+                    onClick={handleOpenPicker}
+                    style={{
+                      display: "block", width: "100%", textAlign: "center", marginTop: "10px",
+                      padding: "10px 16px", borderRadius: 10,
+                      background: "white", color: "#0b2d50",
+                      border: "1.5px solid #e8a800",
+                      fontSize: "0.9rem", fontWeight: 700,
+                      cursor: "pointer", fontFamily: F.font,
+                    }}
+                  >
+                    Form a new team
+                  </button>
+                )}
 
                 {round.is_complete && (
                   <Link href={`/round/${round.id}/summary`} style={{
