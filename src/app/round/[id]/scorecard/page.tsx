@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import DangerModal from "@/app/admin/components/DangerModal";
@@ -20,10 +20,13 @@ import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
+import type { Player } from "@/app/admin/page";
+import ManageTeamSheet from "@/components/teamFormation/ManageTeamSheet";
 
 // --- TYPES ---
 interface RoundPlayer {
   id: number;
+  player_id: number;
   tee_id: number | null;
   display_name: string;
   handicap_index: number | null;
@@ -117,6 +120,42 @@ export default function ScorecardPage() {
   // Per-hole manual overrides: which 2 round_player ids count
   const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
 
+  // Manage Team sheet
+  const [manageTeamOpen, setManageTeamOpen] = useState(false);
+  const [manageTeamActivePlayers, setManageTeamActivePlayers] = useState<Player[]>([]);
+  const [manageTeamUnassigned, setManageTeamUnassigned] = useState<Player[]>([]);
+  const [manageTeamUndoToast, setManageTeamUndoToast] = useState<{
+    message: string;
+    onUndo: (() => void) | null;
+  } | null>(null);
+  const manageTeamUndoRef = useRef<RoundPlayer | null>(null);
+  const manageTeamToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-player write queue — CLAUDE.md locked pattern (same shape as src/app/page.tsx)
+  const writeQueueRef = useRef<Map<number, Promise<void>>>(new Map());
+  const enqueuePlayerWrite = useCallback((playerId: number, fn: () => Promise<void>) => {
+    const prev = writeQueueRef.current.get(playerId) ?? Promise.resolve();
+    const next = prev.then(fn).catch((err) => console.error("[ManageTeam]", err));
+    writeQueueRef.current.set(playerId, next);
+  }, []);
+  const drainWrites = useCallback(async () => {
+    await Promise.all([...writeQueueRef.current.values()]);
+  }, []);
+
+  // Visibility: Manage Team shows pre-scoring only; hides once any score exists for this team
+  const teamRoundPlayerIds = useMemo(
+    () => {
+      if (!teamFilter) return [] as number[];
+      const team = parseInt(teamFilter, 10);
+      return roundPlayers.filter((rp) => rp.team_number === team).map((rp) => rp.id);
+    },
+    [roundPlayers, teamFilter],
+  );
+  const teamHasAnyScore = useMemo(
+    () => teamRoundPlayerIds.some((id) => Object.keys(scores[id] ?? {}).length > 0),
+    [scores, teamRoundPlayerIds],
+  );
+
   // D.1 hotfix: trigger the finalize RPC any time submittedTeams (or the
   // roster) changes such that every team has submitted. Multiple firing
   // entry points (my submit, refresh-from-another-tab) collapse into this
@@ -190,7 +229,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
+        .select(`id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -199,6 +238,7 @@ export default function ScorecardPage() {
       if (rp && rp.length > 0) {
         let playersData: RoundPlayer[] = rp.map((r: any) => ({
           id: r.id,
+          player_id: r.player_id,
           tee_id: r.tee_id,
           display_name: r.players?.display_name || r.players?.full_name || "?",
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
@@ -809,6 +849,135 @@ export default function ScorecardPage() {
     setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
   };
 
+  // --- MANAGE TEAM HANDLERS ---
+
+  const showManageTeamToast = (message: string, onUndo: (() => void) | null) => {
+    if (manageTeamToastTimerRef.current) clearTimeout(manageTeamToastTimerRef.current);
+    setManageTeamUndoToast({ message, onUndo });
+    manageTeamToastTimerRef.current = setTimeout(() => {
+      setManageTeamUndoToast(null);
+      manageTeamUndoRef.current = null;
+    }, 5000);
+  };
+
+  const openManageTeam = async () => {
+    const roundIdNum = Number(roundId);
+    let activePlayers = manageTeamActivePlayers;
+    if (activePlayers.length === 0) {
+      const { data } = await supabase
+        .from("players")
+        .select("id, full_name, display_name, handicap_index, is_active, preferred_tee_id")
+        .eq("is_active", true)
+        .order("full_name");
+      activePlayers = (data ?? []) as Player[];
+      setManageTeamActivePlayers(activePlayers);
+    }
+    const { data: allRps } = await supabase
+      .from("round_players")
+      .select("player_id, team_number")
+      .eq("round_id", roundIdNum)
+      .gt("team_number", 0);
+    const assignedIds = new Set((allRps ?? []).map((r: any) => r.player_id as number));
+    setManageTeamUnassigned(activePlayers.filter((p) => !assignedIds.has(p.id)));
+    setManageTeamOpen(true);
+  };
+
+  const closeManageTeam = async () => {
+    await drainWrites();
+    setManageTeamOpen(false);
+  };
+
+  const handleManageTeamRemove = (roundPlayerId: number) => {
+    const rp = roundPlayers.find((p) => p.id === roundPlayerId);
+    if (!rp) return;
+    const teamNum = teamFilter ? parseInt(teamFilter, 10) : 0;
+    setRoundPlayers((prev) => prev.filter((p) => p.id !== roundPlayerId));
+    enqueuePlayerWrite(rp.player_id, async () => {
+      await supabase.from("round_players").update({ team_number: 0 }).eq("id", roundPlayerId);
+    });
+    manageTeamUndoRef.current = rp;
+    showManageTeamToast(
+      `${rp.display_name} removed from Team ${teamNum}. Undo.`,
+      () => {
+        const removed = manageTeamUndoRef.current;
+        if (!removed) return;
+        setRoundPlayers((prev) => [...prev, removed]);
+        enqueuePlayerWrite(removed.player_id, async () => {
+          await supabase
+            .from("round_players")
+            .update({ team_number: teamNum })
+            .eq("id", removed.id);
+        });
+        if (manageTeamToastTimerRef.current) clearTimeout(manageTeamToastTimerRef.current);
+        setManageTeamUndoToast(null);
+        manageTeamUndoRef.current = null;
+      },
+    );
+  };
+
+  const handleManageTeamAdd = async (playerIds: number[]) => {
+    const roundIdNum = Number(roundId);
+    const teamNum = teamFilter ? parseInt(teamFilter, 10) : 0;
+    if (!teamNum) return;
+    for (const pid of playerIds) {
+      enqueuePlayerWrite(pid, async () => {
+        const { data: existing } = await supabase
+          .from("round_players")
+          .select("id, team_number")
+          .eq("round_id", roundIdNum)
+          .eq("player_id", pid)
+          .maybeSingle();
+        if (existing) {
+          if (existing.team_number !== teamNum) {
+            await supabase
+              .from("round_players")
+              .update({ team_number: teamNum })
+              .eq("id", existing.id);
+          }
+        } else {
+          await supabase.from("round_players").insert({
+            round_id: roundIdNum,
+            player_id: pid,
+            team_number: teamNum,
+            tee_id: null,
+          });
+        }
+      });
+    }
+    await drainWrites();
+    const { data: refreshed } = await supabase
+      .from("round_players")
+      .select(
+        `id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, players ( full_name, display_name, handicap_index, preferred_tee_id )`,
+      )
+      .eq("round_id", roundId)
+      .eq("team_number", teamNum)
+      .order("id");
+    if (refreshed) {
+      setRoundPlayers(
+        refreshed.map((r: any) => ({
+          id: r.id,
+          player_id: r.player_id,
+          tee_id: r.tee_id,
+          display_name: r.players?.display_name || r.players?.full_name || "?",
+          handicap_index:
+            r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
+          course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
+          preferred_tee_id: r.players?.preferred_tee_id ?? null,
+          dropped_after_hole: r.dropped_after_hole ?? null,
+          team_number: r.team_number ?? 0,
+        })),
+      );
+      setManageTeamUnassigned((prev) => prev.filter((p) => !playerIds.includes(p.id)));
+      const addedNames = playerIds
+        .map((id) => manageTeamActivePlayers.find((p) => p.id === id))
+        .filter(Boolean)
+        .map((p) => p!.display_name || p!.full_name)
+        .join(", ");
+      showManageTeamToast(`${addedNames} added to Team ${teamNum}.`, null);
+    }
+  };
+
   // --- LOADING ---
   if (loading) {
     return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
@@ -975,6 +1144,7 @@ export default function ScorecardPage() {
   //                    submitted. Enables the Submit Final Scores button.
   const myTeamNum = teamFilter ? parseInt(teamFilter, 10) : null;
   const myTeamSubmitted = myTeamNum != null && submittedTeams.includes(myTeamNum);
+  const showManageTeam = !teamHasAnyScore && !isRoundComplete;
   // Admin edit mode bypasses the read-only gate on finalized rounds only.
   // A stray ?edit=1 on a live round is a no-op — the per-team submit gate
   // still applies. Same for non-admin views.
@@ -993,16 +1163,35 @@ export default function ScorecardPage() {
         {teamFilter && (
           <p style={{ margin: 0, fontSize: "0.7rem", fontWeight: 900, color: "#0c3057" }}>TEAM {teamFilter}</p>
         )}
-        {roundFormat && (
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+          {roundFormat && (
             <FormatChip
               roundId={Number(roundId)}
               currentFormat={roundFormat}
               currentConfig={roundFormatConfig}
               formatLocked={roundFormatLockedAt !== null}
             />
-          </div>
-        )}
+          )}
+          {showManageTeam && teamFilter && (
+            <button
+              onClick={() => void openManageTeam()}
+              style={{
+                padding: "6px 14px",
+                background: "white",
+                color: "#0b2d50",
+                border: "1.5px solid #0b2d50",
+                borderRadius: 999,
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "sans-serif",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Manage Team
+            </button>
+          )}
+        </div>
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
           PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS
@@ -1514,6 +1703,79 @@ export default function ScorecardPage() {
           onConfirm={() => removePlayer(removePlayerModal)}
           onCancel={() => setRemovePlayerModal(null)}
         />
+      )}
+
+      {/* Manage Team sheet */}
+      {manageTeamOpen && teamFilter && (
+        <ManageTeamSheet
+          teamNumber={parseInt(teamFilter, 10)}
+          teamRoster={roundPlayers
+            .filter((rp) => rp.team_number === parseInt(teamFilter, 10))
+            .map((rp) => ({
+              id: rp.id,
+              player_id: rp.player_id,
+              team_number: rp.team_number,
+              players: { full_name: rp.display_name, display_name: rp.display_name },
+            }))}
+          unassignedActivePlayers={manageTeamUnassigned}
+          onRemove={handleManageTeamRemove}
+          onAdd={(ids) => void handleManageTeamAdd(ids)}
+          onClose={() => void closeManageTeam()}
+        />
+      )}
+
+      {/* Manage Team undo / info toast */}
+      {manageTeamUndoToast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: 0,
+            right: 0,
+            zIndex: 1200,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              background: "#1f2937",
+              color: "white",
+              padding: "10px 18px",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              borderRadius: 10,
+              fontSize: "0.85rem",
+              fontWeight: 500,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+              maxWidth: 400,
+              pointerEvents: "auto",
+              fontFamily: "sans-serif",
+            }}
+          >
+            <span>{manageTeamUndoToast.message}</span>
+            {manageTeamUndoToast.onUndo && (
+              <button
+                onClick={manageTeamUndoToast.onUndo}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#e8a800",
+                  fontSize: "0.85rem",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  padding: "0 0 0 4px",
+                  fontFamily: "sans-serif",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Undo
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* D.1 S5 — post-fire confirmation toast. Shown only to the user who
