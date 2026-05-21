@@ -3,22 +3,22 @@
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
 **Last updated:** 2026-05-21
-**Session purpose:** Unify team formation entry points — replace legacy `/round/new` with `PlayerPickerSheet`, close TD19.
+**Session purpose:** Homepage team formation polish — single yellow hero button, in-card duplicate removed, new empty state.
 
 ---
 
 ## Today's work — 2026-05-21
 
-### What landed (second commit today)
+### What landed
 
-**Unified team formation entry points.** Hero pill "+ Start a Scorecard" button was a `<Link href="/round/new">` routing to the legacy flow. Now a `<button onClick={handleOpenPicker}>` calling the same handler as "Form a new team" in the round card. Both open `PlayerPickerSheet` in `form_team` mode. Legacy `/round/new` directory deleted. TD19 closed.
+**Commit 1** — Unified team formation entry points (from earlier this session): hero `<Link href="/round/new">` → `<button onClick={handleOpenPicker}>`, deleted `/round/new/`, TD19 closed.
 
-- `src/app/page.tsx` — hero pill button changed from `<Link>` to `<button onClick={handleOpenPicker}>`
-- `src/app/round/active/page.tsx` — fallback link updated from `/round/new` → `/`
-- `src/app/round/new/` — deleted entirely
-- `tests/app/page-team-formation.test.tsx` — 1 new test: hero button opens picker, does not navigate
-- `tests/lib/handicap-snapshot.test.ts` — stale `/round/new` comment updated
-- `ROADMAP.md` — TD19 ✅, A2.1 note updated, session log entry added
+**Commit 2** — Homepage team formation polish:
+- Hero button: label `+ Form a Team`, yellow `#e8a800` / `#1a1a1a`, `aria-disabled` + `opacity 0.4` when round complete
+- Disabled-tap: amber toast ("Round is complete — new teams can't be formed."), 3s, bg `#fdf0cc` / text `#854f0b`. `showToast` extended with `duration` + `variant` params — no new component
+- Removed "Form a new team" in-card button (hero is the only entry point now)
+- Empty state: removed "Form a team" CTA, added ⛳ + "No teams exist yet. Set one up by clicking '+ Form a Team' above." — matches leaderboard empty-state pattern
+- Tests: 8 click targets updated `"Form a team"/"Form a new team"` → `"+ Form a Team"`, 0-teams/N-teams describe blocks rewritten, new disabled-toast test added
 
 ### Shipped commit (first of the day)
 
