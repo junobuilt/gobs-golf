@@ -7,7 +7,8 @@ import { Player, MatrixRow } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
-import { FORMAT_LABELS, DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
+import { FORMAT_LABELS } from "@/lib/format/copy";
+import { ensureRoundShell as ensureRoundShellHelper } from "@/lib/round/ensureRoundShell";
 import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
@@ -334,23 +335,17 @@ export default function RoundSetup({ allPlayers }: Props) {
   // can come first. Returns the round id (existing or freshly created), or
   // null on error so callers can bail.
   //
-  // Find-or-create on played_on (May 11 duplicate-rounds fix). The flow is:
-  //   1. If existingRoundId is already set in state, return it (fast path).
-  //   2. SELECT for any round on selectedDate. If one exists, adopt it via
-  //      loadRoundForDate so the full UI state (roster, teams, format) is
-  //      hydrated from the canonical row — covers the "tap before initial
-  //      load settles" race.
-  //   3. Otherwise INSERT a new shell. If that fails with 23505 (unique
-  //      violation from migration 006), another concurrent caller won the
-  //      race between our SELECT and INSERT — re-fetch via loadRoundForDate.
-  // The DB-level unique constraint is the structural backstop; this code path
-  // is defense-in-depth so behavior is correct in production both before and
-  // after migration 006 lands.
+  // Delegates DB find-or-create to the shared ensureRoundShellHelper (see
+  // src/lib/round/ensureRoundShell.ts). The component wrapper handles UI
+  // concerns: the pre-check SELECT triggers loadRoundForDate for pre-existing
+  // rounds (full state hydration); the INSERT path sets state directly.
   const ensureRoundShell = useCallback(async (): Promise<number | null> => {
     if (existingRoundId) return existingRoundId;
     setSaving(true);
 
-    // Step 1: best-effort SELECT for an existing round on this date.
+    // Pre-check: SELECT for an existing round on this date. If one exists,
+    // hydrate full UI state via loadRoundForDate so roster/teams/format are
+    // consistent with the DB — covers the "tap before initial load settles" race.
     const { data: existing } = await supabase
       .from("rounds")
       .select("id")
@@ -360,70 +355,31 @@ export default function RoundSetup({ allPlayers }: Props) {
       .maybeSingle();
 
     if (existing) {
-      // Found one. Hydrate full state via the canonical load path so the
-      // caller sees roster/teams/format consistent with the DB. This handles
-      // the load-vs-tap race where ensureRoundShell fires before
-      // loadRoundForDate has populated existingRoundId.
       setSaving(false);
       await loadRoundForDate(selectedDate);
       return existing.id;
     }
 
-    // Step 2: insert a brand-new shell.
-    // rounds.format_config is NOT NULL — use the shared shell config until a
-    // format is picked. FormatPicker.commitSave() overwrites the whole config
-    // when the first format selection lands.
-    const { data: round, error } = await supabase
-      .from("rounds")
-      .insert({
-        played_on: selectedDate,
-        course_id: 1,
-        format: null,
-        format_config: DEFAULT_FORMAT_CONFIG_SHELL,
-      })
-      .select("id")
-      .single();
-
-    if (error) {
-      // Step 3: unique-violation fallback. Postgres code 23505 means a
-      // concurrent caller inserted between our SELECT and INSERT (only
-      // possible once migration 006 is applied — pre-migration this branch
-      // never fires and we'd duplicate, which is precisely the bug the
-      // constraint exists to prevent). Re-hydrate from the canonical row.
-      if (error.code === "23505") {
-        setSaving(false);
-        await loadRoundForDate(selectedDate);
-        const { data: refetched } = await supabase
-          .from("rounds")
-          .select("id")
-          .eq("played_on", selectedDate)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        return refetched?.id ?? null;
-      }
+    // No round yet — shared helper handles INSERT + 23505 duplicate guard.
+    try {
+      const id = await ensureRoundShellHelper(selectedDate);
       setSaving(false);
-      alert("Error creating round: " + error.message);
+      setExistingRoundId(id);
+      // Explicit reset of format state. In a fresh-mount path these are already
+      // null from loadRoundForDate, but the in-place "delete round → tap Edit
+      // Teams → ensureRoundShell" path can land here with stale format values
+      // still cached in React. Resetting at the same point we set the new
+      // round id keeps the format strip honest for the brand-new shell.
+      setRoundFormat(null);
+      setRoundFormatConfig(null);
+      setRoundFormatLockedAt(null);
+      setViewMode("active");
+      return id;
+    } catch (err: unknown) {
+      setSaving(false);
+      alert("Error creating round: " + (err instanceof Error ? err.message : String(err)));
       return null;
     }
-
-    setSaving(false);
-    if (!round) {
-      alert("Error creating round: no row returned");
-      return null;
-    }
-
-    setExistingRoundId(round.id);
-    // Explicit reset of format state. In a fresh-mount path these are already
-    // null from loadRoundForDate, but the in-place "delete round → tap Edit
-    // Teams → ensureRoundShell" path can land here with stale format values
-    // still cached in React. Resetting at the same point we set the new
-    // round id keeps the format strip honest for the brand-new shell.
-    setRoundFormat(null);
-    setRoundFormatConfig(null);
-    setRoundFormatLockedAt(null);
-    setViewMode("active");
-    return round.id;
   }, [existingRoundId, selectedDate, loadRoundForDate]);
 
   const openTodaysFormat = useCallback(async () => {
