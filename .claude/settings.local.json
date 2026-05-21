@@ -52,5 +52,6 @@
       "Bash(git fetch)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('.claude/settings.local.json','utf8'\\)\\); console.log\\('valid json'\\)\")"
     ]
-  }
+  },
+  "model": "opusplan"
 }
