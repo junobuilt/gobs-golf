@@ -55,6 +55,14 @@ vi.mock("@/lib/writeQueue", () => ({
   resetWriteQueueForTesting: vi.fn(),
 }));
 
+// ── Date helpers — pin to the hardcoded seed date so tests don't fail ──────────
+// after May 20 2026. todayLocal() uses new Date() which would return the real
+// current date; mocking it here keeps the test hermetic.
+vi.mock("@/lib/date", () => ({
+  todayLocal: () => "2026-05-20",
+  yesterdayLocal: () => "2026-05-19",
+}));
+
 // ── Sentry ────────────────────────────────────────────────────────────────────
 vi.mock("@sentry/nextjs", () => ({
   captureMessage: vi.fn(),
