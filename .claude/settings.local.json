@@ -51,16 +51,18 @@
       "Bash(git fetch:*)",
       "Bash(git fetch)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('.claude/settings.local.json','utf8'\\)\\); console.log\\('valid json'\\)\")",
-      "Bash(npx vitest *)",
-      "Bash(git pull *)",
-      "Bash(mkdir -p \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\components\\\\teamFormation\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\tests\\\\components\\\\teamFormation\")",
-      "Bash(Remove-Item \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\components\\\\teamFormation\\\\TodaysTeamsList.tsx\" -Force)",
-      "Bash(Remove-Item \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\tests\\\\components\\\\teamFormation\\\\TodaysTeamsList.test.tsx\" -Force)",
-      "Bash(Write-Output \"deleted\")",
-      "Bash(Remove-Item -Recurse -Force \"C:\\\\Users\\\\jonya\\\\Documents\\\\gobs-golf\\\\src\\\\app\\\\round\\\\new\")",
-      "Bash(git commit *)"
+      "Bash(gh api *)",
+      "Bash(curl -sI https://junobuilt.github.io/gobs-golf/ROADMAP.md)",
+      "Bash(curl -sI https://junobuilt.github.io/gobs-golf/STATUS.md)",
+      "Bash(git commit *)",
+      "Bash(curl -sS -w \"\\\\n--- HTTP %{http_code} | %{size_download} bytes | content-type: %{content_type} ---\\\\n\" https://junobuilt.github.io/gobs-golf/STATUS.md)",
+      "Bash(curl *)",
+      "Bash(git config *)",
+      "mcp__claude_ai_Vercel__list_teams",
+      "mcp__claude_ai_Vercel__list_projects",
+      "mcp__claude_ai_Vercel__list_deployments",
+      "Bash(npm install *)",
+      "Bash(git *)"
     ]
-  },
-  "model": "opusplan"
+  }
 }
