@@ -228,6 +228,13 @@ export default function HomePage() {
   }
 
   // ── Open the player picker (ensures a round shell exists first) ───────────
+  // Defense-in-depth alongside the create_team_with_players RPC: the RPC
+  // guarantees writes land on the right team_number even if our local view
+  // is stale, but the picker still needs current "Team N" captions and the
+  // smartJoin pre-resolve so a player who's already on a team routes down
+  // silent_join / confirm_join rather than (mistakenly) create_new. We
+  // refetch roundPlayers immediately before opening so the picker renders
+  // the freshest server state.
   const handleOpenPicker = useCallback(async () => {
     let roundId = todayRoundId;
     if (!roundId) {
@@ -240,8 +247,9 @@ export default function HomePage() {
         return;
       }
     }
+    await loadTodayRoundPlayers(roundId);
     setPickerOpen(true);
-  }, [todayRoundId]);
+  }, [todayRoundId, loadTodayRoundPlayers]);
 
   // ── SmartJoin resolution handler (called from PlayerPickerSheet.onResolve) ─
   const handleResolve = useCallback(async (result: SmartJoinResult) => {
@@ -250,22 +258,36 @@ export default function HomePage() {
 
     if (result.kind === "create_new") {
       setPickerOpen(false);
-      for (const playerId of result.playerIds) {
-        const hi = activePlayers.find(p => p.id === playerId)?.handicap_index ?? null;
-        enqueuePlayerWrite(playerId, () =>
-          upsertPlayerToTeam(roundId, playerId, result.nextTeamNumber, hi)
-        );
+      // create_new: nextTeamNumber from smartJoin is advisory only.
+      // Actual team number is assigned atomically by the RPC to
+      // prevent races between concurrent devices AND stale-data
+      // collisions from sequential devices that haven't refreshed.
+      const handicapSnapshots = result.playerIds.map((id) => {
+        const player = activePlayers.find((p) => p.id === id);
+        return player?.handicap_index ?? null;
+      });
+      const { data: newTeamNumber, error } = await supabase.rpc(
+        "create_team_with_players",
+        {
+          p_round_id: roundId,
+          p_player_ids: result.playerIds,
+          p_handicap_snapshots: handicapSnapshots,
+        },
+      );
+      if (error || newTeamNumber == null) {
+        console.error("[teamFormation] create_team_with_players RPC failed", error);
+        showToast("Couldn't create team — please try again.", 4000, "amber");
+        return;
       }
-      await drainWrites();
       const names = result.playerIds
         .map((id) => {
           const p = activePlayers.find((a) => a.id === id);
           return p?.display_name || p?.full_name || "?";
         })
         .join(", ");
-      showToast(`Team ${result.nextTeamNumber} created — ${names}.`);
+      showToast(`Team ${newTeamNumber} created — ${names}.`);
       await loadTodayRoundPlayers(roundId);
-      router.push(`/round/${roundId}/scorecard?team=${result.nextTeamNumber}`);
+      router.push(`/round/${roundId}/scorecard?team=${newTeamNumber}`);
     } else if (result.kind === "silent_join") {
       setPickerOpen(false);
       await drainWrites();

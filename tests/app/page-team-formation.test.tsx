@@ -73,13 +73,50 @@ vi.mock("@sentry/nextjs", () => ({
 class MiniFake {
   data: Record<string, any[]>;
   writes: Array<{ type: string; table: string; payload?: any; filters?: any[] }> = [];
+  rpcCalls: Array<{ name: string; args: any }> = [];
+  rpcHandlers: Record<string, (args: any, fake: MiniFake) => { data: any; error: any }> = {};
 
   constructor(seed: Record<string, any[]>) {
     this.data = seed;
+    // Default: create_team_with_players computes next team number from the
+    // current fake state and inserts player rows under it. Tests that need
+    // to simulate stale-data divergence override this via setRpcHandler.
+    this.rpcHandlers["create_team_with_players"] = (args, fake) => {
+      const roundId = args.p_round_id;
+      const playerIds: number[] = args.p_player_ids ?? [];
+      const snapshots: (number | null)[] = args.p_handicap_snapshots ?? [];
+      const rps: any[] = fake.data.round_players ?? [];
+      const maxTeam = rps
+        .filter(r => r.round_id === roundId)
+        .reduce((m, r) => Math.max(m, r.team_number ?? 0), 0);
+      const nextTeam = maxTeam + 1;
+      playerIds.forEach((pid, i) => {
+        rps.push({
+          id: rps.length + 500 + i,
+          round_id: roundId,
+          player_id: pid,
+          team_number: nextTeam,
+          handicap_index_snapshot: snapshots[i] ?? null,
+        });
+      });
+      fake.writes.push({ type: "rpc_insert", table: "round_players", payload: { team_number: nextTeam, playerIds } });
+      return { data: nextTeam, error: null };
+    };
+  }
+
+  setRpcHandler(name: string, handler: (args: any, fake: MiniFake) => { data: any; error: any }) {
+    this.rpcHandlers[name] = handler;
   }
 
   from(table: string) {
     return new MiniBuilder(this, table);
+  }
+
+  rpc(name: string, args: any) {
+    this.rpcCalls.push({ name, args });
+    const handler = this.rpcHandlers[name];
+    const result = handler ? handler(args, this) : { data: null, error: { message: "no handler" } };
+    return Promise.resolve(result);
   }
 }
 
@@ -307,7 +344,7 @@ describe("N-teams homepage", () => {
 });
 
 describe("create_new resolution", () => {
-  it("inserts round_players rows and routes to scorecard", async () => {
+  it("calls create_team_with_players RPC with the selected players and routes to scorecard", async () => {
     // No existing round — ensureRoundShell will create it
     const seed = makeSeed();
     fakeRef.current = new MiniFake(seed);
@@ -329,12 +366,88 @@ describe("create_new resolution", () => {
       await flush();
     });
 
-    // Should have inserted a round_players row
-    const inserts = fakeRef.current.writes.filter(
+    // Should have called the RPC instead of direct INSERTs
+    const rpcCalls = fakeRef.current.rpcCalls.filter(
+      (c: any) => c.name === "create_team_with_players",
+    );
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].args.p_round_id).toBe(42);
+    expect(rpcCalls[0].args.p_player_ids).toEqual([1]);
+    expect(rpcCalls[0].args.p_handicap_snapshots).toEqual([10]);
+
+    // No direct round_players inserts from the client path
+    const directInserts = fakeRef.current.writes.filter(
       (w: any) => w.type === "insert" && w.table === "round_players",
     );
-    expect(inserts.length).toBeGreaterThanOrEqual(1);
+    expect(directInserts).toHaveLength(0);
+
     expect(mockPush).toHaveBeenCalledWith(expect.stringContaining("/scorecard?team=1"));
+  });
+
+  it("uses the server-returned team number (not client-computed) when stale data disagrees", async () => {
+    // Stale-data sequential case: client view of round_players is empty,
+    // so smartJoin computes nextTeamNumber = 1. But another device has
+    // already created Team 1 on the server. The RPC returns 2 (the real
+    // next number from the server's perspective). The client must route
+    // and toast with 2, proving it trusts the server's return value
+    // over its own client-computed advisory guess.
+    const seed = makeSeed({ todayRoundId: 42 });
+    fakeRef.current = new MiniFake(seed);
+    fakeRef.current.setRpcHandler("create_team_with_players", () => ({
+      data: 2,
+      error: null,
+    }));
+
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
+    await act(async () => { await flush(); });
+
+    const aliceBtn = screen.getAllByRole("button").find(b => b.textContent?.includes("Alice"));
+    fireEvent.click(aliceBtn!);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start scorecard" }));
+      await flush();
+    });
+
+    // The toast should reflect Team 2 (server-assigned), not Team 1
+    // (client-computed). The route should also point at team=2.
+    expect(screen.getByText(/Team 2 created/)).toBeInTheDocument();
+    expect(mockPush).toHaveBeenCalledWith("/round/42/scorecard?team=2");
+  });
+});
+
+describe("refetch on picker open", () => {
+  it("refetches roundPlayers when the picker opens, surfacing assignments made since initial load", async () => {
+    // Initial seed: no roundPlayers. Render the homepage, then mutate
+    // the fake's data directly to simulate another device creating
+    // Team 1 in the background. When the user taps "+ Form a Team",
+    // the picker should display the freshly-added Team 1 pill on Alice,
+    // proving the open handler refetched rather than reusing stale
+    // state from the initial load.
+    const seed = makeSeed({ todayRoundId: 42 });
+    fakeRef.current = new MiniFake(seed);
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+
+    // Background mutation: Alice now belongs to Team 1 on the server.
+    fakeRef.current.data.round_players.push({
+      id: 999,
+      round_id: 42,
+      player_id: 1,
+      team_number: 1,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
+    await act(async () => { await flush(); });
+
+    // The picker should render Alice's row with the "Team 1" pill —
+    // only possible if roundPlayers was refetched on open.
+    const picker = screen.getByRole("dialog", { name: /Who's playing/i });
+    const aliceRow = within(picker).getAllByRole("button").find(b => b.textContent?.includes("Alice"));
+    expect(aliceRow?.textContent).toMatch(/Team 1/);
   });
 });
 
