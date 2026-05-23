@@ -1014,7 +1014,10 @@ export default function ScorecardPage() {
         </p>
 
         {roundPlayers.map(rp => {
-          const noHC = rp.handicap_index == null;
+          // H.2.5.7: read HI from snapshot, not live players.handicap_index.
+          // Snapshot is the value in effect at round-creation time and is
+          // the column the math layer uses; the display must agree.
+          const noHC = rp.handicap_index_snapshot == null;
           const applyDisabled = !tempHandicaps[rp.id] || tempHandicaps[rp.id].trim() === "";
           return (
             <div key={rp.id} style={{
@@ -1026,7 +1029,7 @@ export default function ScorecardPage() {
                 <div>
                   <span style={{ fontWeight: 900, fontSize: "1.2rem", color: "#1e293b" }}>{rp.display_name}</span>
                   <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>
-                    Handicap Index: {rp.handicap_index ?? "Not on file"}
+                    Handicap Index: {rp.handicap_index_snapshot ?? "Not on file"}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -1472,7 +1475,10 @@ export default function ScorecardPage() {
                 <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
                   <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
                   <span>·</span>
-                  <span>Handicap Index: {rp.handicap_index != null ? rp.handicap_index.toFixed(1) : "?"}</span>
+                  {/* H.2.5.7: per-round HI display reads the snapshot, not
+                      players.handicap_index. Keeps finalized rounds visually
+                      consistent with their locked CH and net scores. */}
+                  <span>Handicap Index: {rp.handicap_index_snapshot != null ? rp.handicap_index_snapshot.toFixed(1) : "?"}</span>
                   {teeColor && (
                     <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
                   )}
