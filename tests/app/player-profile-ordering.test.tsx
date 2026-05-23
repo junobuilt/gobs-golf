@@ -126,19 +126,20 @@ class MiniBuilder {
       }
     }
 
-    // Order, honoring referencedTable for joined columns.
-    if (this._order) {
-      const { column, ascending, referencedTable } = this._order;
-      const getKey = (r: any) => {
-        if (referencedTable) {
-          const relObj = Array.isArray(r[referencedTable]) ? r[referencedTable][0] : r[referencedTable];
-          return relObj?.[column];
-        }
-        return r[column];
-      };
+    // Order outer rows. Matching real PostgREST behavior, `referencedTable`
+    // sorts the *nested* array within each row rather than the outer rows
+    // themselves — so when a caller passes `referencedTable`, the outer
+    // ordering is left untouched (PostgREST default: physical / insertion
+    // order). For an `!inner` 1:1 join the nested array has one element
+    // and the sort is effectively a no-op. Treating referencedTable as a
+    // no-op here mirrors that real behavior, which is what makes the
+    // test meaningful — without this, the fake would silently "fix" the
+    // bug the production code is supposed to fix.
+    if (this._order && !this._order.referencedTable) {
+      const { column, ascending } = this._order;
       rows = [...rows].sort((a, b) => {
-        const av = getKey(a);
-        const bv = getKey(b);
+        const av = a[column];
+        const bv = b[column];
         if (av === bv) return 0;
         const cmp = av > bv ? 1 : -1;
         return ascending ? cmp : -cmp;

@@ -43,11 +43,18 @@ export default function PlayerProfilePage() {
       if (playerData) {
         setPlayer(playerData);
 
-        // TD26 fix (2026-05-22): order by the joined rounds.played_on, not
-        // round_players.round_id. After the historical import (H.5) round
+        // TD26 fix (2026-05-22): sort the outer round_players rows by the
+        // joined rounds.played_on. After the historical import (H.5) round
         // IDs no longer correspond to chronological date — older imports
-        // landed with higher IDs than pre-existing live rounds. Ordering
-        // by played_on keeps the round history list in true date order.
+        // landed with higher IDs than pre-existing live rounds.
+        //
+        // Done client-side because supabase-js's `.order("played_on",
+        // { referencedTable: "rounds" })` sorts the *nested* rounds array
+        // inside each row, not the outer rows. For a 1:1 `rounds!inner`
+        // join (one rounds row per round_players row) that nested sort is
+        // a no-op, so PostgREST returned outer rows in arbitrary
+        // (insertion-ish) order and the history list rendered out of
+        // chronological order. Sort here after the fetch instead.
         const { data: roundPlayers } = await supabase
           .from("round_players")
           .select(`
@@ -59,8 +66,11 @@ export default function PlayerProfilePage() {
             scores ( strokes )
           `)
           .eq("player_id", playerId)
-          .eq("rounds.is_complete", true)
-          .order("played_on", { referencedTable: "rounds", ascending: false });
+          .eq("rounds.is_complete", true);
+
+        roundPlayers?.sort((a: any, b: any) =>
+          new Date(b.rounds.played_on).getTime() - new Date(a.rounds.played_on).getTime()
+        );
 
         if (roundPlayers) {
           const results: RoundResult[] = roundPlayers
