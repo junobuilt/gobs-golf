@@ -19,7 +19,7 @@ export default function ActiveRoundPage() {
         .select("id")
         .eq("played_on", today)
         .eq("is_complete", false)
-        .order("created_at", { ascending: false })
+        .order("played_on", { ascending: false })
         .limit(1);
 
       if (data && data.length > 0) {

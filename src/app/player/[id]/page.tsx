@@ -43,6 +43,11 @@ export default function PlayerProfilePage() {
       if (playerData) {
         setPlayer(playerData);
 
+        // TD26 fix (2026-05-22): order by the joined rounds.played_on, not
+        // round_players.round_id. After the historical import (H.5) round
+        // IDs no longer correspond to chronological date — older imports
+        // landed with higher IDs than pre-existing live rounds. Ordering
+        // by played_on keeps the round history list in true date order.
         const { data: roundPlayers } = await supabase
           .from("round_players")
           .select(`
@@ -55,7 +60,7 @@ export default function PlayerProfilePage() {
           `)
           .eq("player_id", playerId)
           .eq("rounds.is_complete", true)
-          .order("round_id", { ascending: false });
+          .order("played_on", { referencedTable: "rounds", ascending: false });
 
         if (roundPlayers) {
           const results: RoundResult[] = roundPlayers

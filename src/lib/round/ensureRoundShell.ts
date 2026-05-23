@@ -17,7 +17,7 @@ export async function ensureRoundShell(date: string): Promise<number> {
     .from("rounds")
     .select("id")
     .eq("played_on", date)
-    .order("created_at", { ascending: false })
+    .order("played_on", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -40,7 +40,7 @@ export async function ensureRoundShell(date: string): Promise<number> {
         .from("rounds")
         .select("id")
         .eq("played_on", date)
-        .order("created_at", { ascending: false })
+        .order("played_on", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (refetched) return refetched.id;

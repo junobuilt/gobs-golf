@@ -61,7 +61,7 @@ export default function LeaderboardPage() {
       .from("rounds")
       .select("id, format, format_config")
       .eq("played_on", today)
-      .order("created_at", { ascending: false })
+      .order("played_on", { ascending: false })
       .limit(1);
 
     if (!rounds || rounds.length === 0) {

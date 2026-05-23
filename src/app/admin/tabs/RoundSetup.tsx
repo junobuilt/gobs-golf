@@ -158,7 +158,7 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       const { data: rounds } = await supabase
         .from("rounds").select("id, is_complete, format, format_config, format_locked_at").eq("played_on", date)
-        .order("created_at", { ascending: false }).limit(1);
+        .order("played_on", { ascending: false }).limit(1);
 
       if (!rounds || rounds.length === 0) return;
 
@@ -351,7 +351,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       .from("rounds")
       .select("id")
       .eq("played_on", selectedDate)
-      .order("created_at", { ascending: false })
+      .order("played_on", { ascending: false })
       .limit(1)
       .maybeSingle();
 
