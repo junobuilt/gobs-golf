@@ -380,3 +380,29 @@ where appropriate.
 ## AI workflow patterns
 
 Jonathan is learning AI-assisted-dev patterns. When you notice a fit, proactively suggest:
+
+---
+
+## Engineering principles for CC sessions
+
+These were surfaced during 2026-05-22's historical-data-import session and apply broadly. Treat them as binding rules when planning and writing code, not just suggestions.
+
+### 1. Writes must audit all reads
+
+When changing what column a query writes, filters, or sorts by, grep for every downstream consumer of that column before shipping. The 2026-05-22 session had three separate bugs from this blind spot (HI label reading wrong column, tee.course_id filter returning NULL silently, created_at sort across 4 tables). For each column being written or modified: list which UI surfaces, queries, and sort orders read it, and verify each is correct under the change. The audit pass should be explicit in the plan, not implicit.
+
+### 2. Supabase PostgREST fails silently
+
+The Supabase client returns "successful" empty/unfiltered/unsorted results when the API shape is wrong (e.g., wrong column name, wrong `referencedTable` semantics on 1:1 vs 1:N joins, missing required filters). Don't trust unit tests against a mocked client alone — the mock might encode your mental model of the API rather than PostgREST's actual behavior.
+
+For any code touching Supabase queries: include a smoke check that verifies the live data shape matches expectations, OR add an explicit comment in the test explaining how the mock matches PostgREST's actual runtime behavior (not the documented intent). When PostgREST silently returns the wrong shape, the error surfaces as a confusing UX bug days later — much harder to diagnose than a clear runtime exception.
+
+### 3. Test fixtures must not accidentally pass
+
+When writing a test for an ordering, filtering, or transformation behavior, the input fixture must be in a state where the code under test must do real work for the assertion to pass. Specifically:
+
+- For sort tests: seed data in the WRONG order so the test fails without the sort code running.
+- For filter tests: seed at least one row that should be excluded by the filter.
+- For transform tests: seed input that differs from expected output.
+
+A test whose fixture already satisfies the assertion before the code runs is a confirmation-bias trap. The 2026-05-22 round-sort test passed initially because the mocked Supabase response was already in correct order — the sort code could have been a no-op and the test would still have passed. Verify negative-control (the test fails with the code removed) for every new behavioral test.
