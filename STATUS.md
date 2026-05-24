@@ -2,12 +2,31 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-21
-**Session purpose:** Full day sign-off — H.2.5 (handicap snapshot) shipped and live-verified, TD19 closed (legacy `/round/new` deleted), homepage team formation consolidated (yellow hero button, amber toast, in-card duplicate removed, ⛳ empty state). CLAUDE.md and ROADMAP.md updated.
+**Last updated:** 2026-05-22
+**Session purpose:** Morning bug-fix session — atomic team creation via RPC (`ea04dd0`) closes a live two-phone team-merge bug surfaced by Dad + Jonathan during setup. Migration 011 applied to prod. Three new tech-debt items logged (TD27/TD28/TD29).
 
 ---
 
-## Today's work — 2026-05-21
+## 2026-05-22 (morning)
+
+### Where we left off
+
+Bug surfaced live this morning: Dad and Jonathan setting up teams on two phones at the same time merged into one team of 6 instead of two separate teams. Diagnosed as both concurrent race AND sequential stale-data collision on client-side team_number computation. Shipped ea04dd0: atomic team creation via Postgres RPC + picker refetch on open. Migration 011 applied to prod. Live-verified both scenarios with two devices — concurrent and sequential stale-data both produce correct sequential team numbers now. Additional manual verification: picker shows "Team N" captions for already-assigned players (refetch working), confirm_join modal fires correctly for mixed selection cases.
+
+### Today's commits
+
+- 7b490f2 — chore: resolve merge conflict in settings.local.json
+- ea04dd0 — fix: atomic team creation via RPC + picker refetch on open; prevents both concurrent-device race and stale-data sequential collision
+
+### Tomorrow's priority
+
+1. No league round scheduled. Time pressure off.
+2. Beta feedback to address (small, slot into next session): confirm_join modal currently assumes joining intent on mixed selection (unassigned + already-assigned players). User feedback flagged that more likely scenario is accidental tap on already-assigned player while forming own team. Switch from one-button "Add X to Team N? Confirm/Cancel" to two-button "Add X to Team N / Start new team with X only" — both intents explicit. Small edit to JoinTeamConfirmModal.tsx + the handler in page.tsx.
+3. After beta feedback above, pick next major phase: H.2 (DB backups), Phase E (Played-With redesign), or draft H.5 (historical import) spec with Dad's data.
+
+---
+
+## Previous session — 2026-05-21
 
 ### Commits shipped today
 
