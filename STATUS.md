@@ -2,8 +2,8 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-24 (evening, post doc-reconciliation)
-**Session purpose:** Three landings + doc reconciliation. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference. **Evening Part 3 (doc reconciliation, `8234b9e`):** ROADMAP.md + CLAUDE.md reconciled — H1 withdrawn, D1 closed, Phase E v2 + H3.x precursor added, Played With v2 decisions locked, `played_with_matrix` schema corrected, new Engineering principle #4 ("Player-default questions: assume DB row, not code").
+**Last updated:** 2026-05-24 (late evening, post TD22 closure)
+**Session purpose:** Three landings + doc reconciliation. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference. **Evening Part 3 (doc reconciliation, `8234b9e`):** ROADMAP.md + CLAUDE.md reconciled — H1 withdrawn, D1 closed, Phase E v2 + H3.x precursor added, Played With v2 decisions locked, `played_with_matrix` schema corrected, new Engineering principle #4 ("Player-default questions: assume DB row, not code"). **Late evening Part 4 (TD22 closure):** test env polyfill — Node 26's experimental `globalThis.localStorage` was shadowing jsdom's own Storage objects, crashing 51 tests in 6 files (writeQueue, scorecard, stale-failure, submit, admin-edit). Polyfill in `tests/setup-dom.ts` rebinds `localStorage`/`sessionStorage` from `globalThis.jsdom.window`. Full suite now **368/368** (was 317/368). Approach A (set jsdom URL) was tried first and reverted — it was a no-op; vitest already defaults to `http://localhost:3000`.
 
 ---
 
@@ -34,8 +34,8 @@ Per the new active-priority order locked in ROADMAP.md today (TD22 → H3.x → 
 
 1. **Manually add Vercel env vars** before any deploy: `ADMIN_PIN`, `ADMIN_COOKIE_SECRET` to Production + Preview (Development blocked for sensitive vars — expected; local `.env.local` covers dev). Without these the deployed /admin path is broken (rejects every PIN).
 2. **Manual smoke test of the PIN gate** on `npm run dev` per the spec's 7-step checklist (clear cookies → /admin redirects → wrong PIN → see error → correct PIN → lands on /admin → refresh stays in → /admin/players direct hit redirects correctly).
-3. **TD22 first** — investigate the `globalThis.localStorage.clear()` env issue across 6 test files. Actual pass rate is 317/368, not the claimed 356/356. Until this is fixed, green/red is meaningless. Likely fix: setup-file polyfill `globalThis.localStorage = window.localStorage`, or update each `beforeEach` to use `window.localStorage.clear()`.
-4. **H3.1 — `seasons` table + migration** is the gating dep for everything in H3.x. Pick this up after TD22.
+3. ~~**TD22**~~ — **closed late evening 2026-05-24.** Polyfill in `tests/setup-dom.ts` rebinds `globalThis.localStorage`/`sessionStorage` from the JSDOM instance vitest exposes at `globalThis.jsdom`. Suite is **368/368** green again. Root cause was deeper than the original guess: Node 26 ships an experimental built-in `localStorage` global that returns undefined without `--localstorage-file`, and its descriptor wins against vitest's `populateGlobal` step. The `--localstorage-file` warning is gone from test output, confirming jsdom storage is now active.
+4. **H3.1 — `seasons` table + migration** is the gating dep for everything in H3.x. **This is now the top remaining priority.**
 5. **Small follow-up with Dad next time it comes up naturally:** Wayne Hashimoto (id=45) `preferred_tee_id` is NULL — does he actually play a specific tee, or is the league default (White/Yellow Combo) correct?
 6. **Carry-over beta feedback from 2026-05-22:** confirm_join modal switch from one-button to two-button. Still outstanding.
 
@@ -47,6 +47,12 @@ Per the new active-priority order locked in ROADMAP.md today (TD22 → H3.x → 
 - ✅ Phase E expanded with v2 items (E5 reframed, E6 added).
 - ✅ H3.x sub-items added as season management precursor.
 - ✅ Played With v2 Decisions Locked subsection added.
+- ✅ **TD22 closed** — test env polyfill in `tests/setup-dom.ts` for Node 26 localStorage shadowing. Suite 368/368.
+
+### Independent issues surfaced during TD22, not fixed
+
+- **`tests/app/player-profile-ordering.test.tsx`** logs to stderr `supabase.from(...).select(...).eq(...).gt is not a function` — the test's supabase mock doesn't chain `.gt()` after `.eq()` for the `src/app/player/[id]/page.tsx:120` played-with query. Test passes only because the failed load is swallowed and the assertion doesn't depend on played-with data. Real coverage of that code path is missing. Worth a separate small task.
+- **`DEP0205` Node deprecation** — `module.register() is deprecated. Use module.registerHooks() instead.` From vitest/vite internals on Node 26. Cosmetic; will resolve when vitest upgrades. Ignore.
 
 ---
 
