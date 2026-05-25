@@ -64,7 +64,9 @@
       "Bash(npm install *)",
       "Bash(git *)",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__execute_sql"
     ]
   }
 }
