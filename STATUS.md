@@ -2,27 +2,45 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-22
-**Session purpose:** Morning bug-fix session — atomic team creation via RPC (`ea04dd0`) closes a live two-phone team-merge bug surfaced by Dad + Jonathan during setup. Migration 011 applied to prod. Three new tech-debt items logged (TD27/TD28/TD29).
+**Last updated:** 2026-05-24
+**Session purpose:** Phase E1 v1 shipped — Played With accordion on `/player/[id]` with four count-bucketed partner views (`d506460`). Live JOIN against `round_players`; `played_with_matrix` deliberately skipped (text-keyed, freshness unverified). Browser-verified by Jonathan before commit.
 
 ---
 
-## 2026-05-22 (morning)
+## 2026-05-24
+
+### Where we left off
+
+Phase E1 v1 (egocentric Played With view) live on the player profile page. The new accordion slots below Round History, hidden when focal player has zero completed rounds. Four buckets: Most frequent (6+, bars scaled to max), Some history (3–5, green pills), Just once or twice (1–2, cream pills), Never played (red pills, capped at 20 with Show all). Each pill/bar is a `<Link>` to that partner's profile.
+
+Data source decision: live JOIN against `round_players` (filtered to `is_complete=true` AND `team_number > 0`) rather than the existing `played_with_matrix` table. Matrix is keyed by `full_name` text strings, not `player.id` FKs as CLAUDE.md schema doc claims, and its freshness post-H.5 historical import is unverified. Spec query approach is the canonical source of truth.
+
+Browser-verified by Jonathan before commit. `tsc --noEmit` clean. Existing `player-profile-ordering.test.tsx` (the only test touching this file) still passes.
+
+### Today's commits
+
+- d506460 — feat(player-profile): Phase E1 v1 — Played With section with four buckets
+
+### Tomorrow's priority
+
+1. **Doc fix flagged but not done this session:** CLAUDE.md `played_with_matrix` schema table is wrong. Says `player_a`/`player_b` are `FK → players` (integer). Actual schema is `text` (full_name). Used by `admin/tabs/PlayedWith.tsx`. Either fix the doc to match reality, or migrate the table to FK and update consumers.
+2. **Test infra rot:** 51 pre-existing test failures on master from `globalThis.localStorage.clear()` (TD22). Was last reported as 356/356 green on 2026-05-21; now 310/361. Likely a vitest config / jsdom version regression. Investigate before next feature so we get clean CI signal again.
+3. **Phase E1 v2 candidates** (deferred from this session per spec): season scope toggle (needs `seasons` table), tap-to-detail with last-played-together (E3 + E4), admin-side Played-With redesign. Pick one if pursuing Phase E further.
+4. **Carry-over beta feedback from 2026-05-22:** confirm_join modal switch from one-button to two-button ("Add to Team N" / "Start new team with X only"). Still outstanding.
+5. **Bigger phases on deck:** H.2 (DB backups) is the gating dependency for Phase E season-scope and Phase H.5 (historical import) follow-on work.
+
+---
+
+## Previous session — 2026-05-22 (morning)
 
 ### Where we left off
 
 Bug surfaced live this morning: Dad and Jonathan setting up teams on two phones at the same time merged into one team of 6 instead of two separate teams. Diagnosed as both concurrent race AND sequential stale-data collision on client-side team_number computation. Shipped ea04dd0: atomic team creation via Postgres RPC + picker refetch on open. Migration 011 applied to prod. Live-verified both scenarios with two devices — concurrent and sequential stale-data both produce correct sequential team numbers now. Additional manual verification: picker shows "Team N" captions for already-assigned players (refetch working), confirm_join modal fires correctly for mixed selection cases.
 
-### Today's commits
+### Commits
 
 - 7b490f2 — chore: resolve merge conflict in settings.local.json
 - ea04dd0 — fix: atomic team creation via RPC + picker refetch on open; prevents both concurrent-device race and stale-data sequential collision
-
-### Tomorrow's priority
-
-1. No league round scheduled. Time pressure off.
-2. Beta feedback to address (small, slot into next session): confirm_join modal currently assumes joining intent on mixed selection (unassigned + already-assigned players). User feedback flagged that more likely scenario is accidental tap on already-assigned player while forming own team. Switch from one-button "Add X to Team N? Confirm/Cancel" to two-button "Add X to Team N / Start new team with X only" — both intents explicit. Small edit to JoinTeamConfirmModal.tsx + the handler in page.tsx.
-3. After beta feedback above, pick next major phase: H.2 (DB backups), Phase E (Played-With redesign), or draft H.5 (historical import) spec with Dad's data.
 
 ---
 
