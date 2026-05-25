@@ -2,8 +2,8 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-24 (evening)
-**Session purpose:** Three landings in one day. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference.
+**Last updated:** 2026-05-24 (evening, post doc-reconciliation)
+**Session purpose:** Three landings + doc reconciliation. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference. **Evening Part 3 (doc reconciliation, `8234b9e`):** ROADMAP.md + CLAUDE.md reconciled — H1 withdrawn, D1 closed, Phase E v2 + H3.x precursor added, Played With v2 decisions locked, `played_with_matrix` schema corrected, new Engineering principle #4 ("Player-default questions: assume DB row, not code").
 
 ---
 
@@ -19,7 +19,8 @@
 
 ### Today's commits
 
-- `828bbf1` — Add admin PIN gate (D1)
+- `8234b9e` — docs: 2026-05-24 evening doc reconciliation — D1 closed, H1 withdrawn, Phase E v2 + H3.x precursor (Part 3)
+- `828bbf1` — Add admin PIN gate (D1) (Part 1)
 - `d506460` — feat(player-profile): Phase E1 v1 — Played With section with four buckets (morning)
 - `f04d79a` — chore: update STATUS.md for 2026-05-24 Phase E1 v1 session (morning)
 
@@ -29,13 +30,23 @@
 
 ### Tomorrow's priority
 
-1. **Manually add Vercel env vars** before any deploy: `ADMIN_PIN`, `ADMIN_COOKIE_SECRET` to Production + Preview + Development. Without these the deployed /admin path is broken (rejects every PIN).
+Per the new active-priority order locked in ROADMAP.md today (TD22 → H3.x → Phase E v2 → E2/E3/E4 → H.2 → F.1 → G):
+
+1. **Manually add Vercel env vars** before any deploy: `ADMIN_PIN`, `ADMIN_COOKIE_SECRET` to Production + Preview (Development blocked for sensitive vars — expected; local `.env.local` covers dev). Without these the deployed /admin path is broken (rejects every PIN).
 2. **Manual smoke test of the PIN gate** on `npm run dev` per the spec's 7-step checklist (clear cookies → /admin redirects → wrong PIN → see error → correct PIN → lands on /admin → refresh stays in → /admin/players direct hit redirects correctly).
-3. **Doc fix flagged but not done:** CLAUDE.md `played_with_matrix` schema table is wrong. Says `player_a`/`player_b` are `FK → players` (integer). Actual schema is `text` (full_name). Used by `admin/tabs/PlayedWith.tsx`. Either fix the doc or migrate the table.
-4. **Test infra rot:** 51 pre-existing test failures from `globalThis.localStorage.clear()` (TD22). Was 356/356 on 2026-05-21; now 310/361 + 7 new adminAuth = 317/368. Likely a vitest config / jsdom version regression. Investigate before the next feature so CI signal is clean.
-5. **Phase E1 v2 candidates** (deferred per spec): season scope toggle (needs `seasons` table), tap-to-detail with last-played-together (E3 + E4), admin-side Played-With redesign.
+3. **TD22 first** — investigate the `globalThis.localStorage.clear()` env issue across 6 test files. Actual pass rate is 317/368, not the claimed 356/356. Until this is fixed, green/red is meaningless. Likely fix: setup-file polyfill `globalThis.localStorage = window.localStorage`, or update each `beforeEach` to use `window.localStorage.clear()`.
+4. **H3.1 — `seasons` table + migration** is the gating dep for everything in H3.x. Pick this up after TD22.
+5. **Small follow-up with Dad next time it comes up naturally:** Wayne Hashimoto (id=45) `preferred_tee_id` is NULL — does he actually play a specific tee, or is the league default (White/Yellow Combo) correct?
 6. **Carry-over beta feedback from 2026-05-22:** confirm_join modal switch from one-button to two-button. Still outstanding.
-7. **Bigger phases on deck:** H.2 (DB backups) is the gating dependency for Phase E season-scope and Phase H.5 historical-import follow-on work.
+
+### Doc-fix log (resolved this session, no longer carry-over)
+
+- ✅ CLAUDE.md `played_with_matrix` schema corrected (was integer FK → now text full_name string). Caption added.
+- ✅ New Engineering principle #4 added to CLAUDE.md.
+- ✅ H1 withdrawn / D1 closed in ROADMAP.md.
+- ✅ Phase E expanded with v2 items (E5 reframed, E6 added).
+- ✅ H3.x sub-items added as season management precursor.
+- ✅ Played With v2 Decisions Locked subsection added.
 
 ---
 
