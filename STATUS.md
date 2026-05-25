@@ -2,32 +2,40 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-24
-**Session purpose:** Phase E1 v1 shipped — Played With accordion on `/player/[id]` with four count-bucketed partner views (`d506460`). Live JOIN against `round_players`; `played_with_matrix` deliberately skipped (text-keyed, freshness unverified). Browser-verified by Jonathan before commit.
+**Last updated:** 2026-05-24 (evening)
+**Session purpose:** Three landings in one day. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference.
 
 ---
 
-## 2026-05-24
+## 2026-05-24 (evening)
 
 ### Where we left off
 
-Phase E1 v1 (egocentric Played With view) live on the player profile page. The new accordion slots below Round History, hidden when focal player has zero completed rounds. Four buckets: Most frequent (6+, bars scaled to max), Some history (3–5, green pills), Just once or twice (1–2, cream pills), Never played (red pills, capped at 20 with Show all). Each pill/bar is a `<Link>` to that partner's profile.
+**Part 1 — Admin PIN gate (D1) shipped.** `/admin` and `/admin/*` now gated behind a 4-digit PIN. Middleware on the Edge runtime (`src/middleware.ts`) checks an HMAC-SHA256-signed `admin_session` cookie (90-day expiry). Login page at `/admin/login` uses a server action (`src/app/admin/login/actions.ts`) that timing-safely compares the submitted PIN against `process.env.ADMIN_PIN`. No rate limiting per spec. Homepage Admin button unchanged. 7/7 unit tests passing on the sign/verify helpers (round-trip, tampered, expired, malformed). `tsc --noEmit` clean.
 
-Data source decision: live JOIN against `round_players` (filtered to `is_complete=true` AND `team_number > 0`) rather than the existing `played_with_matrix` table. Matrix is keyed by `full_name` text strings, not `player.id` FKs as CLAUDE.md schema doc claims, and its freshness post-H.5 historical import is unverified. Spec query approach is the canonical source of truth.
+**Crucial pre-deploy step still on Jonathan:** Add `ADMIN_PIN` and `ADMIN_COOKIE_SECRET` to Vercel Production + Preview + Development environments. Without them, the deployed gate will reject every PIN with "Incorrect PIN" and the Edge runtime will log `ADMIN_PIN is not set` / `ADMIN_COOKIE_SECRET is not set` per request. Local `.env.local` is already set.
 
-Browser-verified by Jonathan before commit. `tsc --noEmit` clean. Existing `player-profile-ordering.test.tsx` (the only test touching this file) still passes.
+**Part 2 — Jeff Irvin White tees (DB-only, no commit).** Mental model in the spec was imprecise: there is no Wayne hardcode in code. Tee preference is stored as a per-row column `players.preferred_tee_id`. Discovered TWO Waynes — only Wayne Vincent (id=55) had `preferred_tee_id = 2` set; Wayne Hashimoto (id=45) is NULL (uses league default). Updated Jeff Irvin (id=22) `preferred_tee_id` from NULL → 2 (White) via Supabase MCP. Verified with RETURNING in same round-trip.
 
 ### Today's commits
 
-- d506460 — feat(player-profile): Phase E1 v1 — Played With section with four buckets
+- `828bbf1` — Add admin PIN gate (D1)
+- `d506460` — feat(player-profile): Phase E1 v1 — Played With section with four buckets (morning)
+- `f04d79a` — chore: update STATUS.md for 2026-05-24 Phase E1 v1 session (morning)
+
+### DB changes (today, not in git history)
+
+- `UPDATE players SET preferred_tee_id = 2 WHERE id = 22` — Jeff Irvin → White tees, matches Wayne Vincent's pattern. No migration file; per-row data update, not a schema change.
 
 ### Tomorrow's priority
 
-1. **Doc fix flagged but not done this session:** CLAUDE.md `played_with_matrix` schema table is wrong. Says `player_a`/`player_b` are `FK → players` (integer). Actual schema is `text` (full_name). Used by `admin/tabs/PlayedWith.tsx`. Either fix the doc to match reality, or migrate the table to FK and update consumers.
-2. **Test infra rot:** 51 pre-existing test failures on master from `globalThis.localStorage.clear()` (TD22). Was last reported as 356/356 green on 2026-05-21; now 310/361. Likely a vitest config / jsdom version regression. Investigate before next feature so we get clean CI signal again.
-3. **Phase E1 v2 candidates** (deferred from this session per spec): season scope toggle (needs `seasons` table), tap-to-detail with last-played-together (E3 + E4), admin-side Played-With redesign. Pick one if pursuing Phase E further.
-4. **Carry-over beta feedback from 2026-05-22:** confirm_join modal switch from one-button to two-button ("Add to Team N" / "Start new team with X only"). Still outstanding.
-5. **Bigger phases on deck:** H.2 (DB backups) is the gating dependency for Phase E season-scope and Phase H.5 (historical import) follow-on work.
+1. **Manually add Vercel env vars** before any deploy: `ADMIN_PIN`, `ADMIN_COOKIE_SECRET` to Production + Preview + Development. Without these the deployed /admin path is broken (rejects every PIN).
+2. **Manual smoke test of the PIN gate** on `npm run dev` per the spec's 7-step checklist (clear cookies → /admin redirects → wrong PIN → see error → correct PIN → lands on /admin → refresh stays in → /admin/players direct hit redirects correctly).
+3. **Doc fix flagged but not done:** CLAUDE.md `played_with_matrix` schema table is wrong. Says `player_a`/`player_b` are `FK → players` (integer). Actual schema is `text` (full_name). Used by `admin/tabs/PlayedWith.tsx`. Either fix the doc or migrate the table.
+4. **Test infra rot:** 51 pre-existing test failures from `globalThis.localStorage.clear()` (TD22). Was 356/356 on 2026-05-21; now 310/361 + 7 new adminAuth = 317/368. Likely a vitest config / jsdom version regression. Investigate before the next feature so CI signal is clean.
+5. **Phase E1 v2 candidates** (deferred per spec): season scope toggle (needs `seasons` table), tap-to-detail with last-played-together (E3 + E4), admin-side Played-With redesign.
+6. **Carry-over beta feedback from 2026-05-22:** confirm_join modal switch from one-button to two-button. Still outstanding.
+7. **Bigger phases on deck:** H.2 (DB backups) is the gating dependency for Phase E season-scope and Phase H.5 historical-import follow-on work.
 
 ---
 
