@@ -182,11 +182,13 @@ Keys in use: `show_leaderboard`, `show_weekly_winners`, `two_ball_scoring`,
 `buy_in_amount` (default "10")
 
 ### played_with_matrix
+*Aggregated view/table used by `src/app/admin/tabs/PlayedWith.tsx` heatmap. Keyed by `full_name` strings, **not** `player.id` FKs — earlier versions of this doc misdescribed it as integer FKs (corrected 2026-05-24 during E1 v1 ship). Left as-is for now; will be deprecated when admin Played With UI is rebuilt (E6). The player-profile Played With section (E1, 2026-05-24) deliberately queries `round_players` directly instead of this view, to get ID-keyed pills for navigation and to avoid the freshness uncertainty around this aggregate post-H.5 import.*
+
 | column | type | notes |
 |--------|------|-------|
-| player_a | integer | FK → players |
-| player_b | integer | FK → players |
-| times_played_together | integer | |
+| player_a | text | `full_name` string, NOT FK to `players.id` |
+| player_b | text | `full_name` string, NOT FK to `players.id` |
+| times_played_together | integer | aggregate count |
 
 ---
 
@@ -406,3 +408,7 @@ When writing a test for an ordering, filtering, or transformation behavior, the 
 - For transform tests: seed input that differs from expected output.
 
 A test whose fixture already satisfies the assertion before the code runs is a confirmation-bias trap. The 2026-05-22 round-sort test passed initially because the mocked Supabase response was already in correct order — the sort code could have been a no-op and the test would still have passed. Verify negative-control (the test fails with the code removed) for every new behavioral test.
+
+### 4. Player-default questions: assume DB row, not code
+
+When a spec says "player X is hardcoded to do Y" (default tee, default format, default anything), the default assumption is that Y is stored in a per-row column on `players`, not in code. The `players.preferred_tee_id` pattern shipped 2026-05-10 is the existing template: code reads `player.preferred_tee_id ?? DEFAULT_TEE_ID` generically; the per-player exception lives in the DB row. Always verify the source before proposing edits — `grep` the codebase for the player's name, and query the DB for the value. The 2026-05-24 Jeff Irvin spec said "Wayne is hardcoded to White tees"; reality was `players.preferred_tee_id = 2` for Wayne Vincent (id=55), with Wayne Hashimoto (id=45) actually NULL. The fix was a single SQL UPDATE on Jeff's row, no code change. Plan-first protocol caught this; binary-typo-fix-style edits would have created phantom code.

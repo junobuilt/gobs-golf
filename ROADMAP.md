@@ -1,6 +1,6 @@
 # GOBS Golf — Feature Roadmap
 
-*Last updated: 2026-05-20 — beta feedback sprint for Thursday May 21 round shipped: #4 (player-driven team formation), #2 (blind-draw par display fix), #3 (leaderboard per-team THRU N / FINAL caption). D1.11 + H1 (admin edit mode + /thomas-admin → /admin rename) also shipped same day. 344/344 tests green across 37 files.*
+*Last updated: 2026-05-24 (evening) — three landings: Phase E1 v1 (Played With accordion on player profile, `d506460`), D1 PIN gate (`828bbf1`, closes admin URL-protection question), and a DB-only fix setting Jeff Irvin's `players.preferred_tee_id = 2` to match Wayne Vincent's per-row White-tee pattern. H1 (hide admin button) retracted — protection now lives at the PIN gate, not URL obscurity. Played With v2 + Admin Played With redesign added under Phase E, gated on a new H3.x season-management precursor.*
 
 ---
 
@@ -15,7 +15,7 @@
 
 **Phases are ordered by dependency.** Phase A unblocks Phase B, etc. Items within a phase can usually be built in parallel.
 
-**Active priority order (post-May 21, 2026):** Phase H.2 → Phase E → Phase F.1 → Phase G onward. Phase 0.5, Phase A.1, Phase A.2, Phase C, Phase D.1, and Phase H.2.5 are all complete. Phases below are listed in dependency order; next-up work follows this priority list. Prior priority orders: post-May 20 was H.2 → H.2.5 → E → F.1 → G onward; post-May 18 was H.2 → E → F.1 → G onward; post-May 13 was D.1 → H.2 → C PR 3 → E onward; pre-May 13 was 0.5 → A.1 → D.1 → H.2 → C PR 3 → E onward.
+**Active priority order (post-May 24, 2026):** TD22 (test infra rot) → H3.x (season management precursor) → Phase E v2 (filter toggle + admin redesign) → Phase E2/E3/E4 → Phase H.2 → Phase F.1 → Phase G onward. **Rationale:** TD22 first because test signal is currently meaningless (310/361 pass rate, 51 pre-existing env failures — green/red has to mean something before shipping more features). Then season management unblocks Phase E v2. Phase E1 v1, D1, Phase 0.5, Phase A.1, Phase A.2, Phase C, Phase D.1, and Phase H.2.5 are all complete. Prior priority orders: post-May 21 was H.2 → E → F.1 → G onward; post-May 20 was H.2 → H.2.5 → E → F.1 → G onward; post-May 18 was H.2 → E → F.1 → G onward; post-May 13 was D.1 → H.2 → C PR 3 → E onward; pre-May 13 was 0.5 → A.1 → D.1 → H.2 → C PR 3 → E onward.
 
 **One source of truth.** The companion document `GOBS_Game_Rules_v1.docx` defines all scoring logic. This roadmap covers what to build; that document covers how scoring works.
 
@@ -251,17 +251,20 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 ## Phase E — Played-With Redesign
 
-*Independent of B/C/D. Can run in parallel.*
+*Independent of B/C/D. Can run in parallel. Phase E v2 (E5 filter toggle + E6 admin redesign) is blocked on H3.x season management.*
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| E1 | Egocentric view (mobile + desktop primary) | 📋 | Pick a player, see four buckets: 6+ rounds (bars), 3–5 rounds (tags), 1–2 rounds (tags), Never played (red tags) |
-| E2 | Improved sortable grid (desktop secondary) | 📋 | Linked from egocentric view as "Show full grid." 50×50 with color intensity, sort options (alphabetical, handicap, total rounds), gaps visually distinct |
-| E3 | Tap any player/cell → detail | 📋 | Shows exact count and last round together |
-| E4 | Last-played-together computed field | 📋 | New lookup against existing scores tables |
-| E5 | Season scope filter | 📋 | All-time vs. this-season toggle. Affects query. |
+| E1 | Egocentric view on player profile | ✅ (2026-05-24, `d506460`) | Shipped as the v1 on `/player/[id]`. Collapsible accordion below Round History; hidden when focal player has zero completed rounds. Four buckets: Most frequent (6+, bars scaled to bucket max), Some history (3–5, green pills), Just once or twice (1–2, cream pills), Never played together (red pills, capped at 20 with "Show all"). Each pill/bar is `<Link href={`/player/${id}`}>`. Live JOIN against `round_players` (filtered to `is_complete=true` AND `team_number > 0`); deliberately bypasses `played_with_matrix` view (text-keyed, freshness post-H.5 unverified — see CLAUDE.md schema correction 2026-05-24). |
+| E2 | Improved sortable grid (desktop secondary) | 📋 | Linked from egocentric view as "Show full grid." 50×50 with color intensity, sort options (alphabetical, handicap, total rounds), gaps visually distinct. |
+| E3 | Tap any player/cell → detail | 📋 | Shows exact count and last round together. |
+| E4 | Last-played-together computed field | 📋 | New lookup against existing scores tables. |
+| E5 | Season scope filter (Played With v2) | 📋 — blocked on H3.x | All-time / This-season toggle on the player-profile Played With section. Affects the live JOIN query (adds a `seasons.id = active_season_id` filter on rounds). Decisions locked 2026-05-24 — see Decisions Locked > Played With v2. |
+| E6 | Admin Played-With redesign | 📋 — blocked on H3.x | Replaces the current `admin/tabs/PlayedWith.tsx` heatmap. New surface: player picker, "present players today" filter, pair lookup. Will deprecate `played_with_matrix` view in favor of the same `round_players` live-JOIN approach used in E1. |
 
-**Phase E exit criteria:** Admin can answer "who has Bill played with?" in two taps on mobile, and "show me league-wide patterns" on desktop.
+**Phase E v1 exit:** ✅ shipped 2026-05-24 — player profile gets the egocentric Played With section.
+
+**Phase E v2 exit:** Admin can answer "who has Bill played with this season?" in two taps; admin Played With surface replaces the heatmap with a faster picker + filter workflow.
 
 ---
 
@@ -319,7 +322,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| H1 | Hide admin button from homepage | ✅ (2026-05-20) | Route renamed `/thomas-admin` → `/admin` as part of the D1.11 ship. Homepage "Admin" link target updated; folder + 4 internal imports updated. URL still accessible to those who know it. |
+| H1 | Hide admin button from homepage | ⛔ Withdrawn (2026-05-24) | Original intent: URL-obscurity protection by hiding the Admin button on the homepage. **Withdrawn 2026-05-24** — Dad asked to keep the Admin button visible. Real protection now lives at the PIN gate (D1, `828bbf1`), not URL obscurity. The earlier route rename `/thomas-admin` → `/admin` (2026-05-20) is preserved as a clean URL convention, not as a protection mechanism. Decisions Locked > "Admin button on homepage: Hide for launch" superseded in same session. |
 | H2 | Database backup strategy | 📋 | Daily Supabase backups. Manual export option for end-of-season snapshot. **Treated as blocker for historical data import and full production use.** Severity bumped 2026-05-09 — Dad asked May 9 if he could enter all 2026 historical rounds; answer is no until backup + partial-reset workflow is in place. Should ship after Phase A.1 / Phase D.1, before Phase E. |
 | H2.5.1 | Add `handicap_index_snapshot numeric` column to round_players | ✅ (3495720) | Migration adds nullable column. Backfill: UPDATE round_players SET handicap_index_snapshot = (SELECT handicap_index FROM players WHERE players.id = round_players.player_id) for all existing rows. Acceptable to backfill from current HI because no HI has changed since the small number of existing rounds were played. |
 | H2.5.2 | Update all round_players INSERT paths to set snapshot | ✅ (3495720) | Touches: src/app/admin/tabs/RoundSetup.tsx (toggleInRoster, goToTeams), src/app/page.tsx (team formation handlers — create_new, confirm_join, Manage Team add flow), src/app/round/[id]/scorecard/page.tsx (any path that inserts a round_players row). Snapshot value = current players.handicap_index at insert time. (Note: src/app/round/new/page.tsx was deleted 2026-05-21 — see TD19 / session log.) |
@@ -328,7 +331,12 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 | H2.5.5 | Admin HI edit cascade to active rounds | ✅ (3495720) | In src/app/admin/tabs/Players.tsx, when admin updates players.handicap_index, also UPDATE round_players.handicap_index_snapshot for every row where round_players.player_id = edited player AND rounds.is_complete = false. Single transactional update preferred. Finalized rounds untouched. |
 | H2.5.6 | Test surface | ✅ (3495720) | Unit tests covering: (a) snapshot is set on insert across all entry points, (b) self-heal does not fire on finalized rounds, (c) admin HI edit cascades to active rounds only, (d) CH math reads from snapshot. Integration test: change a player's HI, verify a finalized round's stored CH does not change. |
 | H2.5.7 | Per-round HI **display labels** read from snapshot | ✅ (2026-05-22) | Follow-up to H2.5.3. H2.5.3 switched the math layer but missed the HI display label on the scorecard player row metadata strip and tee-selection card, which still read `players.handicap_index`. Confirmed in prod via round 103 Wayne H (snapshot 19.4, current HI edited to 10.0): CH/net correct, HI label wrong. Fix: three sites in `src/app/round/[id]/scorecard/page.tsx` (`noHC` guard, tee-selection HI line, main-row HI line) now read `rp.handicap_index_snapshot`. Render-level test added: `tests/components/scorecard-hi-snapshot.test.tsx` asserts snapshot value renders even when current HI differs. Audit: per-round HI display surfaces are scorecard-only; summary / RoundResultsView / season leaderboard chip / player profile per-round history don't display HI per round. |
-| H3 | Season open/close flow | 📋 | Admin manually closes season in Settings. Reminder banner appears as season-end approaches (Sept/Oct). Closes the BFB fund for donation. |
+| H3 | Season open/close flow (expanded 2026-05-24 — precursor to Phase E v2) | 📋 | Admin manually opens, locks, and closes seasons; reminder banner as season-end approaches (Sept/Oct); closes the BFB fund for donation. Expanded into H3.1–H3.4 sub-items 2026-05-24. **Blocks Phase E v2 (E5 filter toggle).** |
+| H3.1 | `seasons` table + migration | 📋 | New table: `(id serial pk, name text, started_on date, ended_on date NULL, is_active boolean)`. Constraint: exactly one row with `is_active = true` at a time. Add `rounds.season_id` nullable FK (backfilled from `played_on` against the active season range; existing rounds before any season row get NULL and are treated as "pre-season"). Migration is the gating dep for everything else in H3.x. |
+| H3.2 | Admin "End Season" button | 📋 | In Settings tab. Tap → DangerModal warning "End season {name}? This locks all {N} rounds; new rounds will need a fresh season." → 1.5 s Confirm delay → UPDATE seasons SET ended_on = today, is_active = false. No new round can be created until a new season is started (H3.4 auto-handles this on next round-create). |
+| H3.3 | Lock / reopen | 📋 | Locked season rounds become read-only on admin surfaces (no edit team / delete scorecard). Reopen button on the ended-season row in Settings flips `is_active` back, with confirm modal noting that it should only be used to fix mistakes. |
+| H3.4 | Auto-start new season on first round of year | 📋 | When admin creates the first round and no active season exists, prompt for season name (default: current calendar year, e.g. "2027 Season") and insert a fresh `seasons` row before the round shell. One-tap flow on common path. |
+| H3.5 | Backfill existing rounds into a "2026" season | 📋 | One-shot migration step: INSERT seasons (name='2026 Season', started_on='2026-01-01', is_active=true), UPDATE rounds SET season_id = (the new row) WHERE season_id IS NULL. Run as part of H3.1 migration apply. |
 | H5 | Data import for 4 weeks of historical rounds | ✅ (2026-05-22) | 11 rounds imported from `GOBS_Data_Review_for_Dad_v2.xlsx`, covering 2026-04-20 → 2026-05-15. 124 round_players, 2232 scores, 6 blind_draws. Per-round HI back-derived from Dad's recorded CH using DB-side slope/rating lookup; back-derived HIs are approximations recorded for snapshot consistency (`round_players.handicap_index_snapshot`), not actual USGHIN values for those dates. Source-of-truth for these rounds is the spreadsheet, not the live app. One-shot Python parser + SQL workflow (no permanent import UI built — historical import was a one-time job). May 6 round deferred (see TD24, blocked on I16). Three legacy rounds (50, 90, 94) cleared as test data pre-import. Several Supabase write-path gotchas surfaced and fixed mid-import (see TD25). |
 | H6 | QR code for current URL | 📋 | One-time deliverable. Regenerate when custom domain ships. Added 2026-05-09. |
 | H7 | "Add to Home Screen" instructions doc | 📋 | Short numbered guide (iOS Safari Share → Add to Home Screen, Android Chrome equivalent). For Dad to forward to league. Doc deliverable, not code. Added 2026-05-09. |
@@ -434,7 +442,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 | # | Decision | Status |
 | --- | --- | --- |
-| D1 | Admin access protection — URL-only vs. real login | URL-only for now. PIN gate logged for future. |
+| D1 | Admin access protection — URL-only vs. real login | ✅ Closed (2026-05-24, `828bbf1`) — PIN gate shipped. 4-digit PIN via Next.js middleware (`src/middleware.ts`), HMAC-SHA256 signed `admin_session` cookie, 90-day expiry. No rate limiting (intentional). Live-tested. Vercel env vars set Production + Preview (Development blocked for sensitive vars, expected). |
 | D2 | Default-to-par scorecard alternative | Logged. May revisit if dash interaction confuses players. |
 | D3 | Pre-format-lock scoring (Option B) | Rejected. Logged in case Option A creates friction. |
 | D4 | Multiple short teams in one round | Independent draws. Watch for edge cases. |
@@ -474,7 +482,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 - **Played-with primary view:** Egocentric (one player at a time) on mobile + desktop. Improved grid as desktop secondary.
 - **Pair-level handicap balance:** Not a thing. Balance is team-level. Belongs in team recommendation engine (I6), not played-with.
 - **Player money on profile:** Deferred. Don't want it competitive.
-- **Admin button on homepage:** Hide for launch. URL `/admin` still works.
+- **Admin button on homepage (superseded 2026-05-24 by D1 PIN gate):** Originally locked as "Hide for launch. URL `/admin` still works." Retracted when the PIN gate shipped — Dad asked to keep the button visible; protection is at the gate, not URL obscurity. See H1 (withdrawn) and D1 (closed). Kept here for session-history pointer, not as an active rule.
 
 ### Player-driven team formation (locked 2026-05-20)
 
@@ -539,6 +547,17 @@ Players who opt out of betting are not put on a scorecard. Their team plays as a
 - **Historical import uses the same column.** Phase H.5 importer writes the per-round HI Dad provides directly to handicap_index_snapshot. No special path; same column, same math.
 - **Backfill: copy current HI to snapshot.** Existing round_players rows pre-H.2.5 had their CH computed from the player's then-current HI, which happens to equal current HI for all existing prod rounds (no HIs have changed yet). Backfill is therefore lossless.
 
+### Played With v2 (locked 2026-05-24)
+
+Decisions for the Phase E v2 season-scope filter (E5) and admin redesign (E6). Don't relitigate without explicit conversation. v1 (E1, `d506460`) is built against these same decisions; v2 inherits.
+
+- **"Played with" = same team, same round.** Not same day. The round-and-team pair is the unit of partnership. Two players on different teams the same day are not "played with."
+- **Bucket thresholds: 6+ / 3–5 / 1–2 / 0.** Same as v1. Don't recalibrate buckets per season — they're stable across All-time and This-season filters.
+- **Deactivated players:** Shown in the relevant bucket if they share history with the focal player (historical fact). Hidden from the Never-played bucket (deactivated players aren't actionable — admin can't currently pair them).
+- **Display name disambiguation:** Handle at the DB layer (full_name / display_name choices in the players row), not at render time. No render-time suffixing of duplicate names.
+- **All-time empty bucket label:** *"Not yet"* in italic muted text. Same as v1.
+- **Pills carry `player_id`, navigate to that player's page.** `<Link href={`/player/${id}`}>` is the locked pattern. Navigation must be ID-keyed to survive future display-name edits.
+
 ---
 
 ## Session Log
@@ -547,6 +566,7 @@ Players who opt out of betting are not put on a scorecard. Their team plays as a
 
 | Date | What got done |
 | --- | --- |
+| May 24 (evening) | **Three landings — Phase E1 v1, D1 PIN gate, Jeff Irvin DB fix — plus doc reconciliation.** **Morning:** Phase E1 v1 (`d506460`) — `/player/[id]` gains a "Played With" accordion under Round History. Live JOIN against `round_players` (`is_complete=true` AND `team_number > 0`); deliberately bypasses `played_with_matrix` view because the view is keyed by `full_name` text strings (not `player.id` FKs as the prior CLAUDE.md schema doc claimed), and its post-H.5 freshness is unverified. Four buckets (6+ / 3–5 / 1–2 / 0). Card hidden when focal player has zero completed rounds. Never-played bucket caps at 20 alphabetically with "Show all". **Evening Part 1:** D1 PIN gate (`828bbf1`) — `src/middleware.ts` (Edge) gates `/admin` + `/admin/*` behind a 4-digit PIN. `src/lib/adminAuth.ts` does HMAC-SHA256 via Web Crypto, cookie value `<expiresAtMs>.<hexHmac>`, 90-day expiry, timing-safe compare. Login at `src/app/admin/login/page.tsx` (React 19 `useActionState`, `-webkit-text-security: disc` PIN masking — fine for iOS/Android, falls back to visible digits on Firefox desktop, acceptable per casual-curiosity threat model). Server action `verifyPin` sanitizes `next` (must start with `/`, not `//`). No rate limiting per spec. 7/7 sign/verify tests pass. **Evening Part 2 (DB-only, no commit):** `UPDATE players SET preferred_tee_id = 2 WHERE id = 22` (Jeff Irvin → White tee, matches Wayne Vincent's per-row pattern). Spec said Wayne was "hardcoded" — diagnosis caught the mistake: tee preference is per-row, read generically by `player.preferred_tee_id ?? DEFAULT_TEE_ID`. Two Waynes in `players`; only Wayne Vincent had preference set, Wayne Hashimoto is NULL (small follow-up to check with Dad). **Roadmap reframing:** H1 (hide admin button) withdrawn — Dad asked to keep button visible, protection lives at the PIN gate. D1 closed. New H3.1–H3.5 sub-items for season management precursor (blocks Phase E v2). Phase E E5 reframed as v2 filter toggle blocked on H3.x; new E6 for admin Played With redesign. Played With v2 Decisions Locked subsection added (6 bullets). Decisions Locked "Admin button on homepage" entry retracted (kept for history pointer). Active priority order rewritten: TD22 → H3.x → Phase E v2 → E2/E3/E4 → H.2 → F.1 → G onward (TD22 first because test infra rot makes green/red meaningless: actual pass rate is 310/361 + 7 new adminAuth = 317/368, not the claimed 356). **CLAUDE.md fix:** `played_with_matrix` schema entry corrected from "integer FK → players" to "text — full_name string"; explanatory caption added. New principle #4 added to Engineering principles: "Player-default questions: assume DB row, not code." **Out of scope this session (carried forward):** TD22 investigation; manual smoke test of PIN gate per spec's 7-step checklist; CC carry-over beta feedback (confirm_join modal one-button → two-button). **Verification:** `tsc --noEmit` clean both ship commits; adminAuth 7/7 tests pass in isolation. Live-tested by Jonathan on PIN gate (browser, full flow). DB UPDATE verified via RETURNING in same round-trip. |
 | Apr 21 | Phase 0 — accounts, tools, deploy infrastructure |
 | Apr 21–27 | Schema, seed data, core app with Gemini |
 | Apr 27 (eve) | Tee/CH bugs, tap-to-select roster, team scoring, leaderboard, admin toggles, round summary |
