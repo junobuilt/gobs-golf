@@ -63,6 +63,20 @@ export type HoleInput = {
   manualContributors?: string[];
 };
 
+// D.1 follow-up: blind-draw fill input to the round-level engine.
+// The drawn player's CH and stroke-index lookups use their OWN round_players
+// row (their tee/CH on this round), not the short team's — that's why
+// drawnPlayerHoles carries the drawn player's tee hole info, not the team's.
+// Stableford-only this session; best-N formats currently ignore this field.
+export type BlindDrawInput = {
+  drawnPlayerId: string;
+  drawnPlayerCourseHandicap: number | null;
+  drawnPlayerScores: Record<number, number | null>;
+  drawnPlayerHoles: HoleInfo[];
+  holeRangeStart: number; // 1-based inclusive
+  holeRangeEnd: number;   // 1-based inclusive, always 18 in current schema
+};
+
 export type RoundInput = {
   format: Format;
   formatConfig: FormatConfig;
@@ -73,6 +87,7 @@ export type RoundInput = {
     grossScores: Record<number, number | null>;
   }>;
   manualContributors?: Record<number, string[]>;
+  blindDraws?: BlindDrawInput[];
 };
 
 export type RoundResult = {
@@ -86,4 +101,12 @@ export type RoundResult = {
     holesPlayed: number;
   }>;
   holesScored: number;
+  // Stableford points contributed by blind-draw fills. Kept separate from
+  // perHole[h].teamScore so the per-hole invariant "teamScore = sum of
+  // perPlayer.points on that hole" is preserved for the team's own players.
+  // Callers add blindDrawTotal into the team's headline total, and
+  // blindDrawPerHole[h] into the F9/B9 leg totals for holes in each nine.
+  // Always 0 / {} for best-N formats this session (TODO: best-N support).
+  blindDrawTotal: number;
+  blindDrawPerHole: Record<number, number>;
 };

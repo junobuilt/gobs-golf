@@ -220,7 +220,7 @@ export function computeHoleResult(input: HoleInput): HoleResult {
 }
 
 export function computeRoundResult(input: RoundInput): RoundResult {
-  const { format, formatConfig, holes, players, manualContributors } = input;
+  const { format, formatConfig, holes, players, manualContributors, blindDraws } = input;
 
   const perHole: Array<{ holeNumber: number; result: HoleResult }> = [];
   let teamScoreTotal = 0;
@@ -271,12 +271,47 @@ export function computeRoundResult(input: RoundInput): RoundResult {
     };
   });
 
+  // Blind-draw aggregation. Stableford-only this session — for best-N
+  // formats the engine silently ignores blindDraws (returns 0/{}). The
+  // drawn player's CH and stroke-index come from THEIR tee (carried on
+  // BlindDrawInput.drawnPlayerHoles), not the short team's tee. Points
+  // accrue to a separate accumulator (NOT mutated into perHole[h]
+  // .teamScore) so the per-hole invariant "teamScore = sum of
+  // perPlayer.points on that hole" stays intact for the team's own roster.
+  // TODO: Best-N blind-draw scoring — see ROADMAP TD/D1 follow-up.
+  let blindDrawTotal = 0;
+  const blindDrawPerHole: Record<number, number> = {};
+  const stablefordTable: StablefordPointTable | null =
+    format === "stableford_standard"
+      ? STABLEFORD_STANDARD_POINTS
+      : format === "gobs_stableford"
+        ? mergePointTable(GOBS_STABLEFORD_POINTS, formatConfig.point_values)
+        : null;
+
+  if (stablefordTable && blindDraws && blindDraws.length > 0) {
+    for (const fill of blindDraws) {
+      for (let h = fill.holeRangeStart; h <= fill.holeRangeEnd; h++) {
+        const drawnHole = fill.drawnPlayerHoles.find(dh => dh.holeNumber === h);
+        if (!drawnHole) continue;
+        const gross = fill.drawnPlayerScores[h];
+        if (gross == null) continue;
+        const strokes = getHandicapStrokes(fill.drawnPlayerCourseHandicap, drawnHole.strokeIndex);
+        const net = gross - strokes;
+        const pts = getStablefordPoints(net, drawnHole.par, stablefordTable);
+        blindDrawPerHole[h] = (blindDrawPerHole[h] ?? 0) + pts;
+        blindDrawTotal += pts;
+      }
+    }
+  }
+
   return {
     teamScore: anyTeamScore ? teamScoreTotal : null,
     teamParAtScored,
     perHole,
     perPlayer,
     holesScored,
+    blindDrawTotal,
+    blindDrawPerHole,
   };
 }
 

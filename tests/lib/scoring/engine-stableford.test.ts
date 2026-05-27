@@ -6,7 +6,7 @@ import {
   STABLEFORD_STANDARD_POINTS,
   GOBS_STABLEFORD_POINTS,
 } from "@/lib/scoring/engine";
-import type { HoleInput, FormatConfig } from "@/lib/scoring/types";
+import type { HoleInput, FormatConfig, HoleInfo } from "@/lib/scoring/types";
 
 // Locked point tables (2026-05-10). Mirror the engine constants explicitly so
 // any drift between the test pin and the engine constant flags here, not
@@ -278,6 +278,9 @@ describe("computeRoundResult — Stableford", () => {
     expect(result.teamScore).toBe(9);
     expect(result.holesScored).toBe(3);
     expect(result.teamParAtScored).toBe(0);
+    // Blind-draw accumulators default to 0/{} when no fills are provided.
+    expect(result.blindDrawTotal).toBe(0);
+    expect(result.blindDrawPerHole).toEqual({});
   });
 
   it("GOBS Stableford round can have negative team total (DB+ = -1)", () => {
@@ -296,5 +299,167 @@ describe("computeRoundResult — Stableford", () => {
     });
     expect(result.teamScore).toBe(-4);
     expect(result.teamParAtScored).toBe(0);
+  });
+});
+
+// ─── Stableford team total includes blind-draw points (D.1 follow-up) ──────
+// Round 155 (2026-05-25) shipped wrong because the engine ignored
+// blind_draws fills entirely. These tests pin the engine's contract:
+//   - result.teamScore stays = team's own players' points (perHole invariant
+//     preserved: teamScore = sum of perPlayer.points on that hole).
+//   - result.blindDrawTotal carries the drawn player's points over the fill
+//     range; callers add it into the headline team total.
+//   - result.blindDrawPerHole[h] carries the per-hole contribution; callers
+//     add it into F9/B9 leg totals over the relevant nine.
+//
+// Fixture design notes (CLAUDE.md engineering principle #3 — test fixtures
+// must not accidentally pass): every drawn-player score is chosen so the
+// drawn player's contribution is NONZERO. Without the new engine code,
+// blindDrawTotal would default to 0 and the assertions below would fail —
+// i.e. the test does real work.
+
+describe("computeRoundResult — Stableford with blind draws", () => {
+  // Reused 18-hole layout (par 4, SI distributed 18..1). All fixtures use
+  // courseHandicap 0 so net = gross — keeps the math obvious.
+  const eighteenPar4: HoleInfo[] = Array.from({ length: 18 }, (_, i) => ({
+    holeNumber: i + 1,
+    par: 4,
+    strokeIndex: 18 - i,
+  }));
+
+  it("Stableford Standard: 3-player team + 1 blind draw (1..18) adds drawn player's points", () => {
+    // Team A,B,C all par every hole → 2 pts × 18 × 3 = 108.
+    const teamScoresPar: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) teamScoresPar[h] = 4;
+    // Drawn player D birdies every hole → 3 pts × 18 = 54.
+    const drawnScores: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) drawnScores[h] = 3;
+
+    const result = computeRoundResult({
+      format: "stableford_standard",
+      formatConfig: { basis: "net", override_holes: [] },
+      holes: eighteenPar4,
+      players: [
+        { playerId: "A", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+        { playerId: "B", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+        { playerId: "C", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+      ],
+      blindDraws: [
+        {
+          drawnPlayerId: "D",
+          drawnPlayerCourseHandicap: 0,
+          drawnPlayerScores: drawnScores,
+          drawnPlayerHoles: eighteenPar4,
+          holeRangeStart: 1,
+          holeRangeEnd: 18,
+        },
+      ],
+    });
+
+    // Team's own players unchanged (invariant preserved).
+    expect(result.teamScore).toBe(108);
+    // Drawn player's 54 pts live on the separate accumulator.
+    expect(result.blindDrawTotal).toBe(54);
+    // Per-hole contribution: 3 pts on every hole.
+    for (let h = 1; h <= 18; h++) {
+      expect(result.blindDrawPerHole[h]).toBe(3);
+    }
+  });
+
+  it("GOBS Stableford: drawn-player points use the GOBS table (eagle=5)", () => {
+    const teamScoresPar: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) teamScoresPar[h] = 4; // par → 2 pts each
+    // Drawn player eagles hole 1 (gross 2 on par 4) and pars the rest.
+    // Standard table eagle = 5; GOBS default eagle is also 5 → same number,
+    // but we additionally assert it's NOT 3 (birdie) to confirm the lookup
+    // ran. Use a custom point_values override to make GOBS distinct from
+    // Standard: birdie=6 instead of 3. Then drawn player birdies hole 2.
+    const drawnScores: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) drawnScores[h] = 4;
+    drawnScores[1] = 2; // eagle
+    drawnScores[2] = 3; // birdie
+
+    const result = computeRoundResult({
+      format: "gobs_stableford",
+      formatConfig: {
+        basis: "net",
+        override_holes: [],
+        point_values: { birdie: 6 },
+      },
+      holes: eighteenPar4,
+      players: [
+        { playerId: "A", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+        { playerId: "B", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+        { playerId: "C", courseHandicap: 0, grossScores: { ...teamScoresPar } },
+      ],
+      blindDraws: [
+        {
+          drawnPlayerId: "D",
+          drawnPlayerCourseHandicap: 0,
+          drawnPlayerScores: drawnScores,
+          drawnPlayerHoles: eighteenPar4,
+          holeRangeStart: 1,
+          holeRangeEnd: 18,
+        },
+      ],
+    });
+
+    // 3 players × 18 holes × 2 pts (par, GOBS default) = 108.
+    expect(result.teamScore).toBe(108);
+    // Drawn player: eagle(5) + birdie(6 under override) + 16 pars(2 each)
+    // = 5 + 6 + 32 = 43.
+    expect(result.blindDrawTotal).toBe(43);
+    expect(result.blindDrawPerHole[1]).toBe(5);
+    expect(result.blindDrawPerHole[2]).toBe(6);
+    expect(result.blindDrawPerHole[3]).toBe(2);
+  });
+
+  it("Mid-round dropout: drawn player covers only holes 11..18, no double count", () => {
+    // 4-player team. D dropped after hole 10 — scores only 1..10.
+    // A/B/C par every hole. D pars 1..10, no scores past that.
+    const fullPar: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) fullPar[h] = 4;
+    const dropoutScores: Record<number, number> = {};
+    for (let h = 1; h <= 10; h++) dropoutScores[h] = 4;
+    // Drawn player E covers holes 11..18 with birdies (3 pts each → 24 total).
+    // Fixture seeds E's full 18 but the engine should only count 11..18.
+    const drawnScores: Record<number, number> = {};
+    for (let h = 1; h <= 18; h++) drawnScores[h] = 3;
+
+    const result = computeRoundResult({
+      format: "stableford_standard",
+      formatConfig: { basis: "net", override_holes: [] },
+      holes: eighteenPar4,
+      players: [
+        { playerId: "A", courseHandicap: 0, grossScores: { ...fullPar } },
+        { playerId: "B", courseHandicap: 0, grossScores: { ...fullPar } },
+        { playerId: "C", courseHandicap: 0, grossScores: { ...fullPar } },
+        { playerId: "D", courseHandicap: 0, grossScores: dropoutScores },
+      ],
+      blindDraws: [
+        {
+          drawnPlayerId: "E",
+          drawnPlayerCourseHandicap: 0,
+          drawnPlayerScores: drawnScores,
+          drawnPlayerHoles: eighteenPar4,
+          holeRangeStart: 11,
+          holeRangeEnd: 18,
+        },
+      ],
+    });
+
+    // Team-only points: A 36 + B 36 + C 36 + D 20 = 128.
+    // (D contributes par×10 holes = 2×10 = 20; D scored null on 11..18
+    // so they don't appear in those holes' team totals — no double-count.)
+    expect(result.teamScore).toBe(128);
+    // Drawn player birdies × 8 holes (11..18) = 24.
+    expect(result.blindDrawTotal).toBe(24);
+    // Per-hole keys exist for 11..18 only.
+    for (let h = 1; h <= 10; h++) {
+      expect(result.blindDrawPerHole[h]).toBeUndefined();
+    }
+    for (let h = 11; h <= 18; h++) {
+      expect(result.blindDrawPerHole[h]).toBe(3);
+    }
   });
 });

@@ -2,8 +2,45 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-24 (late evening, post TD22 closure)
-**Session purpose:** Three landings + doc reconciliation. **Morning:** Phase E1 v1 — Played With accordion (`d506460`). **Evening Part 1:** Admin PIN gate (D1) shipped (`828bbf1`) — 4-digit PIN, HMAC-SHA256 signed cookie, Edge middleware. **Evening Part 2 (DB-only, no commit):** Jeff Irvin's `players.preferred_tee_id` set to 2 (White) to match Wayne Vincent's existing per-row preference. **Evening Part 3 (doc reconciliation, `8234b9e`):** ROADMAP.md + CLAUDE.md reconciled — H1 withdrawn, D1 closed, Phase E v2 + H3.x precursor added, Played With v2 decisions locked, `played_with_matrix` schema corrected, new Engineering principle #4 ("Player-default questions: assume DB row, not code"). **Late evening Part 4 (TD22 closure):** test env polyfill — Node 26's experimental `globalThis.localStorage` was shadowing jsdom's own Storage objects, crashing 51 tests in 6 files (writeQueue, scorecard, stale-failure, submit, admin-edit). Polyfill in `tests/setup-dom.ts` rebinds `localStorage`/`sessionStorage` from `globalThis.jsdom.window`. Full suite now **368/368** (was 317/368). Approach A (set jsdom URL) was tried first and reverted — it was a no-op; vitest already defaults to `http://localhost:3000`.
+**Last updated:** 2026-05-26 (evening, blind-draw Stableford fix)
+**Session purpose:** Fix scoring bug in `stableford_standard` / `gobs_stableford` team totals on rounds that had `blind_draws` fills. Round 155 (2026-05-25) displayed Team 1 = 105 (should be 139) — the drawn player's 34 Stableford points were never added to the short team. Root cause: the per-team `computeRoundResult` call in [src/lib/round/results.ts](src/lib/round/results.ts) only knew about that team's own `round_players`; `blind_draws` rows were threaded to the display caption but not into the engine. Fix landed at the engine layer: `RoundInput` now accepts an optional `blindDraws[]`, `RoundResult` gains a separate `blindDrawTotal` + `blindDrawPerHole` accumulator (the per-hole invariant "teamScore = sum of perPlayer.points" stays intact for the team's own players). `results.ts` builds the input from existing `blindDrawRows` + lookups and adds the accumulator into the headline total + F9/B9 leg totals. Best-N formats deliberately out of scope this session — engine silently ignores `blindDraws` for them (TODO in code). Three new Stableford engine tests pass; full suite **374/374** (was 371). `tsc --noEmit` clean.
+
+---
+
+## 2026-05-26 (evening)
+
+### Where we left off
+
+**Fix shipped.** Engine API change is additive (new optional input field; two new always-present output fields with `0` / `{}` defaults). Stableford team totals on `/round/[id]/summary` and the live leaderboard now include drawn-player points. Round 155 expected display after reload: Team 1 = 139, Team 2 = 129 (was 105 vs 129). No DB backfill needed — team totals are computed at read time.
+
+**Files touched:**
+- `src/lib/scoring/types.ts` — new `BlindDrawInput` type, optional `RoundInput.blindDraws`, new `RoundResult.blindDrawTotal` + `RoundResult.blindDrawPerHole`.
+- `src/lib/scoring/engine.ts` — `computeRoundResult` aggregates drawn-player Stableford points (resolves the format-correct point table once at the round level; `mergePointTable(GOBS_STABLEFORD_POINTS, formatConfig.point_values)` for GOBS).
+- `src/lib/round/results.ts` — builds per-team `BlindDrawInput[]` from the existing `blindDrawRows` + `playerLookup` + `scoresByRpId` + `holesByTee`. `total = rawTeamScore + blindDrawTotal − teamPar`. `legTotal()` adds `blindDrawPerHole[h]` for each hole in F9 / B9.
+- `tests/lib/scoring/engine-stableford.test.ts` — three new tests + tightened existing baseline (now asserts `blindDrawTotal` defaults to 0 / `{}`).
+
+**Audit-pass (CLAUDE.md principle #1, "writes must audit all reads"):**
+- `result.teamScore` readers: `engine.ts` internal; `scorecard/page.tsx` (in-round, no blind draws yet — unchanged); `results.ts:247` (rawTeamScore). All correct under the new semantic ("team's own players only").
+- `result.perHole[h].teamScore` readers: `results.ts` `legTotal()` (updated to also add `blindDrawPerHole[h]`); `scorecard/page.tsx:750,810` (in-round, unchanged). Per-hole invariant preserved.
+- `team.total` readers: `rank.ts` (sort), `RoundResultsView` (display). Both pick up the fix through the new headline formula.
+- `team.f9Total` / `team.b9Total` readers: `RoundResultsView`. Picks up fix via `legTotal()` change.
+- `BlindDrawFill.drawnPlayerNetValue` readers: `RoundResultsView` caption. Unchanged (per-fill aggregate computed independently from per-team accumulator; both paths produce consistent numbers because both use the drawn player's own CH + tee SI).
+
+### Today's commits
+
+- (this session) — fix(scoring): include blind-draw points in Stableford team totals
+
+### Tomorrow's priority
+
+1. **Manual verification of round 155** — reload `/round/155/summary`; confirm Team 1 = 139, Team 2 = 129.
+2. **Resume previous H3.x track** — `seasons` table + migration is still the top remaining feature priority per 2026-05-24's plan.
+3. **Best-N blind-draw scoring** — same engine path likely has the same gap for 2-Ball / 3-Ball / Best Ball formats; engine currently silently ignores `blindDraws` for them with a `// TODO` marker. Worth scoping next time best-N rounds need to include drawn players.
+
+### Considered but not changed (confession)
+
+- **`results.ts:359-382` `drawnPlayerNetValue` block** — duplicates the engine's drawn-player aggregation for the per-fill caption. The new `blindDrawPerHole` lets us derive per-fill totals too, so this could be folded into the engine output. Left as-is to keep this commit narrow.
+- **Best-N blind-draw scoring** — same bug shape almost certainly affects 2-Ball / 3-Ball / Best Ball; spec explicitly deferred.
+- **`tee_id` mixed-tee handling** in `results.ts`'s `firstTeeId` lookup — pre-existing; not touching.
 
 ---
 

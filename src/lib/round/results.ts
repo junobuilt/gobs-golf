@@ -5,7 +5,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { computeRoundResult } from "@/lib/scoring";
-import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
+import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import { getScoringBasis } from "@/lib/format/helpers";
 import {
   rankTeams,
@@ -227,12 +227,35 @@ export async function loadRoundResults(
       courseHandicap: useGross ? 0 : rp.course_handicap,
       grossScores: scoresByRpId[rp.id] || {},
     }));
+    // Blind-draw fills for THIS team. Engine ignores them for best-N this
+    // session; for Stableford they accumulate into result.blindDrawTotal
+    // and result.blindDrawPerHole. Drawn player's tee/CH come from their
+    // own round_players row (looked up via playerLookup).
+    const blindDrawInputs: BlindDrawInput[] = (blindDrawRows ?? [])
+      .filter((bd: any) => bd.short_team_number === teamNum)
+      .map((bd: any) => {
+        const drawnPlayerId = bd.drawn_player_id as number;
+        const lookup = playerLookup[drawnPlayerId];
+        const drawnRpId = lookup?.rpId;
+        const drawnHoles = lookup ? (holesByTee[lookup.teeId] || []) : [];
+        const drawnRp = (rps as any[]).find(r => r.id === drawnRpId);
+        const drawnCH = useGross ? 0 : (drawnRp?.course_handicap ?? null);
+        return {
+          drawnPlayerId: String(drawnRpId ?? drawnPlayerId),
+          drawnPlayerCourseHandicap: drawnCH,
+          drawnPlayerScores: drawnRpId ? (scoresByRpId[drawnRpId] || {}) : {},
+          drawnPlayerHoles: drawnHoles,
+          holeRangeStart: bd.hole_range_start as number,
+          holeRangeEnd: bd.hole_range_end as number,
+        };
+      });
     enginePerTeam[teamNum] = {
       engine: computeRoundResult({
         format,
         formatConfig: { ...formatConfig, basis: useGross ? "gross" : "net" },
         holes: teamHoles,
         players: playersForEngine,
+        blindDraws: blindDrawInputs,
       }),
       parByHole,
     };
@@ -246,13 +269,17 @@ export async function loadRoundResults(
 
     const rawTeamScore = result.teamScore ?? 0;
     const teamPar = result.teamParAtScored;
-    // Best-N: total is delta. Stableford: teamPar is 0, so total collapses to
-    // absolute team points. Same convention as leaderboard PR 2.
-    const total = rawTeamScore - teamPar;
+    // Best-N: total is delta (blindDrawTotal stays 0 for best-N this session).
+    // Stableford: teamPar is 0, so total = rawTeamScore + blindDrawTotal.
+    // The blind-draw accumulator lives on a separate field so per-hole
+    // engine teamScore stays = sum of perPlayer.points (team-only invariant).
+    const total = rawTeamScore + result.blindDrawTotal - teamPar;
 
-    // F9 / B9 leg split from engine perHole. Best-N: legTotal = legScore - legPar
-    // accumulated across scored holes. Stableford: legPar always 0 → legTotal
-    // collapses to absolute leg points (matches A1.6 pill semantics).
+    // F9 / B9 leg split from engine perHole + blindDrawPerHole. Best-N:
+    // legTotal = legScore - legPar accumulated across scored holes (blind-
+    // draw contribution is 0 in best-N). Stableford: legPar always 0 →
+    // legTotal collapses to absolute leg points = team points on this nine
+    // + blind-draw points on this nine.
     function legTotal(holes: ReadonlyArray<number>): number | null {
       let scoreSum = 0;
       let parSum = 0;
@@ -265,6 +292,12 @@ export async function loadRoundResults(
           parSum += (parByHole[hole.holeNumber] ?? 0) *
             hole.result.contributingPlayerIds.length;
         }
+        any = true;
+      }
+      for (const hn of holes) {
+        const bd = result.blindDrawPerHole[hn];
+        if (bd == null) continue;
+        scoreSum += bd;
         any = true;
       }
       return any ? scoreSum - parSum : null;
