@@ -9,6 +9,7 @@ import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import { ensureRoundShell as ensureRoundShellHelper } from "@/lib/round/ensureRoundShell";
+import { reopenRound } from "@/lib/round/reopenRound";
 import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
@@ -48,6 +49,14 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("none");
   const [mobileStep, setMobileStep] = useState<"checkin" | "teams">("checkin");
   const [saving, setSaving] = useState(false);
+  // Phase D.2: was_finalized is the latch from migration 012 that tells the
+  // banner + reopen flow whether this round was ever finalized. A reopened
+  // round is is_complete=false AND was_finalized=true. Used to decide
+  // whether to surface the Edit Round button and to construct scorecard
+  // links with ?admin=1&edit=1 so the EditModeBanner pins on navigation.
+  const [wasFinalized, setWasFinalized] = useState(false);
+  const [blindDrawCount, setBlindDrawCount] = useState(0);
+  const [reopenModal, setReopenModal] = useState(false);
   // True from mount until the first loadRoundForDate settles, and again any
   // time the date picker changes and the new date's load is in flight. Gates
   // the Today's Format and Edit Teams buttons so a fast tap during the load
@@ -143,6 +152,8 @@ export default function RoundSetup({ allPlayers }: Props) {
     try {
       setExistingRoundId(null);
       setIsRoundComplete(false);
+      setWasFinalized(false);
+      setBlindDrawCount(0);
       setRoundFormat(null);
       setRoundFormatConfig(null);
       setRoundFormatLockedAt(null);
@@ -157,7 +168,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
       const { data: rounds } = await supabase
-        .from("rounds").select("id, is_complete, format, format_config, format_locked_at").eq("played_on", date)
+        .from("rounds").select("id, is_complete, was_finalized, format, format_config, format_locked_at").eq("played_on", date)
         .order("played_on", { ascending: false }).limit(1);
 
       if (!rounds || rounds.length === 0) return;
@@ -165,9 +176,20 @@ export default function RoundSetup({ allPlayers }: Props) {
       const round = rounds[0];
       setExistingRoundId(round.id);
       setIsRoundComplete(round.is_complete);
+      setWasFinalized(!!(round as any).was_finalized);
       setRoundFormat((round.format ?? null) as Format | null);
       setRoundFormatConfig(((round as any).format_config ?? null) as FormatConfig | null);
       setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
+
+      // Phase D.2: count blind_draws for this round so the Edit Round
+      // confirmation modal can warn the admin about preserved-but-stale
+      // draws if any exist. count: "exact" + head: true → returns just
+      // the count, no rows.
+      const { count: bdCount } = await supabase
+        .from("blind_draws")
+        .select("id", { count: "exact", head: true })
+        .eq("round_id", round.id);
+      setBlindDrawCount(bdCount ?? 0);
 
       // Embedded join (B7 / TD2 pattern). Previously this query selected only
       // (player_id, team_number) and resolved the player record by id against
@@ -454,6 +476,24 @@ export default function RoundSetup({ allPlayers }: Props) {
     setTeams(newTeams);
     setMobileStep("teams");
     setSaving(false);
+  };
+
+  // ── Phase D.2: reopen a finalized round ───────────────────────────────────
+  // Stays on Round Setup tab so admin can use the existing Edit Teams flow
+  // to add players. Scorecard navigation links pick up ?admin=1&edit=1
+  // automatically when wasFinalized && !isRoundComplete.
+  const doReopenRound = async () => {
+    if (!existingRoundId) return;
+    setReopenModal(false);
+    setSaving(true);
+    try {
+      await reopenRound(existingRoundId);
+      await loadRoundForDate(selectedDate);
+    } catch (err) {
+      alert("Error reopening round: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ── Delete round ───────────────────────────────────────────────────────────
@@ -843,13 +883,23 @@ export default function RoundSetup({ allPlayers }: Props) {
                     }}>
                       {statusLabel}
                     </span>
-                    {existingRoundId && (
-                      <Link href={`/round/${existingRoundId}/scorecard?team=${tn}`} style={{
-                        fontSize: "0.75rem", fontWeight: 600, color: tc.pillText, textDecoration: "none",
-                      }}>
-                        Open scorecard →
-                      </Link>
-                    )}
+                    {existingRoundId && (() => {
+                      // Phase D.2: reopened rounds (is_complete=false AND
+                      // was_finalized=true) need ?admin=1&edit=1 on the
+                      // scorecard URL so the EditModeBanner pins and the
+                      // Edit HI affordances render.
+                      const isReopened = wasFinalized && !isRoundComplete;
+                      const href = isReopened
+                        ? `/round/${existingRoundId}/scorecard?team=${tn}&admin=1&edit=1`
+                        : `/round/${existingRoundId}/scorecard?team=${tn}`;
+                      return (
+                        <Link href={href} style={{
+                          fontSize: "0.75rem", fontWeight: 600, color: tc.pillText, textDecoration: "none",
+                        }}>
+                          Open scorecard →
+                        </Link>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -862,7 +912,22 @@ export default function RoundSetup({ allPlayers }: Props) {
             </div>
           )}
 
+          {/* Phase D.2: Edit Round button. Visible on every round
+              (active OR finalized), any date. Reopen of an active round
+              is a no-op on is_complete but still useful for clearing
+              submitted_teams if a team submitted prematurely. */}
           <div style={{ marginTop: "24px" }}>
+            <button onClick={() => setReopenModal(true)} disabled={saving} style={{
+              width: "100%", padding: "13px", borderRadius: "9px",
+              border: `1.5px solid ${C.navy}`, background: "transparent",
+              color: C.navy, fontSize: "0.9rem", fontWeight: 600,
+              cursor: "pointer", fontFamily: C.font,
+            }} data-testid="edit-round-button">
+              Edit round
+            </button>
+          </div>
+
+          <div style={{ marginTop: "10px" }}>
             <button onClick={() => setDeleteModal(true)} disabled={saving} style={{
               width: "100%", padding: "13px", borderRadius: "9px",
               border: `1.5px solid ${C.red}`, background: "transparent",
@@ -874,6 +939,22 @@ export default function RoundSetup({ allPlayers }: Props) {
           </div>
         </div>
         {dangerModal}
+        {reopenModal && (
+          <DangerModal
+            title={isRoundComplete ? "Reopen this round?" : "Reset this round's submissions?"}
+            description={
+              blindDrawCount > 0
+                ? `This round has ${blindDrawCount} blind ${blindDrawCount === 1 ? "draw" : "draws"} on file — they will be preserved and NOT recomputed against any new teams you add. Do not add players to teams that already had blind draws applied — their drawn scores will become stale.`
+                : (isRoundComplete
+                    ? "The round will return to active state until you finalize it again."
+                    : "Cleared submitted-team flags so admin can re-submit. Scores are untouched.")
+            }
+            confirmLabel={isRoundComplete ? "Reopen round" : "Reset submissions"}
+            cannotBeUndone={false}
+            onConfirm={doReopenRound}
+            onCancel={() => setReopenModal(false)}
+          />
+        )}
         {formatPicker}
       </div>
     );

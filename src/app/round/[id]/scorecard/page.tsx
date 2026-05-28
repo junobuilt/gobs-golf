@@ -38,6 +38,11 @@ interface RoundPlayer {
   // write guard. The whole-round view (no ?team=N) mixes players from
   // multiple teams, so the per-row check has to be per-player.
   team_number: number;
+  // Phase D.2: row provenance + per-row HI verification timestamp.
+  // created_at vs rounds.played_on drives the historical-add chip
+  // ("Verify HI for [date]"); hi_verified_at dismisses it on save.
+  created_at: string | null;
+  hi_verified_at: string | null;
 }
 
 interface Tee {
@@ -64,6 +69,20 @@ const TEE_COLORS: Record<string, { bg: string; text: string }> = {
 // F9 / B9 leg ranges for the team-net pill cumulative row.
 const F9_HOLES = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+// Phase D.2: chip-render predicate. A round_player row whose created_at is
+// more than one day after the round's played_on was added long after the
+// round itself — either by admin reopen-and-add or by the H.5 historical
+// import. In both cases the snapshot HI may not reflect the player's true
+// HI at round time, so the admin needs to verify it. Treats played_on as
+// noon UTC to dodge TZ off-by-one for the +1 day boundary.
+function isHistoricalAdd(createdAt: string | null, playedOn: string | null): boolean {
+  if (!createdAt || !playedOn) return false;
+  const createdMs = new Date(createdAt).getTime();
+  const playedMs = new Date(playedOn + "T12:00:00Z").getTime();
+  if (Number.isNaN(createdMs) || Number.isNaN(playedMs)) return false;
+  return createdMs - playedMs > 86_400_000;
+}
 
 export default function ScorecardPage() {
   const params = useParams();
@@ -117,6 +136,13 @@ export default function ScorecardPage() {
 
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
+
+  // Phase D.2: Edit HI modal — open when admin (in edit mode) taps "Edit HI"
+  // on a player's metadata row. Holds the round_player being edited; null
+  // means the modal is closed.
+  const [editHiRpId, setEditHiRpId] = useState<number | null>(null);
+  const [editHiValue, setEditHiValue] = useState<string>("");
+  const [editHiSaving, setEditHiSaving] = useState(false);
 
   // Per-hole manual overrides: which 2 round_player ids count
   const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
@@ -230,7 +256,7 @@ export default function ScorecardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
-        .select(`id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
+        .select(`id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, created_at, hi_verified_at, players ( full_name, display_name, handicap_index, preferred_tee_id )`)
         .eq("round_id", roundId);
 
       if (team) query = query.eq("team_number", parseInt(team));
@@ -248,6 +274,8 @@ export default function ScorecardPage() {
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
           dropped_after_hole: r.dropped_after_hole ?? null,
           team_number: r.team_number ?? 0,
+          created_at: r.created_at ?? null,
+          hi_verified_at: r.hi_verified_at ?? null,
         }));
 
         // LT1 fix (2026-05-09): recompute Course Handicap on every load from
@@ -396,6 +424,63 @@ export default function ScorecardPage() {
       .from("round_players").select("player_id").eq("id", rpId).single();
     if (playerRef) {
       await supabase.from("players").update({ handicap_index: hcIndex }).eq("id", playerRef.player_id);
+    }
+  };
+
+  // Phase D.2: open the Edit HI modal for a specific round_player. Used by
+  // the "Edit HI" link on the per-player metadata row and by the HI
+  // verification chip.
+  const openEditHiModal = (rp: RoundPlayer) => {
+    setEditHiRpId(rp.id);
+    setEditHiValue(rp.handicap_index_snapshot != null ? String(rp.handicap_index_snapshot) : "");
+  };
+
+  // Phase D.2: save the modal. Writes ONLY this round_player's
+  // handicap_index_snapshot + course_handicap + hi_verified_at. Does NOT
+  // touch players.handicap_index or any other round. Recomputes CH
+  // explicitly because the LT1 self-heal at line 263 only fires on round
+  // mount, not on snapshot changes (preflight finding 2026-05-27).
+  const saveEditHi = async () => {
+    if (editHiRpId == null) return;
+    const trimmed = editHiValue.trim();
+    if (trimmed === "") return;
+    const hcIndex = parseFloat(trimmed);
+    if (isNaN(hcIndex) || hcIndex < 0 || hcIndex > 54) return;
+    const rp = roundPlayers.find(p => p.id === editHiRpId);
+    if (!rp) return;
+
+    setEditHiSaving(true);
+    try {
+      let newCH: number | null = rp.course_handicap ?? null;
+      if (rp.tee_id != null) {
+        const tee = allTees.find(t => t.id === rp.tee_id);
+        if (tee) {
+          newCH = computeCourseHandicap(hcIndex, tee.slope_rating, tee.course_rating, tee.par);
+        }
+      }
+      const nowIso = new Date().toISOString();
+
+      setRoundPlayers(current =>
+        current.map(p => p.id === editHiRpId
+          ? { ...p, handicap_index_snapshot: hcIndex, course_handicap: newCH, hi_verified_at: nowIso }
+          : p,
+        ),
+      );
+
+      const update: Record<string, unknown> = {
+        handicap_index_snapshot: hcIndex,
+        hi_verified_at: nowIso,
+      };
+      if (newCH !== null) update.course_handicap = newCH;
+      const { error } = await supabase.from("round_players").update(update).eq("id", editHiRpId);
+      if (error) {
+        alert("Error saving HI: " + error.message);
+        return;
+      }
+      setEditHiRpId(null);
+      setEditHiValue("");
+    } finally {
+      setEditHiSaving(false);
     }
   };
 
@@ -952,7 +1037,7 @@ export default function ScorecardPage() {
     const { data: refreshed } = await supabase
       .from("round_players")
       .select(
-        `id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, players ( full_name, display_name, handicap_index, preferred_tee_id )`,
+        `id, player_id, tee_id, team_number, course_handicap, dropped_after_hole, handicap_index_snapshot, created_at, hi_verified_at, players ( full_name, display_name, handicap_index, preferred_tee_id )`,
       )
       .eq("round_id", roundId)
       .eq("team_number", teamNum)
@@ -971,6 +1056,8 @@ export default function ScorecardPage() {
           preferred_tee_id: r.players?.preferred_tee_id ?? null,
           dropped_after_hole: r.dropped_after_hole ?? null,
           team_number: r.team_number ?? 0,
+          created_at: r.created_at ?? null,
+          hi_verified_at: r.hi_verified_at ?? null,
         })),
       );
       setManageTeamUnassigned((prev) => prev.filter((p) => !playerIds.includes(p.id)));
@@ -1471,6 +1558,22 @@ export default function ScorecardPage() {
                       Tied
                     </span>
                   )}
+                  {/* Phase D.2: HI verification chip. Renders only in admin
+                      edit mode, when this row was added > 1 day after the
+                      round was played and HI hasn't been verified yet. */}
+                  {isAdmin && isRoundEditMode && rp.hi_verified_at == null && isHistoricalAdd(rp.created_at, roundPlayedOn) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openEditHiModal(rp); }}
+                      data-testid={`hi-verify-chip-${rp.id}`}
+                      style={{
+                        fontSize: "0.6rem", fontWeight: 700, padding: "2px 8px", borderRadius: "999px",
+                        background: "#fef3c7", color: "#92400e", textTransform: "uppercase",
+                        border: "1px solid #fcd34d", cursor: "pointer",
+                      }}
+                    >
+                      Verify HI for {roundPlayedOn}
+                    </button>
+                  )}
                 </div>
                 <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
                   <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
@@ -1479,6 +1582,21 @@ export default function ScorecardPage() {
                       players.handicap_index. Keeps finalized rounds visually
                       consistent with their locked CH and net scores. */}
                   <span>Handicap Index: {rp.handicap_index_snapshot != null ? rp.handicap_index_snapshot.toFixed(1) : "?"}</span>
+                  {/* Phase D.2: Edit HI link — admin in edit mode only.
+                      Available on every player (newly added or pre-existing). */}
+                  {isAdmin && isRoundEditMode && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openEditHiModal(rp); }}
+                      data-testid={`hi-edit-link-${rp.id}`}
+                      style={{
+                        background: "none", border: "none", padding: 0,
+                        color: "#0c3057", fontSize: "0.65rem", fontWeight: 700,
+                        textDecoration: "underline", cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      Edit HI
+                    </button>
+                  )}
                   {teeColor && (
                     <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
                   )}
@@ -1715,6 +1833,117 @@ export default function ScorecardPage() {
           onCancel={() => setRemovePlayerModal(null)}
         />
       )}
+
+      {/* Phase D.2: Edit HI modal. Two save buttons:
+            Save     — writes the entered value.
+            Verify   — writes the prefilled value unchanged (admin
+                       confirms it's correct without retyping).
+          Both set hi_verified_at, which dismisses the verification
+          chip. CH recomputes in the save handler (self-heal does not
+          re-fire on snapshot changes — preflight 2026-05-27). */}
+      {editHiRpId !== null && (() => {
+        const rp = roundPlayers.find(p => p.id === editHiRpId);
+        if (!rp) return null;
+        const trimmed = editHiValue.trim();
+        const parsed = trimmed === "" ? NaN : parseFloat(trimmed);
+        const valid = !isNaN(parsed) && parsed >= 0 && parsed <= 54;
+        const close = () => { setEditHiRpId(null); setEditHiValue(""); };
+        return (
+          <div
+            data-testid="edit-hi-modal"
+            style={{
+              position: "fixed", inset: 0, zIndex: 1000,
+              background: "rgba(0,0,0,0.5)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "24px",
+            }}
+            onClick={close}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: "white", borderRadius: "16px", padding: "28px 24px",
+                maxWidth: "380px", width: "100%",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+                fontFamily: "DM Sans, system-ui, sans-serif",
+              }}
+            >
+              <h2 style={{
+                margin: "0 0 6px", fontSize: "1.1rem", fontWeight: 700, color: "#0c3057",
+              }}>
+                Edit HI for {rp.display_name}
+              </h2>
+              <p style={{
+                margin: "0 0 16px", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.4,
+              }}>
+                Updates the snapshot for this round only. Course Handicap and net scores recalculate automatically.
+              </p>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="54"
+                value={editHiValue}
+                onChange={e => setEditHiValue(e.target.value)}
+                autoFocus
+                data-testid="edit-hi-input"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: "8px",
+                  border: "1px solid #cbd5e1", fontSize: "1rem",
+                  fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+                  marginBottom: "16px",
+                }}
+              />
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  onClick={close}
+                  disabled={editHiSaving}
+                  style={{
+                    flex: 1, padding: "11px", borderRadius: "10px",
+                    border: "1.5px solid #d1d5db", background: "white",
+                    fontSize: "0.92rem", fontWeight: 600, color: "#374151",
+                    cursor: editHiSaving ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveEditHi()}
+                  disabled={editHiSaving || !valid}
+                  data-testid="edit-hi-save"
+                  style={{
+                    flex: 1, padding: "11px", borderRadius: "10px", border: "none",
+                    background: (editHiSaving || !valid) ? "#e5e7eb" : "#0c3057",
+                    color: (editHiSaving || !valid) ? "#9ca3af" : "white",
+                    fontSize: "0.92rem", fontWeight: 700,
+                    cursor: (editHiSaving || !valid) ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {editHiSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              {/* Verify (no change) — writes the prefilled value as-is
+                  and stamps hi_verified_at, so admin can confirm an
+                  already-correct HI without retyping. */}
+              <button
+                onClick={() => void saveEditHi()}
+                disabled={editHiSaving || !valid}
+                data-testid="edit-hi-verify"
+                style={{
+                  width: "100%", marginTop: "10px", padding: "9px",
+                  borderRadius: "10px", border: "1px solid #cbd5e1",
+                  background: "transparent", color: "#0c3057",
+                  fontSize: "0.85rem", fontWeight: 600,
+                  cursor: (editHiSaving || !valid) ? "not-allowed" : "pointer",
+                  opacity: (editHiSaving || !valid) ? 0.5 : 1,
+                }}
+              >
+                Verify (no change)
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Manage Team sheet */}
       {manageTeamOpen && teamFilter && (

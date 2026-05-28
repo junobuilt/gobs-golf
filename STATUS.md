@@ -2,8 +2,74 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-26 (evening, blind-draw Stableford fix)
-**Session purpose:** Fix scoring bug in `stableford_standard` / `gobs_stableford` team totals on rounds that had `blind_draws` fills. Round 155 (2026-05-25) displayed Team 1 = 105 (should be 139) — the drawn player's 34 Stableford points were never added to the short team. Root cause: the per-team `computeRoundResult` call in [src/lib/round/results.ts](src/lib/round/results.ts) only knew about that team's own `round_players`; `blind_draws` rows were threaded to the display caption but not into the engine. Fix landed at the engine layer: `RoundInput` now accepts an optional `blindDraws[]`, `RoundResult` gains a separate `blindDrawTotal` + `blindDrawPerHole` accumulator (the per-hole invariant "teamScore = sum of perPlayer.points" stays intact for the team's own players). `results.ts` builds the input from existing `blindDrawRows` + lookups and adds the accumulator into the headline total + F9/B9 leg totals. Best-N formats deliberately out of scope this session — engine silently ignores `blindDraws` for them (TODO in code). Three new Stableford engine tests pass; full suite **374/374** (was 371). `tsc --noEmit` clean.
+**Last updated:** 2026-05-27 (Phase D.2 — Admin Edit Round shipped)
+**Session purpose:** Implement Phase D.2 (Admin Edit Round button on RoundSetup + per-player Edit HI override + HI verification chip + EditModeBanner Finalize-vs-Done conditional). Reviewed CC spec in pairing chat, then implemented end-to-end. Two new migrations applied to prod: `012_phase_d2_rounds_was_finalized` (latch column + trigger + 16-row backfill) and `013_phase_d2_round_players_hi_verified`. Five new files (2 helpers, 2 migrations, 3 new test files), six edits (RoundSetup, EditModeBanner, scorecard page, RoundResultsView — stale Edit Round Scores entry point removed). Suite **392/392** (was 374). `tsc --noEmit` clean.
+
+---
+
+## 2026-05-27 (Phase D.2 ship)
+
+### Where we left off
+
+**Phase D.2 fully shipped.** Admin can now reopen any finalized round from `/admin` → Round Setup → Edit Round, edit HI per-player on the scorecard, and re-finalize via the banner's "Finalize Round" button. Engine-layer math (CH recompute, blind-draw preservation, snapshot writes) covered by 27 new tests including negative controls per CLAUDE.md engineering principle #3.
+
+**Files touched:**
+- `supabase/migrations/012_phase_d2_rounds_was_finalized.sql` — new column + trigger + backfill UPDATE.
+- `supabase/migrations/013_phase_d2_round_players_hi_verified.sql` — new nullable timestamp column.
+- `src/lib/round/reopenRound.ts` — new helper. Read-modify-write on `format_config`; clears `submitted_teams=[]`, flips `is_complete=false`. Preserves blind_draws, scores, was_finalized.
+- `src/lib/round/finalizeRoundAdmin.ts` — new helper. Single `UPDATE rounds SET is_complete=true`; latch trigger handles was_finalized.
+- `src/app/admin/tabs/RoundSetup.tsx` — Edit Round button + reopen DangerModal (copy varies by blind_draws count); `loadRoundForDate` now selects `was_finalized` and counts `blind_draws`; scorecard links append `?admin=1&edit=1` when reopened.
+- `src/components/round/EditModeBanner.tsx` — conditional Finalize vs Done based on `is_complete=false AND was_finalized=true` (reopened state). All other combos show Done.
+- `src/app/round/[id]/scorecard/page.tsx` — `RoundPlayer` gains `created_at` + `hi_verified_at`. SELECT query updated. New `isHistoricalAdd` helper, Edit HI modal state, `openEditHiModal` / `saveEditHi` handlers. UI: Edit HI link next to HI display, HI verification chip next to player name, modal with Save + "Verify (no change)" buttons.
+- `src/components/round/RoundResultsView.tsx` — removed D1.11 "Edit Round Scores" button + 4 unused imports.
+- `tests/components/admin-edit-flow.test.tsx` — DELETED (covered the removed summary-page button).
+- `tests/components/edit-mode-banner.test.tsx` — rewritten for the 3 conditional banner states + 3 regression tests for the in-browser-caught bug (Finalize was rendering on D1.11 edit-in-place sessions).
+- `tests/lib/round/reopenRound.test.ts` — 8 unit tests including negative-control for `submitted_teams` clearing.
+- `tests/lib/round/finalizeRoundAdmin.test.ts` — 4 unit tests.
+- `tests/components/edit-hi-flow.test.tsx` — 8 tests: modal open, chip predicate, CH recompute (negative-control fixture seeds stale CH=99), Save + Verify, scope isolation (no `players` writes, no other-row writes).
+
+**Preflight findings (CC spec required before code):**
+1. ✅ LT1 self-heal at `scorecard/page.tsx:263` exists and is gated on `!roundIsComplete` (H.2.5.4) — but the useEffect dep is `[roundId]` only, so it does NOT re-fire on snapshot changes. Edit HI save path computes CH explicitly via `computeCourseHandicap`. Documented in `saveEditHi`.
+2. ✅ `rounds.format_config` is `jsonb NOT NULL` with default shell. `submitted_teams` is an array of integers (team numbers), only present after first submit. All readers tolerate missing/empty via `Array.isArray(cfg?.submitted_teams) ? ... : []`.
+3. ✅ Migration numbers 010 + 011 taken; D.2 uses 012 + 013.
+
+**Audit-pass (CLAUDE.md principle #1, "writes must audit all reads"):**
+- `was_finalized` readers: EditModeBanner (showFinalize gate), RoundSetup (link construction). Both new this session; correct under the trigger semantics.
+- `hi_verified_at` readers: scorecard chip predicate (`isHistoricalAdd && verified == null`). Only render path; no other consumer yet.
+- `format_config.submitted_teams` writers: scorecard `submitTeam` (read-modify-write append), reopenRound (read-modify-write clear). Race window documented at both sites; matches league usage (in-person, essentially serial).
+- `round_players.handicap_index_snapshot` writers: applyTempHandicap (existing, pre-round HI entry), saveEditHi (new), Manage Team add path (insert with snapshot from `players.handicap_index`), Players.tsx admin HI edit cascade. All four paths consistent.
+- `round_players.course_handicap` writers: applyTempHandicap, updatePlayerTee, LT1 self-heal (fire-and-forget at scorecard mount), saveEditHi (new). All four agree on `computeCourseHandicap(snapshot, slope, CR, par)` formula.
+
+**DB changes applied to prod (via Supabase MCP):**
+- Migration 012 applied. Backfill verified: 16 finalized rounds → 16 `was_finalized=true`. Total rounds = 16; never_finalized = 0 (all current prod rounds are finalized).
+- Migration 013 applied. Verified: 198 round_player rows, all with `hi_verified_at = NULL` as expected.
+
+**Browser verification (round 156, finalized 2026-05-27):**
+- `/round/156/summary` — confirmed Edit Round Scores button is gone (D1.11 entry point removed).
+- `/round/156/scorecard?team=1&admin=1&edit=1` — confirmed EditModeBanner shows **Done** (round is `is_complete=true AND was_finalized=true` → D1.11 admin edit-in-place, not reopened); 3 Edit HI links rendered (one per player); 0 verification chips (correct — all rows created on round day, predicate fails).
+- Edit HI modal: opens on click, prefilled with current snapshot (20.5 for Rick C), Save and "Verify (no change)" buttons both rendered.
+
+### Today's commits
+
+- (this session) — feat(admin): Phase D.2 — Admin Edit Round button, HI override, Finalize/Done banner conditional
+
+### Tomorrow's priority
+
+1. **Live admin smoke test** — Jonathan (or Dad) does an end-to-end reopen of a real finalized round, adds a player to a new team, edits their HI, verifies CH recomputes correctly, finalizes the round. The flow has 392/392 test coverage but a hands-on click-through is worth doing once before the next live round.
+2. **H3.x — `seasons` table + migration** — top remaining feature priority per 2026-05-24's lock, still gated on this manual smoke.
+3. **Best-N blind-draw scoring** — engine `// TODO` from 2026-05-26 still open. Worth scoping when the next best-N round needs to include drawn players.
+
+### Considered but not changed (confession)
+
+- **`results.ts:359-382` `drawnPlayerNetValue` block** — still duplicating engine drawn-player aggregation per the 2026-05-26 note. Out of scope this session.
+- **Admin tab end-to-end browser verification** — skipped because the local dev `.env.local` has no `ADMIN_PIN` set, so the PIN gate redirects every `/admin` hit to login. The Edit Round button is covered by 8 unit tests (reopenRound) + 4 (finalizeRoundAdmin) + 10 (EditModeBanner conditional). Worth a manual click-through next time `.env.local` is configured.
+- **TD20 closure** — `withAdminFlags` is now used by RoundSetup's per-team scorecard link construction (the conditional `?admin=1&edit=1` append for reopened rounds), but I implemented it as an inline ternary rather than calling the helper, to keep the diff narrow. Worth a 1-line refactor next session if `withAdminFlags` would simplify it.
+- **Best-N blind-draw scoring gap** — same engine `// TODO` from 2026-05-26; explicitly out of scope for D.2.
+
+### Independent issues surfaced during D.2, not fixed
+
+- **`tests/app/player-profile-ordering.test.tsx`** still logs the `.gt is not a function` mock gap from 2026-05-24. Not touched this session.
+- **`tests/components/admin-edit-scorecard.test.tsx`** test at line 167 renders `<EditModeBanner />` directly without seeding `fakeRef.current` — relies on test-order side effect from prior tests in the file. Brittle; works today, would break if vitest changed isolation defaults. Worth tightening but not blocking.
 
 ---
 
