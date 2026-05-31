@@ -144,9 +144,6 @@ export default function ScorecardPage() {
   const [editHiValue, setEditHiValue] = useState<string>("");
   const [editHiSaving, setEditHiSaving] = useState(false);
 
-  // Per-hole manual overrides: which 2 round_player ids count
-  const [countingOverrides, setCountingOverrides] = useState<Record<number, number[]>>({});
-
   // Manage Team sheet
   const [manageTeamOpen, setManageTeamOpen] = useState(false);
   const [manageTeamActivePlayers, setManageTeamActivePlayers] = useState<Player[]>([]);
@@ -502,12 +499,6 @@ export default function ScorecardPage() {
     if (strokes < 1 || strokes > 20) return;
     const player = roundPlayers.find(p => p.id === rpId);
     setScores(prev => ({ ...prev, [rpId]: { ...prev[rpId], [hole]: strokes } }));
-    // Clear manual override so best-2 recalculates from the new score
-    setCountingOverrides(prev => {
-      const next = { ...prev };
-      delete next[hole];
-      return next;
-    });
 
     // Phase C: enqueue the write rather than awaiting Supabase directly.
     // Optimistic state is already set above; the queue handles persistence,
@@ -781,7 +772,6 @@ export default function ScorecardPage() {
     const hole = engineHole(holeNumber);
     if (!hole) return null;
     if (!roundFormat || !roundFormatConfig) return null;
-    const override = countingOverrides[holeNumber];
     // B3.2 trick: when admin selected "gross" as the persistent scoring basis,
     // zero out handicaps before passing to the engine. Net == gross for every
     // format including Stableford (which has no internal `basis` branch).
@@ -795,7 +785,6 @@ export default function ScorecardPage() {
         grossScore: scores[rp.id]?.[holeNumber] ?? null,
         courseHandicap: useGross ? 0 : rp.course_handicap,
       })),
-      manualContributors: override ? override.map(String) : undefined,
     });
   };
 
@@ -816,21 +805,6 @@ export default function ScorecardPage() {
     return result.contributingPlayerIds.map(id => Number(id));
   };
 
-  // Detect whether the auto-selected Ball 1 or Ball 2 involves a tie.
-  const getTieInfo = (holeNumber: number): { tiedForBall1: boolean; tiedForBall2: boolean } => {
-    if (countingOverrides[holeNumber]) return { tiedForBall1: false, tiedForBall2: false };
-    const result = computeHoleFor(holeNumber, "net");
-    if (!result) return { tiedForBall1: false, tiedForBall2: false };
-    const nets = result.perPlayer
-      .filter(p => p.netScore != null)
-      .map(p => p.netScore as number)
-      .sort((a, b) => a - b);
-    if (nets.length < 3) return { tiedForBall1: false, tiedForBall2: false };
-    const tiedForBall1 = nets[0] === nets[2];
-    const tiedForBall2 = !tiedForBall1 && nets[1] === nets[2];
-    return { tiedForBall1, tiedForBall2 };
-  };
-
   const getBest2ForHole = (holeNumber: number, mode: "gross" | "net"): number | null => {
     return computeHoleFor(holeNumber, mode)?.teamScore ?? null;
   };
@@ -842,10 +816,6 @@ export default function ScorecardPage() {
       par: h.par,
       strokeIndex: h.stroke_index,
     }));
-    const manualContributors: Record<number, string[]> = {};
-    for (const [hn, ids] of Object.entries(countingOverrides)) {
-      manualContributors[Number(hn)] = ids.map(String);
-    }
     const useGross = getScoringBasis(roundFormatConfig) === "gross";
     return computeRoundResult({
       format: roundFormat!,
@@ -856,7 +826,6 @@ export default function ScorecardPage() {
         courseHandicap: useGross ? 0 : rp.course_handicap,
         grossScores: scores[rp.id] || {},
       })),
-      manualContributors,
     });
   };
 
@@ -911,29 +880,6 @@ export default function ScorecardPage() {
 
   const holesWithTeamScores = (): number => {
     return buildRoundInput("net").holesScored;
-  };
-
-  const toggleOverride = (holeNumber: number, rpId: number) => {
-    const current = countingOverrides[holeNumber] ?? getCountingPlayerIds(holeNumber);
-    let next: number[];
-    if (current.includes(rpId)) {
-      // Replace with next best scorer not already counting
-      const netScores = roundPlayers
-        .filter(p => !current.includes(p.id) || p.id === rpId)
-        .map(p => ({ id: p.id, net: getNetScore(p, holeNumber) ?? Infinity }))
-        .sort((a, b) => a.net - b.net);
-      const replacement = netScores.find(s => !current.includes(s.id));
-      if (!replacement) return;
-      next = current.map(id => id === rpId ? replacement.id : id);
-    } else {
-      // Swap out the higher of the two counting scores
-      const higherIdx = current.length < 2 ? 0 :
-        ((getNetScore(roundPlayers.find(p => p.id === current[0])!, holeNumber) ?? 0) >
-          (getNetScore(roundPlayers.find(p => p.id === current[1])!, holeNumber) ?? 0) ? 0 : 1);
-      next = [...current];
-      next[higherIdx] = rpId;
-    }
-    setCountingOverrides(prev => ({ ...prev, [holeNumber]: next }));
   };
 
   // --- MANAGE TEAM HANDLERS ---
@@ -1224,7 +1170,6 @@ export default function ScorecardPage() {
   const teamPar = getTeamParTotal();
   const scoredHoles = holesWithTeamScores();
   const countingIds = getCountingPlayerIds(currentHole);
-  const { tiedForBall1, tiedForBall2 } = getTieInfo(currentHole);
   const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball" || roundFormat === "best_ball";
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
@@ -1414,11 +1359,10 @@ export default function ScorecardPage() {
       <div style={{ display: "flex", overflowX: "auto", gap: "6px", marginBottom: "20px", paddingBottom: "10px", touchAction: "pan-x" }}>
         {Array.from({ length: 18 }, (_, i) => i + 1).map(h => {
           const hasScores = roundPlayers.some(rp => scores[rp.id]?.[h] != null);
-          const hasOverride = !!countingOverrides[h];
           return (
             <button key={h} onClick={() => setCurrentHole(h)} style={{
               minWidth: "44px", height: "44px", borderRadius: "50%",
-              border: h === currentHole ? "2px solid #0c3057" : hasOverride ? "2px solid #f59e0b" : "1px solid #e2e8f0",
+              border: h === currentHole ? "2px solid #0c3057" : "1px solid #e2e8f0",
               background: h === currentHole ? "#0c3057" : hasScores ? "#dbeafe" : "white",
               color: h === currentHole ? "white" : hasScores ? "#1e40af" : "#94a3b8",
               fontSize: "0.8rem", fontWeight: "bold", cursor: "pointer", touchAction: "manipulation",
@@ -1428,19 +1372,6 @@ export default function ScorecardPage() {
           );
         })}
       </div>
-
-      {/* Tie notices */}
-      {isBestNFormat && (tiedForBall1 || tiedForBall2) && (
-        <div style={{
-          background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "10px",
-          padding: "8px 12px", marginBottom: "10px", fontSize: "0.75rem",
-          color: "#92400e", fontWeight: 600,
-        }}>
-          {tiedForBall1
-            ? "Tied for Ball 1 — tap a card to override which balls count"
-            : "Tied for Ball 2 — tap a card to override which balls count"}
-        </div>
-      )}
 
       {/* Player score entry cards */}
       {roundPlayers.map(rp => {
@@ -1457,8 +1388,6 @@ export default function ScorecardPage() {
 
         const countingBorderColor = countingRank === 0 ? "#0c3057" : "#1e40af";
         const countingBg = countingRank === 0 ? "#eff6ff" : "#eff6ff";
-
-        const isTied = isCounting && ((countingRank === 0 && tiedForBall1) || (countingRank === 1 && tiedForBall2));
 
         // D.1: post-dropout score entry is silently no-op'd. +/− buttons go
         // visually disabled; entered scores on holes 1..dropped stay visible
@@ -1508,7 +1437,6 @@ export default function ScorecardPage() {
         return (
           <React.Fragment key={rp.id}>
             <div
-              onClick={() => gross != null ? toggleOverride(currentHole, rp.id) : undefined}
               style={{
                 background: isCounting ? countingBg : "white",
                 padding: "12px 16px",
@@ -1519,7 +1447,7 @@ export default function ScorecardPage() {
                   : isCounting ? `2px solid ${countingBorderColor}` : "1px solid #f1f5f9",
                 marginBottom: cardMarginBottom,
                 display: "flex", alignItems: "center", justifyContent: "space-between",
-                cursor: gross != null ? "pointer" : "default",
+                cursor: "default",
                 transition: "background 0.15s, border-color 0.15s",
               }}
             >
@@ -1542,20 +1470,12 @@ export default function ScorecardPage() {
                       (left after hole {droppedHole})
                     </span>
                   )}
-                  {isBestNFormat && isCounting && !isTied && (
+                  {isBestNFormat && isCounting && (
                     <span style={{
                       fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
                       background: countingBorderColor, color: "white", textTransform: "uppercase",
                     }}>
                       {countingRank === 0 ? "Ball 1" : "Ball 2"}
-                    </span>
-                  )}
-                  {isBestNFormat && isTied && (
-                    <span style={{
-                      fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
-                      background: "#f59e0b", color: "white", textTransform: "uppercase",
-                    }}>
-                      Tied
                     </span>
                   )}
                   {/* Phase D.2: HI verification chip. Renders only in admin
@@ -1744,13 +1664,6 @@ export default function ScorecardPage() {
           </React.Fragment>
         );
       })}
-
-      {/* Tap hint when scores are entered */}
-      {isBestNFormat && countingIds.length >= 2 && !tiedForBall1 && !tiedForBall2 && (
-        <p style={{ textAlign: "center", fontSize: "0.68rem", color: "#94a3b8", margin: "6px 0 0" }}>
-          Tap a player card to override which balls count
-        </p>
-      )}
 
       {/* Navigation buttons. D.1 hotfix: hole-18 no longer shows a
           "Finish Round" button — finalize happens through the Submit

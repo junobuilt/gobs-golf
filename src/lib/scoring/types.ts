@@ -60,6 +60,8 @@ export type HoleInput = {
   formatConfig: FormatConfig;
   hole: HoleInfo;
   players: PlayerScoreInput[];
+  // Retained as extension point (e.g. I16 worst-counts). No production caller
+  // as of 2026-05-30; exercised only by engine-overrides.test.ts.
   manualContributors?: string[];
 };
 

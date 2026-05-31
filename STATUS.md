@@ -2,8 +2,49 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-27 (Phase D.2 — Admin Edit Round shipped)
-**Session purpose:** Implement Phase D.2 (Admin Edit Round button on RoundSetup + per-player Edit HI override + HI verification chip + EditModeBanner Finalize-vs-Done conditional). Reviewed CC spec in pairing chat, then implemented end-to-end. Two new migrations applied to prod: `012_phase_d2_rounds_was_finalized` (latch column + trigger + 16-row backfill) and `013_phase_d2_round_players_hi_verified`. Five new files (2 helpers, 2 migrations, 3 new test files), six edits (RoundSetup, EditModeBanner, scorecard page, RoundResultsView — stale Edit Round Scores entry point removed). Suite **392/392** (was 374). `tsc --noEmit` clean.
+**Last updated:** 2026-05-30 (A9 follow-up — tie-prompt / manual ball-override removed)
+**Session purpose:** Remove the best-N "Tied for Ball …" banner, the interactive "Tied" pill, and the "tap a card to override which balls count" footer from the live scorecard (A9 territory). UI-only removal — the override was ephemeral React state (`countingOverrides`), never persisted, so no finalized-round impact and no migration. Engine `manualContributors` param kept as a dead extension point. B3.1 `override_holes` untouched. Suite **397/397** (was 368... see note). `tsc --noEmit` clean.
+
+---
+
+## 2026-05-30 (A9 follow-up — tie-prompt / manual ball-override removed)
+
+### Where we left off
+
+**Best-N tie-prompt + manual ball-override fully removed from the live scorecard.** In 2-Ball / 3-Ball / Best Ball the scorecard always auto-picks the N best net balls per hole and resolves ties silently and deterministically (best-N by roster order). The read-only **BALL 1 / BALL 2** pills remain (informational). The amber "Tied" affordance, the tied-for-Ball banner, and the tap-to-override footer are gone.
+
+**Investigation (plan-first, approved before coding):**
+- `countingOverrides` was pure ephemeral React `useState` — never written to or read from the DB. It fed the engine live via `manualContributors` only while mounted.
+- `FormatConfig` has **no** manual-contributor key. Scores persist raw strokes only; team totals are always recomputed.
+- Prod check (Supabase MCP): `format_config` keys across **all** rounds are only `basis / best_n / override_holes / scoring_basis / submitted_teams`. **Zero** rounds (finalized or not) have a manual ball override on record — there is no schema location for one. → ephemeral-only end state: UI-only removal, **no migration, no finalized-round impact**.
+
+**Files touched:**
+- `src/app/round/[id]/scorecard/page.tsx` — deleted `countingOverrides` state, `getTieInfo`, `toggleOverride`, the tie banner, the interactive "Tied" pill, the override footer, the card tap-to-override `onClick` (cursor → default), the amber hole-dot override highlight, and the `manualContributors` plumbing in `computeHoleFor` / `buildRoundInput`. Kept `getCountingPlayerIds` + BALL 1/2 pills.
+- `src/lib/scoring/types.ts` — comment above `HoleInput.manualContributors` marking it a retained extension point (no production caller as of 2026-05-30; exercised only by `engine-overrides.test.ts`). **Param not removed.**
+- `tests/components/scorecard-tie-no-override.test.tsx` — NEW. On a 3-way net tie in a 2-Ball round: banner + footer copy absent, "Tied" pill absent, BALL 1 / BALL 2 still render.
+- `tests/lib/scoring/engine-bestn.test.ts` — 3 new deterministic tie-resolution cases (three-way exact tie → first N by input order; tie for last spot → lower input index; 3-Ball three-way tie still excludes the worst ball).
+
+**What NOT changed (confession):**
+- **Engine `manualContributors` param** — retained per the approved plan (ephemeral end-state = no engine change). It's now dead-but-tested API. Optional Low-sev tech-debt: remove it from the engine + `engine-overrides.test.ts:35` if a future cleanup wants it. Not required.
+- **B3.1 `override_holes`** (admin "all scores count") — untouched; `engine-overrides.test.ts` unchanged and green.
+- Stableford-family formats, the best-ball selection math, RoundResultsView / summary / leaderboard (verified they don't surface the banner/footer).
+
+**Verification:** `tsc --noEmit` clean. Full suite **397/397** green (includes new tests; note the prior 392/392 D.2 baseline grew). Verified via the new component test rather than live preview — reproducing a live 3-way net tie needs specific seeded data; the component test exercises the real component deterministically with the fake-supabase harness.
+
+### Today's commits
+
+- (this session) — feat(scorecard): remove tie-prompt / manual ball-override in best-N (A9)
+
+### Tomorrow's priority
+
+1. **Live admin smoke test** — still the carry-over from D.2: end-to-end reopen of a real finalized round, add player, edit HI, finalize.
+2. **H3.x — `seasons` table + migration** — top remaining feature priority.
+3. **Best-N blind-draw scoring** — engine `// TODO` still open.
+
+### Considered but not changed (confession)
+
+- **Removing `manualContributors` from the engine** — deliberately left per approved plan; logged above as optional Low-sev TD.
+- Carry-over from prior sessions (unchanged this session): `results.ts:359-382` drawn-player duplication; best-N blind-draw scoring gap; `tests/app/player-profile-ordering.test.tsx` `.gt` mock gap.
 
 ---
 
