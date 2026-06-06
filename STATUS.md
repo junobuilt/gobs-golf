@@ -2,8 +2,54 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-30 (A9 follow-up — tie-prompt / manual ball-override removed)
-**Session purpose:** Remove the best-N "Tied for Ball …" banner, the interactive "Tied" pill, and the "tap a card to override which balls count" footer from the live scorecard (A9 territory). UI-only removal — the override was ephemeral React state (`countingOverrides`), never persisted, so no finalized-round impact and no migration. Engine `manualContributors` param kept as a dead extension point. B3.1 `override_holes` untouched. Suite **397/397** (was 368... see note). `tsc --noEmit` clean.
+**Last updated:** 2026-06-06 (best-N blind-draw scoring — engine fix)
+**Session purpose:** Include blind-draw fills in best-N (2-Ball / 3-Ball / Best Ball) team totals. The engine ignored `blindDraws` for best-N (Stableford-only since 2026-05-26), so 5 finalized rounds displayed team totals that omitted the drawn player entirely. Fixed in the engine: the fill is now a full member of the per-hole "best of" pool (selectable as a ball; counts unconditionally on override holes). Suite **403/403**, `tsc --noEmit` clean, live-engine verification over all 5 rounds matches the SQL replication.
+
+---
+
+## 2026-06-06 (best-N blind-draw scoring — engine fix)
+
+### Where we left off
+
+**Best-N blind-draw scoring shipped.** Mirrors the 2026-05-26 Stableford fix, but the mechanism differs by necessity: Stableford adds drawn-player points to a separate `blindDrawTotal` accumulator (all scores count); best-N instead **injects the fill into the per-hole selection pool** so it can win or lose a "best of" spot. On override ("all scores count") holes the fill counts unconditionally — including over par (Dad confirmed: fills are full team members both ways).
+
+**Step 1 verification (Supabase MCP, approved before coding):**
+- 5 affected finalized best-N rounds with blind draws: **101** (best_ball, ovr [9,18]), **118** (best_ball, ovr [6,11]), **141** (2_ball), **147** (best_ball, ovr [12]), **161** (2_ball, ovr [9,10]). All full-18 round-start fills; all players (team + drawn) on tee 4 → uniform stroke-index allocation.
+- Current (displayed) vs corrected totals and **placing impact**:
+  - **101**: −11 → −17. **Round winner flips: Team 1 overtakes Team 3.**
+  - 118: −4 → −3 (**worse by +1** — fill's over-par scores on override holes [6,11] count). Team 6 drops tied-4th → 5th.
+  - 141: +12 → −1. Team 3 last → tied-2nd.
+  - 147: +8 → +1. Same rank (still 7th); total corrected by 7.
+  - 161: 0 → −11. Team 4 last → 4th.
+- No payouts calculated for any of these → no dollar impact, league-placing/record impact only. **No deploy gating** (Dad's call) — corrections surface live on next deploy; Dad will communicate the 5 round changes separately.
+
+**Files touched:**
+- `src/lib/scoring/types.ts` — new `BestNFill` type; new optional `HoleInput.fills`. Updated stale `BlindDrawInput` doc (now consumed by both paths).
+- `src/lib/scoring/engine.ts` — `computeBestNHole` builds a combined pool (roster `perPlayer` + fill results), runs both the override branch and best-N selection over it; selected fills land in `teamScore` + `contributingPlayerIds` (scales `teamParAtScored`) but stay out of the returned `perPlayer` (roster-only display invariant). New `resolveBestNFills` helper resolves per-hole fills using the **drawn player's own tee** stroke-index/par. Round loop injects fills for best-N only; Stableford path unchanged. Stale "best-N ignored / TODO" comment block rewritten.
+- `src/lib/round/results.ts` — comment-only update (best-N now uses the pool; `total = rawTeamScore + blindDrawTotal − teamPar` formula unchanged — best-N keeps `blindDrawTotal = 0`, no double-count).
+- `tests/lib/scoring/engine-bestn-blinddraw.test.ts` — NEW, 6 tests, each negative-control seeded (fail without the fix): best_ball 1-player+fill, 2_ball 3-player+fill, 3_ball 2-player+fill, mid-round dropout (1 active + dropout thru 9 + fill 10-18), override holes [9,18], and a drawn-player-own-tee net check.
+- `tests/snapshots/verify-bestn-blinddraw.mjs` — NEW belt-and-suspenders script: runs the real engine over all 5 rounds before/after and asserts the deltas match the SQL replication. **All 5 ✓.**
+
+**Audit-pass (CLAUDE.md principle #1):**
+- `result.teamScore` / `contributingPlayerIds` readers: `results.ts` (rawTeamScore, legTotal par-scaling via `.length`), summary/leaderboard/RoundResultsView through `loadRoundResults`. All pick up the fix.
+- `teamParAtScored` (engine.ts) scales by `contributingPlayerIds.length` — fills now in that list, so par reference scales correctly (uses the team's hole par; uniform-tee in all current data).
+
+### Today's commits
+
+- (this session) — feat(scoring): include blind-draw fills in best-N team totals
+
+### Tomorrow's priority
+
+1. **Scorecard headline total for short teams** — see confession; decide whether the live scorecard's own-team total should reflect round-start fills (currently roster-only by design; authoritative totals live on summary/leaderboard).
+2. **H3.x — `seasons` table + migration** — top remaining feature priority.
+3. **Historical recalculation/backfill** of the 5 corrected rounds — parked as a separate decision (was explicitly out of scope this session).
+
+### Considered but not changed (confession)
+
+- **Scorecard headline team total (`getTeamTotal` / `buildRoundInput` in `scorecard/page.tsx`)** does **not** pass `blindDraws`, so a finalized short team's total on the *scorecard* surface stays roster-only (round-start fills render as pseudo-player rows on the *summary*, per existing D.1 design; the scorecard's `refreshBlindDrawFills` deliberately skips `hole_range_start = 1` fills). The authoritative placing surfaces (summary / leaderboard / RoundResultsView via `loadRoundResults`) ARE corrected. Flagged not fixed — it's display-layer (explicitly out of scope) and touching the live-entry total risks pre-finalize behavior. Same gap would affect a *dropout* best-N fill's scorecard headline (none exist in current data). Decision for next session.
+- **Historical backfill** of the 5 rounds — out of scope per spec; totals recompute live on read, so no DB write is strictly needed, but the round-101 winner change is a league-record event worth a deliberate sign-off.
+- **`results.ts:359-382` `drawnPlayerNetValue` block** — still duplicates engine drawn-player aggregation; untouched (carry-over, out of scope).
+- **Mixed-tee par reference** — `teamParAtScored` and `legTotal` use the team's hole par for fill contributors, not the drawn player's; exact for all current data (everyone on tee 4) but a latent approximation if a future fill comes from a different tee. Noted, not addressed.
 
 ---
 

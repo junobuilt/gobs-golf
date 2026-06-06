@@ -1,5 +1,7 @@
 import { getHandicapStrokes } from "./handicap";
 import type {
+  BestNFill,
+  BlindDrawInput,
   Format,
   HoleInfo,
   HoleInput,
@@ -34,6 +36,28 @@ function computeBestNHole(input: HoleInput): HoleResult {
     };
   });
 
+  // Best-N blind-draw fills (D.1 follow-up). A drawn player covering this hole
+  // is a full member of the short team's per-hole "best of" pool: selectable
+  // as a contributing ball, and counted unconditionally on override ("all
+  // scores count") holes — including over par. netScore is precomputed by
+  // computeRoundResult from the DRAWN player's own tee, so it is NOT re-derived
+  // from `hole` here. Fills are kept out of the returned `perPlayer` (which
+  // mirrors the team roster for the display layer); their effect lands in
+  // teamScore + contributingPlayerIds (which scales teamParAtScored).
+  const fillResults: PlayerHoleResult[] = (input.fills ?? []).map(f => ({
+    playerId: f.playerId,
+    grossScore: f.grossScore,
+    netScore: f.netScore,
+    handicapStrokes:
+      f.grossScore != null && f.netScore != null ? f.grossScore - f.netScore : 0,
+    isContributing: false,
+    points: null,
+  }));
+
+  // Roster players first so input-order tie-breaking favors team members over
+  // fills (a roster player and a fill with equal scores → the roster player).
+  const pool: PlayerHoleResult[] = [...perPlayer, ...fillResults];
+
   const valueOf = (pp: PlayerHoleResult) =>
     basis === "gross" ? pp.grossScore : pp.netScore;
 
@@ -44,8 +68,9 @@ function computeBestNHole(input: HoleInput): HoleResult {
     // Override wins over manualContributors. Every player with a non-null
     // score on the chosen basis contributes — reduces best-N to "best-all"
     // for this hole. format_config.override_holes is a per-round admin
-    // decision (e.g., "all scores count on holes 9 and 18").
-    contributingPlayerIds = perPlayer
+    // decision (e.g., "all scores count on holes 9 and 18"). Blind-draw fills
+    // are part of the all-scores-count set.
+    contributingPlayerIds = pool
       .filter(p => valueOf(p) != null)
       .map(p => p.playerId);
     countIsValid = contributingPlayerIds.length > 0;
@@ -57,10 +82,9 @@ function computeBestNHole(input: HoleInput): HoleResult {
       contributingPlayerIds = manualContributors;
     } else {
       // Tie-breaking rule: when player scores tie for a contributing
-      // position, the player passed first in input order is chosen.
-      // Callers must pass players in their preferred tie-resolution order.
-      // Stable sort preserves input order for equal compare values.
-      const candidates = perPlayer
+      // position, the player passed first in input order is chosen (roster
+      // before fills). Stable sort preserves input order for equal values.
+      const candidates = pool
         .map((pp, idx) => ({ playerId: pp.playerId, sortValue: valueOf(pp), idx }))
         .filter(c => c.sortValue != null) as Array<{
           playerId: string;
@@ -78,7 +102,7 @@ function computeBestNHole(input: HoleInput): HoleResult {
   let teamScore: number | null = null;
   if (countIsValid) {
     const vals = contributingPlayerIds.map(id => {
-      const pp = perPlayer.find(p => p.playerId === id);
+      const pp = pool.find(p => p.playerId === id);
       return pp ? valueOf(pp) : null;
     });
     if (vals.every(v => v != null)) {
@@ -219,6 +243,33 @@ export function computeHoleResult(input: HoleInput): HoleResult {
   }
 }
 
+// Resolve the blind-draw fills covering a single hole for best-N scoring.
+// The drawn player's net uses THEIR OWN tee stroke-index/par (carried on
+// BlindDrawInput.drawnPlayerHoles), not the short team's — matching the
+// Stableford block below. Returns undefined when no fill covers the hole so
+// computeBestNHole's pool stays roster-only on non-fill holes.
+function resolveBestNFills(
+  blindDraws: BlindDrawInput[] | undefined,
+  holeNumber: number,
+): BestNFill[] | undefined {
+  if (!blindDraws || blindDraws.length === 0) return undefined;
+  const fills: BestNFill[] = [];
+  for (const fill of blindDraws) {
+    if (holeNumber < fill.holeRangeStart || holeNumber > fill.holeRangeEnd) continue;
+    const gross = fill.drawnPlayerScores[holeNumber];
+    if (gross == null) continue;
+    const drawnHole = fill.drawnPlayerHoles.find(dh => dh.holeNumber === holeNumber);
+    if (!drawnHole) continue;
+    const strokes = getHandicapStrokes(fill.drawnPlayerCourseHandicap, drawnHole.strokeIndex);
+    fills.push({
+      playerId: fill.drawnPlayerId,
+      grossScore: gross,
+      netScore: gross - strokes,
+    });
+  }
+  return fills.length > 0 ? fills : undefined;
+}
+
 export function computeRoundResult(input: RoundInput): RoundResult {
   const { format, formatConfig, holes, players, manualContributors, blindDraws } = input;
 
@@ -245,6 +296,9 @@ export function computeRoundResult(input: RoundInput): RoundResult {
         courseHandicap: p.courseHandicap,
       })),
       manualContributors: manualContributors?.[hole.holeNumber],
+      // Best-N only: inject blind-draw fills into the per-hole pool. Stableford
+      // formats leave this undefined and accrue fills via blindDrawTotal below.
+      fills: isBestN ? resolveBestNFills(blindDraws, hole.holeNumber) : undefined,
     };
     const result = computeHoleResult(holeInput);
     perHole.push({ holeNumber: hole.holeNumber, result });
@@ -271,14 +325,15 @@ export function computeRoundResult(input: RoundInput): RoundResult {
     };
   });
 
-  // Blind-draw aggregation. Stableford-only this session — for best-N
-  // formats the engine silently ignores blindDraws (returns 0/{}). The
-  // drawn player's CH and stroke-index come from THEIR tee (carried on
-  // BlindDrawInput.drawnPlayerHoles), not the short team's tee. Points
-  // accrue to a separate accumulator (NOT mutated into perHole[h]
-  // .teamScore) so the per-hole invariant "teamScore = sum of
+  // Stableford blind-draw aggregation. Best-N fills are handled inline in the
+  // per-hole loop above (resolveBestNFills → computeBestNHole pool), so their
+  // effect is already baked into perHole[h].teamScore and teamParAtScored;
+  // blindDrawTotal/blindDrawPerHole stay 0/{} for best-N and must NOT be added
+  // again by callers. For Stableford the drawn player's CH and stroke-index
+  // come from THEIR tee (carried on BlindDrawInput.drawnPlayerHoles), not the
+  // short team's tee. Points accrue to this separate accumulator (NOT mutated
+  // into perHole[h].teamScore) so the per-hole invariant "teamScore = sum of
   // perPlayer.points on that hole" stays intact for the team's own roster.
-  // TODO: Best-N blind-draw scoring — see ROADMAP TD/D1 follow-up.
   let blindDrawTotal = 0;
   const blindDrawPerHole: Record<number, number> = {};
   const stablefordTable: StablefordPointTable | null =

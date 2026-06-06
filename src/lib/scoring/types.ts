@@ -55,6 +55,16 @@ export type HoleResult = {
   perPlayer: PlayerHoleResult[];
 };
 
+// Best-N blind-draw fill resolved for a single hole. The drawn player's
+// netScore is precomputed by computeRoundResult using the DRAWN player's own
+// tee stroke-index (mirroring the Stableford block), not the short team's —
+// so computeBestNHole must NOT re-derive net from the team's `hole`.
+export type BestNFill = {
+  playerId: string;
+  grossScore: number | null;
+  netScore: number | null;
+};
+
 export type HoleInput = {
   format: Format;
   formatConfig: FormatConfig;
@@ -63,13 +73,19 @@ export type HoleInput = {
   // Retained as extension point (e.g. I16 worst-counts). No production caller
   // as of 2026-05-30; exercised only by engine-overrides.test.ts.
   manualContributors?: string[];
+  // D.1 follow-up: blind-draw fills covering this hole. Each is a full member
+  // of the per-hole "best of" pool (selectable as a contributing ball, and
+  // counted on override "all scores count" holes). Populated only for best-N
+  // formats by computeRoundResult; Stableford ignores it (uses blindDrawTotal).
+  fills?: BestNFill[];
 };
 
 // D.1 follow-up: blind-draw fill input to the round-level engine.
 // The drawn player's CH and stroke-index lookups use their OWN round_players
 // row (their tee/CH on this round), not the short team's — that's why
 // drawnPlayerHoles carries the drawn player's tee hole info, not the team's.
-// Stableford-only this session; best-N formats currently ignore this field.
+// Consumed by both Stableford (blindDrawTotal accumulator) and best-N
+// (per-hole pool injection via resolveBestNFills) paths in computeRoundResult.
 export type BlindDrawInput = {
   drawnPlayerId: string;
   drawnPlayerCourseHandicap: number | null;

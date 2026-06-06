@@ -227,10 +227,11 @@ export async function loadRoundResults(
       courseHandicap: useGross ? 0 : rp.course_handicap,
       grossScores: scoresByRpId[rp.id] || {},
     }));
-    // Blind-draw fills for THIS team. Engine ignores them for best-N this
-    // session; for Stableford they accumulate into result.blindDrawTotal
-    // and result.blindDrawPerHole. Drawn player's tee/CH come from their
-    // own round_players row (looked up via playerLookup).
+    // Blind-draw fills for THIS team. Best-N: the engine injects them into the
+    // per-hole "best of" pool, so their effect is already in result.teamScore /
+    // teamParAtScored (blindDrawTotal stays 0). Stableford: they accumulate into
+    // result.blindDrawTotal and result.blindDrawPerHole. Drawn player's tee/CH
+    // come from their own round_players row (looked up via playerLookup).
     const blindDrawInputs: BlindDrawInput[] = (blindDrawRows ?? [])
       .filter((bd: any) => bd.short_team_number === teamNum)
       .map((bd: any) => {
