@@ -2,8 +2,42 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (best-N blind-draw scoring — engine fix)
-**Session purpose:** Include blind-draw fills in best-N (2-Ball / 3-Ball / Best Ball) team totals. The engine ignored `blindDraws` for best-N (Stableford-only since 2026-05-26), so 5 finalized rounds displayed team totals that omitted the drawn player entirely. Fixed in the engine: the fill is now a full member of the per-hole "best of" pool (selectable as a ball; counts unconditionally on override holes). Suite **403/403**, `tsc --noEmit` clean, live-engine verification over all 5 rounds matches the SQL replication.
+**Last updated:** 2026-06-06 (Played With — display-name disambiguation)
+**Session purpose:** Admin Played With tab collapsed every player to first name only on the desktop heatmap, so the two Waynes (and any shared first names) rendered identically. Added a pure `getDisplayName` helper that computes the minimum last-name suffix needed to disambiguate within the active roster ("Wayne H" / "Wayne V"), and applied it to the heatmap headers + row labels. Suite **413/413**, `tsc --noEmit` clean.
+
+---
+
+## 2026-06-06 (Played With — display-name disambiguation)
+
+### Where we left off
+
+**Display-name disambiguation shipped for the Played With heatmap.** New pure helper `getDisplayName(player, allPlayers, { activeOnly = true })` returns first name + the *minimum* prefix of the last name needed to tell the player apart from every same-first-name peer in the roster. Convention: "Bill Carlson" alone → "Bill C"; two Waynes → "Wayne H" / "Wayne V"; "Norm Carstairs" + "Norm Carlson" → "Norm Cars" / "Norm Carl"; single-word name → as-is; identical full names → not handled (out of concern, per spec). Recomputes on every render from the current roster — no DB storage.
+
+**Files touched:**
+- `src/lib/players/displayName.ts` — NEW. Pure function, no side effects. `PlayerLike = { id, full_name, is_active? }`. Splits first token / remainder, finds same-first-name peers (case-insensitive, excludes self by id, active-only by default), grows the last-name prefix to the first non-colliding length (capped at full last name). Handles single-word names, hyphens, apostrophes via plain string-prefix slicing; preserves original casing.
+- `src/app/admin/tabs/PlayedWith.tsx` — import helper; build a `full_name → getDisplayName` Map once per render; use it for desktop heatmap **column headers** (was `name.split(" ")[0]` — the actual first-name-only bug) and **row labels** (was full "First Last"). Matrix keying / `getCount` stay on `full_name` — display only. Mobile list left unchanged.
+- `tests/lib/players/displayName.test.ts` — NEW, 10 tests: the 4 convention cases, realistic GOBS roster incl. both Waynes, roster-growth (one-char grow to "Bill Ca"/"Bill Co"; true-minimal "Bill Car"/"Bill Cal"), active-only vs activeOnly:false, apostrophe/hyphen cases. Negative-control-friendly fixtures.
+
+### Today's commits
+
+- (this session) — feat(admin): disambiguate player names on Played With heatmap
+
+### Tomorrow's priority
+
+1. **Decide whether to roll the convention out to other surfaces** (see confession audit) — RoundSetup, Players, History, leaderboard rosters, round summary, scorecard, player profile. Deliberately left for a separate decision.
+2. **H3.x — `seasons` table + migration** — top remaining feature priority.
+3. Carry-over: best-N blind-draw scorecard headline total (2026-06-06 morning confession); live admin smoke test (D.2).
+
+### Considered but not changed (confession)
+
+- **Spec example imprecision flagged, not silently honored:** the issue's roster-growth example said "Bill C" → "Bill Ca" *when Bill Calderson joins*. "Carlson" and "Calderson" share "Ca", so "Bill Ca" would NOT disambiguate them — the correct minimal result is "Bill Car" / "Bill Cal". The helper implements true-minimal disambiguation; the test asserts the correct "Car"/"Cal" and separately demonstrates the one-char "Bill Ca"/"Bill Co" growth with a joiner (Cooper) that genuinely produces it.
+- **Mobile Played With view** (`PlayedWith.tsx` `isMobile` branch) — left on DB `display_name || full_name`. It already shows full unambiguous names with room to spare and is not first-name-collapsed, so the bug doesn't apply. Touching it would mean choosing between the new helper and the DB column — out of scope (spec: don't change `players.display_name` behavior).
+- **STEP 4 audit — other player-name surfaces, NOT changed (separate rollout decision):**
+  - `admin/tabs/RoundSetup.tsx`, `admin/tabs/Players.tsx`, `admin/tabs/History.tsx` — render `full_name` / `display_name`.
+  - `app/page.tsx` (homepage team rosters), `app/season/page.tsx` / leaderboard rosters.
+  - `round/[id]/scorecard/page.tsx` (Manage Team / score entry), `round/[id]/summary` via `loadRoundResults` → `results.ts` (`display_name || full_name || "?"`).
+  - `player/[id]/page.tsx` and `players/page.tsx` (profiles / directory).
+  - Grep confirms **only** PlayedWith used the first-name-collapsing `split(" ")[0]` pattern; all others show full or DB names, so none are *broken* — rollout is a consistency choice, not a fix.
 
 ---
 

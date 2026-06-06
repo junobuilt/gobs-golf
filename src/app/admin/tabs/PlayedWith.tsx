@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Player, MatrixRow } from "../page";
+import { getDisplayName } from "@/lib/players/displayName";
 
 interface Props {
   players: Player[];
@@ -47,6 +48,15 @@ export default function PlayedWith({ players, matrix }: Props) {
   const [mobileSearch, setMobileSearch] = useState("");
 
   const names = players.map(p => p.full_name);
+
+  // Disambiguating short name per player ("Wayne H" / "Wayne V"), keyed by
+  // full_name so heatmap rendering can look it up while keeping the matrix
+  // keyed on full_name. Recomputed from the current roster on every render.
+  const shortNameByFullName = new Map(
+    players.map(p => [p.full_name, getDisplayName(p, players)])
+  );
+  const shortName = (fullName: string) =>
+    shortNameByFullName.get(fullName) ?? fullName.split(" ")[0];
 
   const legend = [
     { label: "Never", ...cellColor(0), example: "—" },
@@ -174,7 +184,7 @@ export default function PlayedWith({ players, matrix }: Props) {
                 writingMode: "vertical-rl", transform: "rotate(180deg)",
                 whiteSpace: "nowrap", maxHeight: `${nameColWidth - 8}px`, overflow: "hidden",
               }}>
-                {name.split(" ")[0]}
+                {shortName(name)}
               </span>
             </div>
           ))}
@@ -191,7 +201,7 @@ export default function PlayedWith({ players, matrix }: Props) {
               fontSize: "0.72rem", fontWeight: 600, color: "#374151",
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}>
-              {rowName.split(" ").slice(0, 2).join(" ")}
+              {shortName(rowName)}
             </div>
 
             {/* Cells */}
