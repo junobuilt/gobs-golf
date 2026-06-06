@@ -5,11 +5,15 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { getTeamColor } from "@/lib/teamColors";
 import { RoundPlayer, SmartJoinResult, resolveSmartJoin } from "@/lib/teamFormation/smartJoin";
 import { Player } from "@/app/admin/page";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 type PlayerPickerProps =
   | {
       mode: "form_team";
       activePlayers: Player[];
+      // Full active roster for name disambiguation. Defaults to activePlayers
+      // (which is the whole roster in form_team mode).
+      allActivePlayers?: Player[];
       roundPlayers: RoundPlayer[];
       onResolve: (result: SmartJoinResult) => void;
       onClose: () => void;
@@ -18,6 +22,10 @@ type PlayerPickerProps =
       mode: "add_to_team";
       teamNumber: number;
       activePlayers: Player[];
+      // Full active roster for name disambiguation. In add_to_team mode
+      // activePlayers is only the unassigned subset, so the parent passes the
+      // full roster here to keep short names consistent across surfaces.
+      allActivePlayers?: Player[];
       roundPlayers: RoundPlayer[];
       onAdd: (playerIds: number[]) => void;
       onClose: () => void;
@@ -34,13 +42,16 @@ const C = {
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
 
-function playerDisplayName(p: Pick<Player, "display_name" | "full_name">): string {
-  return p.display_name || p.full_name;
-}
-
 export default function PlayerPickerSheet(props: PlayerPickerProps) {
   const isMobile = useIsMobile();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // Disambiguating short name ("Wayne H" / "Wayne V"), against the full active
+  // roster so it matches every other surface. Falls back to the pickable list
+  // when no explicit roster is supplied. Derived from full_name only.
+  const nameUniverse: PlayerLike[] = props.allActivePlayers ?? props.activePlayers;
+  const playerDisplayName = (p: Player): string =>
+    p.full_name ? getDisplayName(p, nameUniverse) : (p.display_name || "?");
 
   useEffect(() => {
     const prev = document.body.style.overflow;

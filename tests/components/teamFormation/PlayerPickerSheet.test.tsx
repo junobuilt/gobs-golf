@@ -47,7 +47,7 @@ const carolRp: RoundPlayer = {
 };
 
 describe("PlayerPickerSheet — form_team mode", () => {
-  it("renders all active players", () => {
+  it("renders all active players with disambiguated short names", () => {
     render(
       <PlayerPickerSheet
         mode="form_team"
@@ -57,9 +57,34 @@ describe("PlayerPickerSheet — form_team mode", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText("Alice")).toBeInTheDocument();
-    expect(screen.getByText("Bob")).toBeInTheDocument();
-    expect(screen.getByText("Carol")).toBeInTheDocument();
+    // First name + minimum last-name suffix, derived from full_name (the
+    // display_name nickname is intentionally ignored).
+    expect(screen.getByText("Alice A")).toBeInTheDocument();
+    expect(screen.getByText("Bob B")).toBeInTheDocument();
+    expect(screen.getByText("Carol C")).toBeInTheDocument();
+  });
+
+  it("expands the suffix to disambiguate a shared first name (two Waynes)", () => {
+    const wayneH: Player = {
+      id: 10, full_name: "Wayne Hashimoto", display_name: "Wayne",
+      handicap_index: null, is_active: true, preferred_tee_id: null,
+    };
+    const wayneV: Player = {
+      id: 11, full_name: "Wayne Vincent", display_name: "Wayne",
+      handicap_index: null, is_active: true, preferred_tee_id: null,
+    };
+    render(
+      <PlayerPickerSheet
+        mode="form_team"
+        activePlayers={[wayneH, wayneV]}
+        allActivePlayers={[wayneH, wayneV]}
+        roundPlayers={[]}
+        onResolve={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Wayne H")).toBeInTheDocument();
+    expect(screen.getByText("Wayne V")).toBeInTheDocument();
   });
 
   it("shows Team N caption for already-assigned players", () => {
@@ -114,10 +139,10 @@ describe("PlayerPickerSheet — form_team mode", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button").find((b) => b.textContent?.includes("Alice"))!);
-    // Chip appears — there should now be two elements with "Alice" text
-    expect(screen.getAllByText("Alice").length).toBeGreaterThan(1);
+    // Chip appears — there should now be two elements with "Alice A" text
+    expect(screen.getAllByText("Alice A").length).toBeGreaterThan(1);
     // Remove chip via × button
-    fireEvent.click(screen.getByLabelText("Remove Alice"));
+    fireEvent.click(screen.getByLabelText("Remove Alice A"));
     // CTA should be disabled again (selection cleared)
     expect(screen.getByRole("button", { name: "Start scorecard" })).toBeDisabled();
   });
@@ -154,9 +179,9 @@ describe("PlayerPickerSheet — add_to_team mode", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByText("Alice")).toBeInTheDocument();
-    expect(screen.queryByText("Bob")).not.toBeInTheDocument(); // team_number=2, hidden
-    expect(screen.getByText("Carol")).toBeInTheDocument(); // team_number=0, visible
+    expect(screen.getByText("Alice A")).toBeInTheDocument();
+    expect(screen.queryByText("Bob B")).not.toBeInTheDocument(); // team_number=2, hidden
+    expect(screen.getByText("Carol C")).toBeInTheDocument(); // team_number=0, visible
   });
 
   it("CTA is labeled with the team number", () => {

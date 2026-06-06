@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 type Player = {
   id: number;
@@ -128,8 +129,17 @@ export default function PlayerProfilePage() {
           if (!rpRows || !allPlayers) throw new Error("missing data");
 
           const focalId = Number(playerId);
-          const nameOf = (p: { display_name: string | null; full_name: string }) =>
-            p.display_name || p.full_name;
+          // Disambiguate against the full active roster (display_name ignored,
+          // per the locked naming convention) so partner/never-played names
+          // match every other surface. The focal player's own full name still
+          // shows in the page title above.
+          const activeRoster: PlayerLike[] = (allPlayers as any[]).map((p) => ({
+            id: p.id,
+            full_name: p.full_name,
+            is_active: p.is_active,
+          }));
+          const nameOf = (p: { id: number; full_name: string }) =>
+            p.full_name ? getDisplayName({ id: p.id, full_name: p.full_name }, activeRoster) : `Player ${p.id}`;
           const nameMap = new Map<number, string>();
           allPlayers.forEach((p: any) => nameMap.set(p.id, nameOf(p)));
 

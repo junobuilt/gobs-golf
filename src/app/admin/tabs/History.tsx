@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getTeamColor } from "@/lib/teamColors";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 const C = {
   navy: "#0c3057",
@@ -33,17 +34,32 @@ export default function History() {
 
   useEffect(() => {
     async function load() {
-      const { data: rawRounds } = await supabase
-        .from("rounds")
-        .select("id, played_on, is_complete")
-        .order("played_on", { ascending: false });
+      const [{ data: rawRounds }, { data: activePlayerRows }] = await Promise.all([
+        supabase
+          .from("rounds")
+          .select("id, played_on, is_complete")
+          .order("played_on", { ascending: false }),
+        supabase
+          .from("players")
+          .select("id, full_name, is_active")
+          .eq("is_active", true),
+      ]);
 
       if (!rawRounds) { setLoading(false); return; }
+
+      // Disambiguating short names against the full active roster, so a
+      // player's name matches every other surface ("Wayne H" / "Wayne V").
+      const activeRoster: PlayerLike[] = (activePlayerRows ?? []) as PlayerLike[];
+      const nameFor = (playerId: number, fullName: string | null | undefined): string => {
+        const fn = fullName ?? "";
+        if (!fn) return "?";
+        return getDisplayName({ id: playerId, full_name: fn }, activeRoster);
+      };
 
       const entries = await Promise.all(rawRounds.map(async (r: any) => {
         const { data: rps } = await supabase
           .from("round_players")
-          .select("team_number, players(display_name, full_name)")
+          .select("team_number, player_id, players(display_name, full_name)")
           .eq("round_id", r.id);
 
         const teams: TeamMap = {};
@@ -55,7 +71,7 @@ export default function History() {
           // or single-element array depending on relationship metadata.
           const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
           if (!teams[tn]) teams[tn] = [];
-          teams[tn].push(playerRow?.display_name || playerRow?.full_name || "?");
+          teams[tn].push(nameFor(rp.player_id, playerRow?.full_name));
           count++;
         });
 

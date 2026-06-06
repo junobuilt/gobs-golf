@@ -2,12 +2,19 @@
 
 import React from "react";
 import { RoundPlayer } from "@/lib/teamFormation/smartJoin";
+import { Player } from "@/app/admin/page";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 type Props = {
   teamNumber: number;
   existingRoster: RoundPlayer[];
   playerIdsToAdd: number[];
+  // Already-disambiguated short names, computed by the parent against the full
+  // active roster.
   playerNamesToAdd: string[];
+  // Full active roster for disambiguating the existing roster names. Defaults
+  // to the existing roster itself when omitted.
+  allActivePlayers?: Player[];
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -19,10 +26,6 @@ const C = {
   subtext: "#64748b",
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
-
-function playerName(rp: RoundPlayer): string {
-  return rp.players.display_name || rp.players.full_name;
-}
 
 function joinNames(names: string[]): string {
   if (names.length === 0) return "";
@@ -36,9 +39,17 @@ export default function JoinTeamConfirmModal({
   existingRoster,
   playerIdsToAdd: _playerIdsToAdd,
   playerNamesToAdd,
+  allActivePlayers,
   onConfirm,
   onCancel,
 }: Props) {
+  const nameUniverse: PlayerLike[] =
+    allActivePlayers ??
+    existingRoster.map((rp) => ({ id: rp.player_id, full_name: rp.players.full_name }));
+  const playerName = (rp: RoundPlayer): string =>
+    rp.players.full_name
+      ? getDisplayName({ id: rp.player_id, full_name: rp.players.full_name }, nameUniverse)
+      : (rp.players.display_name || "?");
   const joinerVerb = playerNamesToAdd.length === 1 ? "is" : "are";
   const existingNames = existingRoster.map(playerName);
   const joinerText = joinNames(playerNamesToAdd);

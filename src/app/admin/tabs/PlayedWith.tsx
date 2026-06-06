@@ -99,7 +99,7 @@ export default function PlayedWith({ players, matrix }: Props) {
         {matchedPlayer && (
           <>
             <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>
-              {matchedPlayer.display_name || matchedPlayer.full_name} — played with
+              {shortName(matchedPlayer.full_name)} — played with
             </div>
             <div style={{ background: "white", borderRadius: "10px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
               {pairings.map((pair, i) => {
@@ -111,7 +111,7 @@ export default function PlayedWith({ players, matrix }: Props) {
                     borderBottom: i === pairings.length - 1 ? "none" : `1px solid ${C.border}`,
                   }}>
                     <span style={{ fontSize: "0.88rem", color: "#1f2937" }}>
-                      {pair.player.display_name || pair.player.full_name}
+                      {shortName(pair.player.full_name)}
                     </span>
                     <span style={{
                       minWidth: "32px", textAlign: "center",

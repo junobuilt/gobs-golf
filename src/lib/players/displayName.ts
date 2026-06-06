@@ -74,3 +74,25 @@ export function getDisplayName(
 
   return `${first} ${last.slice(0, k)}`;
 }
+
+/**
+ * Precompute disambiguating display names for a whole roster in one pass.
+ * Returns a `player.id -> displayName` Map. The disambiguation universe is
+ * `allPlayers` (active-only by default), same semantics as `getDisplayName`.
+ *
+ * Convenience for surfaces that render many names from a known roster: build
+ * the map once, then look up by id. Players rendered that are NOT in
+ * `allPlayers` (e.g. an inactive player appearing in a historical round)
+ * won't be in the map — fall back to `getDisplayName(player, allPlayers)`
+ * for those so they still get a consistent suffix.
+ */
+export function buildDisplayNameMap(
+  allPlayers: PlayerLike[],
+  opts: { activeOnly?: boolean } = {}
+): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const p of allPlayers) {
+    map.set(p.id, getDisplayName(p, allPlayers, opts));
+  }
+  return map;
+}

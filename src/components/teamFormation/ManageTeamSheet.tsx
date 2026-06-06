@@ -5,11 +5,15 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { RoundPlayer } from "@/lib/teamFormation/smartJoin";
 import { Player } from "@/app/admin/page";
 import PlayerPickerSheet from "./PlayerPickerSheet";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface Props {
   teamNumber: number;
   teamRoster: RoundPlayer[];
   unassignedActivePlayers: Player[];
+  // Full active roster for name disambiguation. Defaults to the players this
+  // sheet already knows about (roster + unassigned) when omitted.
+  allActivePlayers?: Player[];
   onRemove: (roundPlayerId: number) => void;
   onAdd: (playerIds: number[]) => void;
   onClose: () => void;
@@ -27,12 +31,26 @@ export default function ManageTeamSheet({
   teamNumber,
   teamRoster,
   unassignedActivePlayers,
+  allActivePlayers,
   onRemove,
   onAdd,
   onClose,
 }: Props) {
   const isMobile = useIsMobile();
   const [addPickerOpen, setAddPickerOpen] = useState(false);
+
+  // Disambiguating short name ("Wayne H" / "Wayne V") against the full active
+  // roster. When no explicit roster is supplied, fall back to the players this
+  // sheet already knows about. Derived from full_name only.
+  const nameUniverse: PlayerLike[] =
+    allActivePlayers ?? [
+      ...unassignedActivePlayers.map((p) => ({ id: p.id, full_name: p.full_name, is_active: p.is_active })),
+      ...teamRoster.map((rp) => ({ id: rp.player_id, full_name: rp.players.full_name })),
+    ];
+  const rosterName = (rp: RoundPlayer): string =>
+    rp.players.full_name
+      ? getDisplayName({ id: rp.player_id, full_name: rp.players.full_name }, nameUniverse)
+      : (rp.players.display_name || "?");
 
   const overlayStyle: React.CSSProperties = {
     position: "fixed",
@@ -139,7 +157,7 @@ export default function ManageTeamSheet({
           {/* Team member list */}
           <div style={{ flex: 1, overflowY: "auto" }}>
             {teamRoster.map((rp) => {
-              const name = rp.players.display_name || rp.players.full_name;
+              const name = rosterName(rp);
               return (
                 <div
                   key={rp.id}
@@ -203,6 +221,7 @@ export default function ManageTeamSheet({
           mode="add_to_team"
           teamNumber={teamNumber}
           activePlayers={unassignedActivePlayers}
+          allActivePlayers={allActivePlayers}
           roundPlayers={[]}
           onAdd={(playerIds) => {
             setAddPickerOpen(false);

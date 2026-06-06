@@ -12,6 +12,7 @@ import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import { ensureRoundShell } from "@/lib/round/ensureRoundShell";
 import type { Player } from "@/app/admin/page";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 import { RoundPlayer, SmartJoinResult } from "@/lib/teamFormation/smartJoin";
 import PlayerPickerSheet from "@/components/teamFormation/PlayerPickerSheet";
 import JoinTeamConfirmModal from "@/components/teamFormation/JoinTeamConfirmModal";
@@ -134,7 +135,7 @@ export default function HomePage() {
           // Fetch round_players including id for score lookup
           const { data: rps } = await supabase
             .from("round_players")
-            .select("id, team_number, players ( display_name, full_name )")
+            .select("id, player_id, team_number, players ( display_name, full_name )")
             .eq("round_id", round.id);
 
           // Get which round_player_ids have any scores
@@ -155,7 +156,12 @@ export default function HomePage() {
             if (!tNum) return;
             const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
             if (!teamMap[tNum]) teamMap[tNum] = { players: [], hasScores: false };
-            teamMap[tNum].players.push(playerRow?.display_name || playerRow?.full_name || "?");
+            // Disambiguating short name against the full active roster
+            // (playerRows), so it matches every other surface.
+            const fn = playerRow?.full_name ?? "";
+            teamMap[tNum].players.push(
+              fn ? getDisplayName({ id: rp.player_id, full_name: fn }, (playerRows ?? []) as PlayerLike[]) : "?",
+            );
             if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
           });
 
@@ -282,7 +288,7 @@ export default function HomePage() {
       const names = result.playerIds
         .map((id) => {
           const p = activePlayers.find((a) => a.id === id);
-          return p?.display_name || p?.full_name || "?";
+          return p?.full_name ? getDisplayName(p, activePlayers) : "?";
         })
         .join(", ");
       showToast(`Team ${newTeamNumber} created — ${names}.`);
@@ -295,7 +301,11 @@ export default function HomePage() {
         (rp) => rp.team_number === result.teamNumber
       );
       const names = teamRoster
-        .map((rp) => rp.players.display_name || rp.players.full_name)
+        .map((rp) =>
+          rp.players.full_name
+            ? getDisplayName({ id: rp.player_id, full_name: rp.players.full_name }, activePlayers)
+            : (rp.players.display_name || "?"),
+        )
         .join(", ");
       showToast(`You're on Team ${result.teamNumber} with ${names}.`);
       router.push(`/round/${roundId}/scorecard?team=${result.teamNumber}`);
@@ -550,6 +560,7 @@ export default function HomePage() {
         <PlayerPickerSheet
           mode="form_team"
           activePlayers={activePlayers}
+          allActivePlayers={activePlayers}
           roundPlayers={todayRoundPlayers}
           onResolve={handleResolve}
           onClose={() => setPickerOpen(false)}
@@ -564,8 +575,9 @@ export default function HomePage() {
           playerIdsToAdd={confirmJoinModal.playerIdsToAdd}
           playerNamesToAdd={confirmJoinModal.playerIdsToAdd.map((id) => {
             const p = activePlayers.find((a) => a.id === id);
-            return p?.display_name || p?.full_name || "?";
+            return p?.full_name ? getDisplayName(p, activePlayers) : "?";
           })}
+          allActivePlayers={activePlayers}
           onConfirm={handleConfirmJoin}
           onCancel={() => setConfirmJoinModal(null)}
         />
@@ -578,6 +590,7 @@ export default function HomePage() {
           teamB={mixedTeamsModal.teamB}
           playersA={mixedTeamsModal.playersA}
           playersB={mixedTeamsModal.playersB}
+          allActivePlayers={activePlayers}
           onDismiss={() => setMixedTeamsModal(null)}
         />
       )}

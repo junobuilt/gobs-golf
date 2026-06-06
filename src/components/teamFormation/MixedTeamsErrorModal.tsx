@@ -2,12 +2,17 @@
 
 import React from "react";
 import { RoundPlayer } from "@/lib/teamFormation/smartJoin";
+import { Player } from "@/app/admin/page";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 type Props = {
   teamA: number;
   teamB: number;
   playersA: RoundPlayer[];
   playersB: RoundPlayer[];
+  // Full active roster for name disambiguation. Defaults to the two team
+  // rosters shown when omitted.
+  allActivePlayers?: Player[];
   onDismiss: () => void;
 };
 
@@ -18,10 +23,6 @@ const C = {
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
 };
 
-function playerName(rp: RoundPlayer): string {
-  return rp.players.display_name || rp.players.full_name;
-}
-
 function joinNames(names: string[]): string {
   if (names.length === 0) return "";
   if (names.length === 1) return names[0];
@@ -29,7 +30,14 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
-export default function MixedTeamsErrorModal({ teamA, teamB, playersA, playersB, onDismiss }: Props) {
+export default function MixedTeamsErrorModal({ teamA, teamB, playersA, playersB, allActivePlayers, onDismiss }: Props) {
+  const nameUniverse: PlayerLike[] =
+    allActivePlayers ??
+    [...playersA, ...playersB].map((rp) => ({ id: rp.player_id, full_name: rp.players.full_name }));
+  const playerName = (rp: RoundPlayer): string =>
+    rp.players.full_name
+      ? getDisplayName({ id: rp.player_id, full_name: rp.players.full_name }, nameUniverse)
+      : (rp.players.display_name || "?");
   const namesA = playersA.map(playerName);
   const namesB = playersB.map(playerName);
   const verbA = namesA.length === 1 ? "is" : "are";

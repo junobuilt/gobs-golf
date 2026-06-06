@@ -22,12 +22,16 @@ import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 import type { Player } from "@/app/admin/page";
 import ManageTeamSheet from "@/components/teamFormation/ManageTeamSheet";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 // --- TYPES ---
 interface RoundPlayer {
   id: number;
   player_id: number;
   tee_id: number | null;
+  // Raw full name (kept for re-disambiguation in child sheets). `display_name`
+  // below holds the render-ready disambiguated short name ("Wayne H").
+  full_name: string;
   display_name: string;
   handicap_index: number | null;
   handicap_index_snapshot: number | null;
@@ -76,6 +80,19 @@ const B9_HOLES = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 // import. In both cases the snapshot HI may not reflect the player's true
 // HI at round time, so the admin needs to verify it. Treats played_on as
 // noon UTC to dodge TZ off-by-one for the +1 day boundary.
+// Render-ready disambiguating short name ("Wayne H" / "Wayne V") against the
+// full active roster, so a player's name matches every other surface. Derived
+// from full_name only (display_name is intentionally ignored).
+function disambiguatedName(
+  playerId: number,
+  fullName: string | null | undefined,
+  roster: PlayerLike[],
+): string {
+  const fn = fullName ?? "";
+  if (!fn) return "?";
+  return getDisplayName({ id: playerId, full_name: fn }, roster);
+}
+
 function isHistoricalAdd(createdAt: string | null, playedOn: string | null): boolean {
   if (!createdAt || !playedOn) return false;
   const createdMs = new Date(createdAt).getTime();
@@ -92,6 +109,9 @@ export default function ScorecardPage() {
 
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [roundPlayers, setRoundPlayers] = useState<RoundPlayer[]>([]);
+  // Full active roster — the disambiguation universe for player short names.
+  // Loaded once on mount so the per-player rows match every other surface.
+  const [allActivePlayers, setAllActivePlayers] = useState<Player[]>([]);
   const [allTees, setAllTees] = useState<Tee[]>([]);
   const [holesByTee, setHolesByTee] = useState<Record<number, HoleInfo[]>>({});
   const [scores, setScores] = useState<Record<number, Record<number, number>>>({});
@@ -257,6 +277,16 @@ export default function ScorecardPage() {
       }));
       setAllTees(formattedTees);
 
+      // Full active roster for player-name disambiguation. Fetched here so the
+      // per-player rows can render consistent short names on first paint.
+      const { data: activePlayerRows } = await supabase
+        .from("players")
+        .select("id, full_name, display_name, handicap_index, is_active, preferred_tee_id")
+        .eq("is_active", true)
+        .order("full_name");
+      const activeRoster = (activePlayerRows ?? []) as Player[];
+      setAllActivePlayers(activeRoster);
+
       const team = new URLSearchParams(window.location.search).get("team");
       let query = supabase
         .from("round_players")
@@ -271,7 +301,8 @@ export default function ScorecardPage() {
           id: r.id,
           player_id: r.player_id,
           tee_id: r.tee_id,
-          display_name: r.players?.display_name || r.players?.full_name || "?",
+          full_name: r.players?.full_name ?? "",
+          display_name: disambiguatedName(r.player_id, r.players?.full_name, activeRoster),
           handicap_index: r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
           handicap_index_snapshot: r.handicap_index_snapshot != null ? Number(r.handicap_index_snapshot) : null,
           course_handicap: r.course_handicap != null ? Number(r.course_handicap) : null,
@@ -1111,7 +1142,8 @@ export default function ScorecardPage() {
           id: r.id,
           player_id: r.player_id,
           tee_id: r.tee_id,
-          display_name: r.players?.display_name || r.players?.full_name || "?",
+          full_name: r.players?.full_name ?? "",
+          display_name: disambiguatedName(r.player_id, r.players?.full_name, allActivePlayers),
           handicap_index:
             r.players?.handicap_index != null ? Number(r.players.handicap_index) : null,
           handicap_index_snapshot: r.handicap_index_snapshot != null ? Number(r.handicap_index_snapshot) : null,
@@ -1127,7 +1159,7 @@ export default function ScorecardPage() {
       const addedNames = playerIds
         .map((id) => manageTeamActivePlayers.find((p) => p.id === id))
         .filter(Boolean)
-        .map((p) => p!.display_name || p!.full_name)
+        .map((p) => disambiguatedName(p!.id, p!.full_name, allActivePlayers))
         .join(", ");
       showManageTeamToast(`${addedNames} added to Team ${teamNum}.`, null);
     }
@@ -1985,9 +2017,10 @@ export default function ScorecardPage() {
               id: rp.id,
               player_id: rp.player_id,
               team_number: rp.team_number,
-              players: { full_name: rp.display_name, display_name: rp.display_name },
+              players: { full_name: rp.full_name, display_name: rp.display_name },
             }))}
           unassignedActivePlayers={manageTeamUnassigned}
+          allActivePlayers={allActivePlayers}
           onRemove={handleManageTeamRemove}
           onAdd={(ids) => void handleManageTeamAdd(ids)}
           onClose={() => void closeManageTeam()}

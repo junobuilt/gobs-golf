@@ -2,8 +2,61 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (best-N blind-draw — scorecard headline total)
-**Session purpose:** The scorecard's own headline team total used a different engine call path (`buildRoundInput`) that didn't pass `blindDraws`, so on finalized best-N rounds with a blind draw the scorecard disagreed with the leaderboard/summary (which were fixed earlier today). Plumbed the fill data into the scorecard's `computeRoundResult` call — pure call-site change, engine untouched. Live-verified round 101's short-team scorecard now reads **−17** (was −11), matching every other surface. Suite **415/415**, `tsc --noEmit` clean.
+**Last updated:** 2026-06-06 (display-name disambiguation — full rollout)
+**Session purpose:** Rolled the `getDisplayName` helper (shipped earlier today for the Played With heatmap) out to **every** player-name rendering surface so short names ("Wayne H" / "Wayne V", "Dan G" / "Dan S") are identical everywhere. Render-time only — no DB / `players.display_name` change, helper itself unchanged. Disambiguation universe is the **full active roster** on every surface (not just the current round), so a player's short name never shifts between screens. Leaderboard/summary handled in the `results.ts` data layer (approved Option A); all other surfaces apply the helper inline. Suite **417/417**, `tsc --noEmit` clean. Live-verified season leaderboard + player profile against the two-Waynes scenario.
+
+---
+
+## 2026-06-06 (display-name disambiguation — full rollout)
+
+### Where we left off
+
+**The naming convention now applies on every surface that renders player names.** Closes the rollout decision parked in this morning's Played With session (its Tomorrow-priority #1). Convention is unchanged and locked: first name + the *minimum* last-name suffix needed to disambiguate among **all active players**, always (even with no collision today — "Bill Carlson" → "Bill C"); derived from `full_name` only, `display_name` nicknames intentionally ignored.
+
+**Approved decisions (plan-first, AskUserQuestion before coding):**
+- **Option A** for the leaderboard/summary path — compute names in `results.ts` (the shared data layer) rather than threading raw `full_name` + roster into `RoundResultsView`. Smallest diff; RoundResultsView + both pages untouched. No DB/query-semantics change (the file already formatted names).
+- Fold in the **PlayedWith mobile list** (was left raw this morning).
+- Include `JoinTeamConfirmModal` + `MixedTeamsErrorModal` (found outside the original audit list).
+- **Skip** the Players admin tab and the players directory page — full name is the point there.
+- `display_name` override everywhere applied surfaces (no nicknames in the data → no manual-override tier needed).
+
+**Cross-cutting design note:** the universe for `getDisplayName` must be the *full active roster* on every surface, else the same player's suffix length would differ between screens (e.g. "Bill Carl" on the leaderboard vs "Bill Ca" in a picker subset). Surfaces that only loaded a per-round subset (History, scorecard, results.ts) gained a one-off active-player fetch. New helper `buildDisplayNameMap(allPlayers)` added for convenience (not yet widely used — most sites call `getDisplayName` directly).
+
+**Files touched:**
+- `src/lib/players/displayName.ts` — added `buildDisplayNameMap` convenience (id → name Map). Helper itself unchanged.
+- `src/lib/round/results.ts` — **Option A.** New active-roster fetch + `nameFor(playerId, fullName)`; applied to `playerLookup.displayName`, `rosterDisplay`, per-player `displayName`, and blind-draw `drawnPlayerName`. Drives /leaderboard + /round/[id]/summary + RoundResultsView with zero changes to those files.
+- `src/app/admin/tabs/PlayedWith.tsx` — folded the mobile pairing list onto `shortName(full_name)` (desktop heatmap already shipped this morning).
+- `src/app/admin/tabs/History.tsx` — added active-roster fetch (parallel with rounds) + `player_id` to the round_players select; team rosters now disambiguated.
+- `src/app/page.tsx` (homepage) — `player_id` added to the team-card round_players select; team cards, create/join toasts, and `playerNamesToAdd` disambiguated; `allActivePlayers` passed to the three team-formation children.
+- `src/app/season/page.tsx` — active-roster fetch + `nameFor`; leaderboard rows disambiguated.
+- `src/app/player/[id]/page.tsx` — `nameOf` switched to `getDisplayName` against the active roster (partner + never-played lists). **Page title still shows the full name.**
+- `src/app/round/[id]/scorecard/page.tsx` — `RoundPlayer` gains raw `full_name`; new `allActivePlayers` state loaded on mount; `display_name` is now the disambiguated short name (computed at both mapping sites via `disambiguatedName()`), so all ~15 downstream reads update automatically; ManageTeamSheet gets raw `full_name` + `allActivePlayers`.
+- `src/components/teamFormation/{PlayerPickerSheet,ManageTeamSheet,JoinTeamConfirmModal,MixedTeamsErrorModal}.tsx` — each takes an optional `allActivePlayers` prop and applies `getDisplayName` against it (falls back to its locally-known players when omitted, so existing call sites/tests stay valid).
+- `tests/components/teamFormation/PlayerPickerSheet.test.tsx` — updated expected names to disambiguated forms ("Alice" → "Alice A"); NEW two-Waynes collision test.
+- `tests/lib/round/results-displayName.test.ts` — NEW. Drives `loadRoundResults` through the FakeSupabase harness with two Waynes + a third active player not in the round; asserts `rosterDisplay` = "Wayne H · Wayne V" and per-player names. Covers leaderboard + summary (shared path). The third player proves the universe is the full active roster.
+
+**Live verification (`next-dev`, real prod data):**
+- `/season` — shows **"Wayne V"** and **"Wayne H"**.
+- `/player/45` (Wayne Hashimoto) — title stays **"Wayne Hashimoto"** (full); partner/never lists show disambiguated names incl. real collisions **"Dan G" / "Dan S"**, "Don D", "Bill T".
+- No console errors. (Homepage/leaderboard had no round today → no team cards to inspect live; covered by the results.ts + PlayerPickerSheet tests. Admin History is PIN-gated locally → covered by tsc + suite.)
+
+### Today's commits
+
+- (this session) — feat(players): roll out display-name disambiguation to all name surfaces
+
+### Tomorrow's priority
+
+1. **H3.x — `seasons` table + migration** — top remaining feature priority.
+2. **Scorecard fill rendering** (deferred display enhancement, from the morning best-N session).
+3. Carry-over: live admin smoke test (D.2); historical backfill decision for the 5 corrected best-N rounds.
+
+### Considered but not changed (confession)
+
+- **Players admin tab + players directory page** — deliberately skipped (approved): full name is the editing/identity surface there.
+- **Scorecard `player_name` in the write-queue payload + stale-failure dialog** — now uses the disambiguated `display_name` (it reads `rp.display_name`); acceptable/better, not a behavior regression.
+- **Two active-player fetches on the scorecard** — the mount fetch (`allActivePlayers`, for row disambiguation) and the lazy `manageTeamActivePlayers` fetch (for the add flow) both hit `players`. Left as-is to keep the diff narrow and avoid touching the working Manage Team flow; could be unified later.
+- **`buildDisplayNameMap`** added but most sites still call `getDisplayName` per-player — fine at 50 players (~2500 comparisons, microseconds); no caching needed per scope.
+- **`results.ts:359-382` drawn-player duplication**, mixed-tee par approximation — untouched carry-over, out of scope.
 
 ---
 

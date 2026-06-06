@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { computePlayerRoundTotal } from "@/lib/scoring";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface PlayerStats {
   player_id: number;
@@ -21,9 +22,15 @@ interface PlayerStats {
 
 export default function LeaderboardPage() {
   const [players, setPlayers] = useState<PlayerStats[]>([]);
+  const [activeRoster, setActiveRoster] = useState<PlayerLike[]>([]);
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const [viewMode, setViewMode] = useState<"gross" | "net">("gross");
+
+  // Disambiguating short name against the full active roster — identical to
+  // every other surface. Derived from full_name only (display_name ignored).
+  const nameFor = (playerId: number, fullName: string): string =>
+    fullName ? getDisplayName({ id: playerId, full_name: fullName }, activeRoster) : "?";
 
   useEffect(() => {
     async function load() {
@@ -39,6 +46,13 @@ export default function LeaderboardPage() {
         setLoading(false);
         return;
       }
+
+      // Full active roster for render-time name disambiguation.
+      const { data: activePlayerRows } = await supabase
+        .from("players")
+        .select("id, full_name, is_active")
+        .eq("is_active", true);
+      setActiveRoster((activePlayerRows ?? []) as PlayerLike[]);
 
       // Get all completed rounds
       const { data: rounds } = await supabase
@@ -259,7 +273,7 @@ export default function LeaderboardPage() {
 
                   <div>
                     <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#1e293b" }}>
-                      {p.display_name || p.full_name}
+                      {nameFor(p.player_id, p.full_name)}
                     </div>
                     <div style={{ fontSize: "0.7rem", color: "#94a3b8" }}>
                       {p.rounds_played} round{p.rounds_played !== 1 ? "s" : ""}

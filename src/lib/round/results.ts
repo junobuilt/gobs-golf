@@ -13,6 +13,7 @@ import {
   isStablefordFormat,
   type RankedTeam,
 } from "@/lib/leaderboard/rank";
+import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 const F9 = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 const B9 = [10, 11, 12, 13, 14, 15, 16, 17, 18] as const;
@@ -142,6 +143,21 @@ export async function loadRoundResults(
     };
   }
 
+  // Render-time disambiguating names ("Wayne H" / "Wayne V"). The universe is
+  // ALL active players, not just this round's roster, so a player's short name
+  // is identical here and on every other surface. Derived from full_name only
+  // (display_name is intentionally ignored, per the locked naming convention).
+  const { data: activePlayerRows } = await supabase
+    .from("players")
+    .select("id, full_name, is_active")
+    .eq("is_active", true);
+  const activeRoster: PlayerLike[] = (activePlayerRows ?? []) as PlayerLike[];
+  const nameFor = (playerId: number, fullName: string | null | undefined): string => {
+    const fn = fullName ?? "";
+    if (!fn) return "?";
+    return getDisplayName({ id: playerId, full_name: fn }, activeRoster);
+  };
+
   // D.1: load blind-draw fills for this round. Returns [] for any round that
   // either hasn't been finalized yet or had no short teams. Joined with
   // players to display the drawn player's name.
@@ -166,7 +182,7 @@ export async function loadRoundResults(
       rpId: rp.id as number,
       teamNumber: rp.team_number as number,
       teeId: rp.tee_id as number,
-      displayName: playerRow?.display_name || playerRow?.full_name || "?",
+      displayName: nameFor(rp.player_id as number, playerRow?.full_name),
     };
   });
 
@@ -309,7 +325,7 @@ export async function loadRoundResults(
 
     const rosterDisplay = teamPlayers.map((rp: any) => {
       const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
-      return playerRow?.display_name || playerRow?.full_name || "?";
+      return nameFor(rp.player_id as number, playerRow?.full_name);
     }).join(" · ");
 
     const players: PlayerRow[] = teamPlayers.map((rp: any) => {
@@ -344,7 +360,7 @@ export async function loadRoundResults(
       }
 
       const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
-      const displayName = playerRow?.display_name || playerRow?.full_name || "?";
+      const displayName = nameFor(rp.player_id as number, playerRow?.full_name);
 
       const netTotal = isStableford ? netValue : netTotalStrokes;
 
@@ -370,11 +386,9 @@ export async function loadRoundResults(
         const drawnPlayerId = bd.drawn_player_id as number;
         const lookup = playerLookup[drawnPlayerId];
         const drawnPlayerRow = Array.isArray(bd.players) ? bd.players[0] : bd.players;
-        const drawnPlayerName =
-          drawnPlayerRow?.display_name ||
-          drawnPlayerRow?.full_name ||
-          lookup?.displayName ||
-          "?";
+        const drawnPlayerName = drawnPlayerRow?.full_name
+          ? nameFor(drawnPlayerId, drawnPlayerRow.full_name)
+          : (lookup?.displayName ?? "?");
         const drawnScoresMap = lookup ? (scoresByRpId[lookup.rpId] || {}) : {};
         const drawnPlayerScores: (number | null)[] = Array.from(
           { length: 18 },
