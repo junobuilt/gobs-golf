@@ -2,8 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (Played With — display-name disambiguation)
-**Session purpose:** Admin Played With tab collapsed every player to first name only on the desktop heatmap, so the two Waynes (and any shared first names) rendered identically. Added a pure `getDisplayName` helper that computes the minimum last-name suffix needed to disambiguate within the active roster ("Wayne H" / "Wayne V"), and applied it to the heatmap headers + row labels. Suite **413/413**, `tsc --noEmit` clean.
+**Last updated:** 2026-06-06 (best-N blind-draw — scorecard headline total)
+**Session purpose:** The scorecard's own headline team total used a different engine call path (`buildRoundInput`) that didn't pass `blindDraws`, so on finalized best-N rounds with a blind draw the scorecard disagreed with the leaderboard/summary (which were fixed earlier today). Plumbed the fill data into the scorecard's `computeRoundResult` call — pure call-site change, engine untouched. Live-verified round 101's short-team scorecard now reads **−17** (was −11), matching every other surface. Suite **415/415**, `tsc --noEmit` clean.
+
+---
+
+## 2026-06-06 (best-N blind-draw — scorecard headline total)
+
+### Where we left off
+
+**Scorecard headline now consistent with leaderboard/summary.** Third best-N blind-draw fix of the day: 30443bc fixed the engine + the `loadRoundResults`-backed surfaces (summary, leaderboard, RoundResultsView), but the scorecard renders its headline through its own `buildRoundInput` → `computeRoundResult` call (line ~820), which omitted `blindDraws`. So a finalized short team's scorecard total stayed roster-only and disagreed with every other surface. This session plumbs the fill data into that one call. **Engine and display layer untouched — pure call-site + data-loading change.**
+
+**Investigation (plan-first, approved before coding):**
+- All headline/aggregate numbers (`getTeamTotal`, `getTeamParTotal`, F9/B9 via `getTeamNetDeltaForHoles`, `holesWithTeamScores`) funnel through `buildRoundInput`. One omission there is the whole bug. `computeHoleFor` (per-hole Ball pills / dots) deliberately left roster-only — display layer, out of scope.
+- `roundPlayers`/`scores`/`holesByTee` are scoped to the **displayed team** (`?team=N`), so the drawn player's row/scores/tee-holes aren't loaded — must be fetched separately (mirrors `loadRoundResults`).
+- `fillsByRpId` (the existing dropout-grid state) is **not reusable**: it loads dropout fills only (`hole_range_start > 1`), excludes round-start fills, and carries no CH/tee-holes. All 5 affected rounds are round-start fills.
+- blind_draws only exist post-finalize → loading is a no-op pre-finalize; no early-return skips it.
+
+**Files touched:**
+- `src/app/round/[id]/scorecard/page.tsx` — import `BlindDrawInput`; new `blindDrawInputs` state; new self-contained `refreshBlindDrawInputs()` (re-reads team filter, scoring basis, and the drawn player's `round_players`/`scores`/`holes` from the DB — independent of render-state to avoid mount-time staleness; loads ALL fills for the team incl. round-start); called at the same 3 sites as `refreshBlindDrawFills` (mount + 2 post-finalize branches); `buildRoundInput` now passes `blindDraws: blindDrawInputs`.
+- `tests/components/scorecard-blinddraw-total.test.tsx` — NEW, 2 tests via the FakeSupabase harness. Finalized single-player team + round-start fill → headline −18 (negative-control verified: with the call-site line removed the test fails, headline stays +18); pre-finalize with no blind_draws rows → headline unchanged at +18 (no-op).
+
+**Accepted trade-offs (per approval):**
+- Scorecard read-only view is now **consistent but not self-summable** for round-start fills: the headline includes the fill, but the drawn player is not rendered as a row on the scorecard (only on summary/RoundResultsView). Adding scorecard fill rendering is a deferred display enhancement.
+- Mixed-tee par approximation deferred (single-tee data today).
+
+**Live verification:** `next-dev` → `/round/101/scorecard?team=1` headline reads `Team Net −17` (F9 −8 · B9 −9), matching the leaderboard/summary. Old value was −11.
+
+### Today's commits
+
+- (this session) — fix(scorecard): include blind-draw fills in headline team total
+
+### Tomorrow's priority
+
+1. **H3.x — `seasons` table + migration** — top remaining feature priority.
+2. **Scorecard fill rendering** (deferred display enhancement) — render round-start fills as a 🎲 row on the scorecard so the headline is self-summable, matching RoundResultsView's pseudo-player rows.
+3. Carry-over: Played With convention rollout decision; live admin smoke test (D.2); historical backfill decision for the 5 corrected best-N rounds.
+
+### Considered but not changed (confession)
+
+- **`computeHoleFor` / per-hole Ball-1/Ball-2 pills** — left roster-only (display layer, out of scope). Means the per-hole BALL selection shown on the scorecard doesn't reflect the fill, consistent with how summary/RoundResultsView render the fill as a separate 🎲 element.
+- **No-team-filter case** (`buildRoundInput` over all teams when `?team=` absent) — pre-existing behavior; `refreshBlindDrawInputs` only filters fills by team when `?team=N` is present. Not a real production path (scorecard links always carry `?team=N`); not addressed.
+- Mixed-tee par approximation; dropout-fill scorecard scenario (no current data); `results.ts:359-382` drawn-player duplication — all carry-over, out of scope.
 
 ---
 

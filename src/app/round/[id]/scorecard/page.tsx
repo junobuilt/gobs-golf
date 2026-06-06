@@ -11,7 +11,7 @@ import {
   computeRoundResult,
   getHandicapStrokes,
 } from "@/lib/scoring";
-import type { HoleInfo as EngineHoleInfo, Format, FormatConfig } from "@/lib/scoring";
+import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
@@ -133,6 +133,13 @@ export default function ScorecardPage() {
   const [fillsByRpId, setFillsByRpId] = useState<
     Record<number, { drawnPlayerName: string; drawnScores: (number | null)[]; holeRangeStart: number; holeRangeEnd: number }>
   >({});
+
+  // Blind-draw fills for the displayed team, in the engine's BlindDrawInput
+  // shape, so the headline team total / F9-B9-Total pill match the
+  // leaderboard + summary (which run the same engine via loadRoundResults).
+  // Empty pre-finalize (blind_draws has no rows yet) → no behavior change.
+  // Loaded by refreshBlindDrawInputs(); consumed by buildRoundInput().
+  const [blindDrawInputs, setBlindDrawInputs] = useState<BlindDrawInput[]>([]);
 
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
@@ -367,6 +374,9 @@ export default function ScorecardPage() {
       // D.1 S6 — load dropout fills for the read-only post-finalize view.
       // Safe to run pre-finalize too: returns no rows.
       void refreshBlindDrawFills();
+      // Load best-N fills for the headline team total (matches leaderboard/
+      // summary). Also a no-op pre-finalize.
+      void refreshBlindDrawInputs();
     }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -653,6 +663,106 @@ export default function ScorecardPage() {
     setFillsByRpId(next);
   };
 
+  // Build engine-shaped BlindDrawInput[] for the displayed team so the headline
+  // team total (and F9/B9/Total) include the drawn player's scores, matching
+  // the leaderboard + summary. Self-contained (re-reads team filter, scoring
+  // basis, and the drawn player's row/scores/tee-holes from the DB) so it does
+  // not depend on render-state that may be stale at mount. Unlike
+  // refreshBlindDrawFills (dropout fills only, for the merged grid), this loads
+  // ALL fills for the team, including round-start fills. No-op pre-finalize:
+  // blind_draws returns no rows → setBlindDrawInputs([]).
+  const refreshBlindDrawInputs = async () => {
+    const team = new URLSearchParams(window.location.search).get("team");
+
+    let bdQuery = supabase
+      .from("blind_draws")
+      .select("short_team_number, drawn_player_id, hole_range_start, hole_range_end")
+      .eq("round_id", roundId);
+    if (team) bdQuery = bdQuery.eq("short_team_number", parseInt(team));
+    const { data: bdRows } = await bdQuery.order("id");
+    if (!bdRows || bdRows.length === 0) {
+      setBlindDrawInputs([]);
+      return;
+    }
+
+    // Scoring basis decides whether the drawn player's CH is zeroed (gross).
+    // Re-read it rather than trust possibly-stale roundFormatConfig state.
+    const { data: roundRow } = await supabase
+      .from("rounds")
+      .select("format_config")
+      .eq("id", roundId)
+      .maybeSingle();
+    const cfg = (roundRow?.format_config ?? null) as FormatConfig | null;
+    const useGross = getScoringBasis(cfg) === "gross";
+
+    // The drawn player is on another team — look up their round_players row
+    // (id, tee, CH), scores, and tee holes directly (not in `roundPlayers`,
+    // which is scoped to the displayed team).
+    const drawnPlayerIds = [...new Set((bdRows as any[]).map(b => b.drawn_player_id as number))];
+    const { data: drawnRps } = await supabase
+      .from("round_players")
+      .select("id, player_id, tee_id, course_handicap")
+      .eq("round_id", roundId)
+      .in("player_id", drawnPlayerIds);
+    const drawnByPlayer: Record<number, { id: number; tee_id: number; ch: number | null }> = {};
+    (drawnRps ?? []).forEach((r: any) => {
+      drawnByPlayer[r.player_id] = {
+        id: r.id,
+        tee_id: r.tee_id,
+        ch: r.course_handicap != null ? Number(r.course_handicap) : null,
+      };
+    });
+
+    const drawnRpIds = Object.values(drawnByPlayer).map(d => d.id);
+    const { data: drawnScoreRows } = drawnRpIds.length
+      ? await supabase
+          .from("scores")
+          .select("round_player_id, hole_number, strokes")
+          .in("round_player_id", drawnRpIds)
+      : { data: [] as any[] };
+    const drawnScoresByRp: Record<number, Record<number, number>> = {};
+    (drawnScoreRows ?? []).forEach((s: any) => {
+      if (!drawnScoresByRp[s.round_player_id]) drawnScoresByRp[s.round_player_id] = {};
+      drawnScoresByRp[s.round_player_id][s.hole_number] = s.strokes;
+    });
+
+    // Drawn player's net uses THEIR OWN tee SI/par — load any drawn tee holes
+    // not already in holesByTee state.
+    const drawnTeeIds = [...new Set(Object.values(drawnByPlayer).map(d => d.tee_id).filter(Boolean))] as number[];
+    const drawnHolesByTee: Record<number, EngineHoleInfo[]> = {};
+    for (const teeId of drawnTeeIds) {
+      const cached = holesByTee[teeId];
+      if (cached && cached.length > 0) {
+        drawnHolesByTee[teeId] = cached.map(h => ({
+          holeNumber: h.hole_number, par: h.par, strokeIndex: h.stroke_index,
+        }));
+      } else {
+        const { data: h } = await supabase
+          .from("holes")
+          .select("hole_number, par, stroke_index")
+          .eq("tee_id", teeId)
+          .order("hole_number");
+        drawnHolesByTee[teeId] = (h ?? []).map((r: any) => ({
+          holeNumber: r.hole_number, par: r.par, strokeIndex: r.stroke_index,
+        }));
+      }
+    }
+
+    const inputs: BlindDrawInput[] = (bdRows as any[]).map(b => {
+      const drawn = drawnByPlayer[b.drawn_player_id as number];
+      const drawnRpId = drawn?.id;
+      return {
+        drawnPlayerId: String(drawnRpId ?? b.drawn_player_id),
+        drawnPlayerCourseHandicap: useGross ? 0 : (drawn?.ch ?? null),
+        drawnPlayerScores: drawnRpId != null ? (drawnScoresByRp[drawnRpId] ?? {}) : {},
+        drawnPlayerHoles: drawn ? (drawnHolesByTee[drawn.tee_id] ?? []) : [],
+        holeRangeStart: b.hole_range_start as number,
+        holeRangeEnd: b.hole_range_end as number,
+      };
+    });
+    setBlindDrawInputs(inputs);
+  };
+
   // D.1 hotfix: re-read `format_config.submitted_teams` from the DB so this
   // scorecard picks up another team submitting on another device. Cheap
   // single-row read. Called after every score write + after my own submit.
@@ -743,9 +853,11 @@ export default function ScorecardPage() {
         setFinalizedToastVisible(true);
         setTimeout(() => setFinalizedToastVisible(false), 4000);
         void refreshBlindDrawFills();
+        void refreshBlindDrawInputs();
       } else if (status === "already_complete") {
         setIsRoundComplete(true);
         void refreshBlindDrawFills();
+        void refreshBlindDrawInputs();
       } else if (status === "pool_too_small") {
         setPoolErrorVisible(true);
         setTimeout(() => setPoolErrorVisible(false), 6000);
@@ -826,6 +938,11 @@ export default function ScorecardPage() {
         courseHandicap: useGross ? 0 : rp.course_handicap,
         grossScores: scores[rp.id] || {},
       })),
+      // Best-N: include the displayed team's blind-draw fill(s) in the per-hole
+      // pool so the headline total matches the leaderboard/summary. Empty
+      // pre-finalize → no change. Stableford ignores this field (engine
+      // accrues fills via blindDrawTotal instead).
+      blindDraws: blindDrawInputs,
     });
   };
 
