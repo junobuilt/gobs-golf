@@ -2,8 +2,54 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (season management — H3.1–H3.5)
-**Session purpose:** Shipped season management as one unit: `seasons` table + backfill (migration 014), a `src/lib/seasons` module, admin Settings UI (current season + End Season, past seasons + Reopen), and auto-start-on-new-round. Unblocks Phase E v2. Prod has one active "2026 Season" with all 20 rounds backfilled (0 null `season_id`). Suite **436/436**, `tsc --noEmit` clean. Admin UI covered by tests (local PIN gate blocks live click-through); homepage smoke-tested clean.
+**Last updated:** 2026-06-06 (E5 — Played With season filter)
+**Session purpose:** Added a "This season / All-time" pill toggle to the player-profile Played With card (default This season), now that H3 shipped seasons. Render-time scope toggle: "This season" adds `.eq("rounds.season_id", activeSeason.id)` to the live JOIN; "All-time" drops it; toggle hidden when no active season. Caught + fixed a nested-`<button>` hydration bug in the accordion header during live verify. Also closed the `.gt` mock gap in `player-profile-ordering.test.tsx`. Suite **439/439**, `tsc --noEmit` clean. Live-verified on real profiles.
+
+---
+
+## 2026-06-06 (E5 — Played With season filter)
+
+### Where we left off
+
+**The player-profile Played With card can now scope to the active season.** A small "This season / All-time" pill toggle sits to the right of the "Played With" heading (default **This season**). Closes the E5 item parked since the E1 v1 ship (d506460); unblocked by H3 (e4c2daf).
+
+**Investigation (plan-first, approved):**
+- The live JOIN + bucket computation live in one `load()` effect; buckets derive entirely from `rpRows`, so filtering `rpRows` by season scopes the 6+/3-5/1-2 buckets automatically. Never-played universe stays all active players.
+- Player profile is a client component; `getActiveSeason()` returns `Season | null` with `.id`. No `--navy` token on this page — it's green-themed (`--green-700`).
+
+**Implementation:**
+- **Split** the played-with load out of the main `load()` into `loadPlayedWith(filter, seasonId)` (useCallback) + an effect keyed on `[playerId, effectiveFilter, activeSeason?.id, seasonLoaded]`, so toggling re-queries **only** the played-with data (not player/rounds/stats). The computation is byte-for-byte identical to the pre-E5 inline block, parameterized by `filter`.
+- `activeSeason` loaded once on mount; `effectiveFilter = activeSeason ? seasonFilter : "all_time"`; toggle hidden + forced all-time when no active season.
+- Query: when This season, adds `season_id` to the `rounds!inner` embed + `.eq("rounds.season_id", id)`.
+- Empty copy: "No partners this season yet" when scoped + zero partners.
+- `AccordionSection` gained an optional `headerRight` slot; `SeasonToggle` uses the page's green palette (no navy token), `aria-pressed` marks the active option.
+
+**Bug caught in live verify (hydration error / Next "2 Issues"):** the `SeasonToggle` `<button>`s were nested inside the accordion header `<button>` (invalid HTML → hydration error). **Fixed** by restructuring the header into a flex `<div>` with **separate** title and chevron toggle buttons and `headerRight` as a sibling — no nested buttons. Live DOM confirmed `nestedButtonCount: 0`; a fresh `/player/22` load emitted no hydration errors (the lingering console errors were stale, all referencing the pre-fix `/player/45` bundle with `width:"100%"`).
+
+**Files changed:**
+- `src/app/player/[id]/page.tsx` — `getActiveSeason`/`Season` import + `SeasonFilter` type; season state; split `loadPlayedWith` callback + effect; `SeasonToggle` component; `AccordionSection` `headerRight` prop + non-nested header restructure; `PlayedWithPanel` `seasonScoped` empty-copy.
+- `tests/app/player-profile-ordering.test.tsx` — added `.gt()` to its MiniFake (closes the `.gt is not a function` swallowed-error gap; the TD26 test still passes).
+
+**Tests:** NEW `tests/app/player-profile-season-filter.test.tsx` (3): default This season shows only current-season partners (key negative control: a past-season partner is absent); switching to All-time reveals the past-season partner (re-query); no active season hides the toggle and shows all-time. **439/439; `tsc --noEmit` clean.**
+
+**Live verification:** `/player/45` (Wayne Hashimoto) + `/player/22` (Jeff Irvin) — toggle defaults This season (green-filled), All-time outlined; tapping All-time swaps `aria-pressed` and re-queries (same data, since all 20 rounds are in the one 2026 season); green pills match the page; no new console errors.
+
+### Today's commits
+
+- (this session) — feat(player-profile): Played With season filter toggle (E5)
+
+### Tomorrow's priority
+
+1. **E6 — admin Played With redesign** (next in the active order); will deprecate the `played_with_matrix` view.
+2. Carry-over: live admin smoke test (D.2 + season UI) once `.env.local` has `ADMIN_PIN`; historical backfill decision for the 5 corrected best-N rounds; retract the superseded "Played With v2" DB-layer disambiguation locked bullet.
+
+### Considered but not changed (confession)
+
+- **"Navy" → green palette:** the visual spec said navy selected / navy border, but the player profile has no navy token and is green-themed. Used `--green-700` (matching the page's `.btn`/`.btn-secondary`) so the toggle sits cohesively next to the green-900 heading. Flagged as a deliberate deviation.
+- **Naming collision:** the user's "TD30 gap" meant the `.gt` mock gap (now fixed). ROADMAP's actual **TD30 is unrelated** (Wayne Hashimoto's tee preference) — left untouched (needs Dad's input).
+- **Accordion header restructure** touched `AccordionSection` (shared by Season Stats / Round History / Played With) — necessary to avoid nested buttons. The two other accordions now also render a separate chevron button; the TD26 ordering test still passes, confirming no behavior change.
+- **One-season data:** This season vs All-time currently show identical data (all 20 rounds are in the 2026 season) — the filter is verified by the unit test's two-season fixture rather than live divergence.
+- **Out of scope (per spec):** E6, bucket thresholds / pill restyle, multi-season dropdown, URL persistence of the toggle, `played_with_matrix` deprecation.
 
 ---
 

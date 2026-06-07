@@ -60,6 +60,7 @@ class MiniFake {
 class MiniBuilder {
   private _op = "select";
   private _eqs: Array<[string, any]> = [];
+  private _gts: Array<[string, any]> = [];
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
   private _order: { column: string; ascending: boolean; referencedTable?: string } | null = null;
@@ -68,6 +69,7 @@ class MiniBuilder {
 
   select(str?: string) { this._selectStr = str ?? "*"; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
+  gt(col: string, val: any) { this._gts.push([col, val]); return this; }
   gte(_c: string, _v: any) { return this; }
   lte(_c: string, _v: any) { return this; }
   order(column: string, opts?: any) {
@@ -125,6 +127,9 @@ class MiniBuilder {
         rows = rows.filter((r) => this.looseEq(r[c], v));
       }
     }
+    // .gt() — closes the prior "`.gt` is not a function" mock gap so the
+    // profile's played-with query runs instead of throwing-and-swallowing.
+    for (const [c, v] of this._gts) rows = rows.filter((r) => (r[c] ?? 0) > v);
 
     // Order outer rows. Matching real PostgREST behavior, `referencedTable`
     // sorts the *nested* array within each row rather than the outer rows

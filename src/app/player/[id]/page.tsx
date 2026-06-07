@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
+import { getActiveSeason, type Season } from "@/lib/seasons";
+
+type SeasonFilter = "this_season" | "all_time";
 
 type Player = {
   id: number;
@@ -48,6 +51,13 @@ export default function PlayerProfilePage() {
   const [playedWithOpen, setPlayedWithOpen] = useState(false);
   const [playedWithError, setPlayedWithError] = useState(false);
   const [showAllNever, setShowAllNever] = useState(false);
+
+  // E5 — season scope for the Played With card. activeSeason loads once on
+  // mount; when null (no active season) the toggle hides and we force all-time.
+  const [activeSeason, setActiveSeason] = useState<Season | null>(null);
+  const [seasonLoaded, setSeasonLoaded] = useState(false);
+  const [seasonFilter, setSeasonFilter] = useState<SeasonFilter>("this_season");
+  const effectiveFilter: SeasonFilter = activeSeason ? seasonFilter : "all_time";
 
   useEffect(() => {
     async function load() {
@@ -108,82 +118,116 @@ export default function PlayerProfilePage() {
         const s = await fetchPlayerStats(Number(playerId));
         setStats(s);
 
-        // Played With — partners + never-played buckets. Live JOIN against
-        // round_players (not the played_with_matrix table, which is keyed by
-        // full_name text strings and has unverified freshness post-H.5 import).
+        // E5: load the active season once. Drives the Played With season
+        // toggle (the actual partner/never-played query lives in its own
+        // effect so toggling re-queries only that data). Non-fatal on
+        // failure — the toggle just hides and we fall back to all-time.
         try {
-          const [{ data: rpRows, error: rpErr }, { data: allPlayers, error: pErr }] =
-            await Promise.all([
-              supabase
-                .from("round_players")
-                .select("round_id, team_number, player_id, rounds!inner ( is_complete )")
-                .eq("rounds.is_complete", true)
-                .gt("team_number", 0),
-              supabase
-                .from("players")
-                .select("id, full_name, display_name, is_active"),
-            ]);
-
-          if (rpErr) throw rpErr;
-          if (pErr) throw pErr;
-          if (!rpRows || !allPlayers) throw new Error("missing data");
-
-          const focalId = Number(playerId);
-          // Disambiguate against the full active roster (display_name ignored,
-          // per the locked naming convention) so partner/never-played names
-          // match every other surface. The focal player's own full name still
-          // shows in the page title above.
-          const activeRoster: PlayerLike[] = (allPlayers as any[]).map((p) => ({
-            id: p.id,
-            full_name: p.full_name,
-            is_active: p.is_active,
-          }));
-          const nameOf = (p: { id: number; full_name: string }) =>
-            p.full_name ? getDisplayName({ id: p.id, full_name: p.full_name }, activeRoster) : `Player ${p.id}`;
-          const nameMap = new Map<number, string>();
-          allPlayers.forEach((p: any) => nameMap.set(p.id, nameOf(p)));
-
-          const focalKeys = new Set<string>();
-          rpRows.forEach((rp: any) => {
-            if (rp.player_id === focalId) {
-              focalKeys.add(`${rp.round_id}:${rp.team_number}`);
-            }
-          });
-
-          const partnerCounts = new Map<number, number>();
-          rpRows.forEach((rp: any) => {
-            if (rp.player_id === focalId) return;
-            if (!focalKeys.has(`${rp.round_id}:${rp.team_number}`)) return;
-            partnerCounts.set(rp.player_id, (partnerCounts.get(rp.player_id) || 0) + 1);
-          });
-
-          const partnerList: Partner[] = Array.from(partnerCounts.entries()).map(
-            ([id, count]) => ({
-              id,
-              display_name: nameMap.get(id) || `Player ${id}`,
-              rounds_together: count,
-            })
-          );
-
-          const partnerIds = new Set(partnerCounts.keys());
-          const neverPlayedList: NeverPlayed[] = allPlayers
-            .filter(
-              (p: any) =>
-                p.is_active && p.id !== focalId && !partnerIds.has(p.id)
-            )
-            .map((p: any) => ({ id: p.id, display_name: nameOf(p) }));
-
-          setPartners(partnerList);
-          setNeverPlayed(neverPlayedList);
+          setActiveSeason(await getActiveSeason());
         } catch (err) {
-          console.error("Failed to load played-with data", err);
-          setPlayedWithError(true);
+          console.error("Failed to load active season", err);
+        } finally {
+          setSeasonLoaded(true);
         }
       }
       setLoading(false);
     }
     load();
   }, [playerId]);
+
+  // E5 — Played With data load, season-scoped. Split from the main load so the
+  // season toggle re-queries only this (not player/rounds/stats). Computation
+  // is identical to the pre-E5 inline block, parameterized by `filter`.
+  const loadPlayedWith = useCallback(
+    async (filter: SeasonFilter, seasonId: number | null) => {
+      // Played With — partners + never-played buckets. Live JOIN against
+      // round_players (not the played_with_matrix table, which is keyed by
+      // full_name text strings and has unverified freshness post-H.5 import).
+      try {
+        let rpQuery = supabase
+          .from("round_players")
+          .select("round_id, team_number, player_id, rounds!inner ( is_complete, season_id )")
+          .eq("rounds.is_complete", true)
+          .gt("team_number", 0);
+        // E5: scope to the active season's rounds when "this season" is picked.
+        if (filter === "this_season" && seasonId != null) {
+          rpQuery = rpQuery.eq("rounds.season_id", seasonId);
+        }
+
+        const [{ data: rpRows, error: rpErr }, { data: allPlayers, error: pErr }] =
+          await Promise.all([
+            rpQuery,
+            supabase
+              .from("players")
+              .select("id, full_name, display_name, is_active"),
+          ]);
+
+        if (rpErr) throw rpErr;
+        if (pErr) throw pErr;
+        if (!rpRows || !allPlayers) throw new Error("missing data");
+
+        const focalId = Number(playerId);
+        // Disambiguate against the full active roster (display_name ignored,
+        // per the locked naming convention) so partner/never-played names
+        // match every other surface. The focal player's own full name still
+        // shows in the page title above.
+        const activeRoster: PlayerLike[] = (allPlayers as any[]).map((p) => ({
+          id: p.id,
+          full_name: p.full_name,
+          is_active: p.is_active,
+        }));
+        const nameOf = (p: { id: number; full_name: string }) =>
+          p.full_name ? getDisplayName({ id: p.id, full_name: p.full_name }, activeRoster) : `Player ${p.id}`;
+        const nameMap = new Map<number, string>();
+        allPlayers.forEach((p: any) => nameMap.set(p.id, nameOf(p)));
+
+        const focalKeys = new Set<string>();
+        rpRows.forEach((rp: any) => {
+          if (rp.player_id === focalId) {
+            focalKeys.add(`${rp.round_id}:${rp.team_number}`);
+          }
+        });
+
+        const partnerCounts = new Map<number, number>();
+        rpRows.forEach((rp: any) => {
+          if (rp.player_id === focalId) return;
+          if (!focalKeys.has(`${rp.round_id}:${rp.team_number}`)) return;
+          partnerCounts.set(rp.player_id, (partnerCounts.get(rp.player_id) || 0) + 1);
+        });
+
+        const partnerList: Partner[] = Array.from(partnerCounts.entries()).map(
+          ([id, count]) => ({
+            id,
+            display_name: nameMap.get(id) || `Player ${id}`,
+            rounds_together: count,
+          })
+        );
+
+        const partnerIds = new Set(partnerCounts.keys());
+        const neverPlayedList: NeverPlayed[] = allPlayers
+          .filter(
+            (p: any) =>
+              p.is_active && p.id !== focalId && !partnerIds.has(p.id)
+          )
+          .map((p: any) => ({ id: p.id, display_name: nameOf(p) }));
+
+        setPartners(partnerList);
+        setNeverPlayed(neverPlayedList);
+        setPlayedWithError(false);
+      } catch (err) {
+        console.error("Failed to load played-with data", err);
+        setPlayedWithError(true);
+      }
+    },
+    [playerId],
+  );
+
+  // Run (and re-run) the Played With query once the active season is known and
+  // whenever the effective season filter changes.
+  useEffect(() => {
+    if (!seasonLoaded) return;
+    void loadPlayedWith(effectiveFilter, activeSeason?.id ?? null);
+  }, [seasonLoaded, effectiveFilter, activeSeason, loadPlayedWith]);
 
   if (loading) {
     return (
@@ -330,6 +374,11 @@ export default function PlayerProfilePage() {
           title="Played With"
           open={playedWithOpen}
           onToggle={() => setPlayedWithOpen((v) => !v)}
+          headerRight={
+            activeSeason ? (
+              <SeasonToggle value={seasonFilter} onChange={setSeasonFilter} />
+            ) : null
+          }
         >
           {playedWithError ? (
             <div style={{
@@ -346,6 +395,7 @@ export default function PlayerProfilePage() {
               neverPlayed={neverPlayed}
               showAllNever={showAllNever}
               onToggleShowAllNever={() => setShowAllNever((v) => !v)}
+              seasonScoped={effectiveFilter === "this_season"}
             />
           )}
         </AccordionSection>
@@ -359,11 +409,16 @@ function AccordionSection({
   open,
   onToggle,
   children,
+  headerRight,
 }: {
   title: string;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  // Optional control rendered to the right of the title (before the chevron),
+  // visible collapsed + expanded. Rendered as a SIBLING of the toggle buttons
+  // (not nested inside them) so its own buttons stay valid HTML.
+  headerRight?: React.ReactNode;
 }) {
   return (
     <div style={{
@@ -374,44 +429,69 @@ function AccordionSection({
       boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
       border: "1px solid rgba(0,0,0,0.04)",
     }}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        style={{
-          width: "100%",
-          background: "transparent",
-          border: "none",
-          padding: "14px 16px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          cursor: "pointer",
-          font: "inherit",
-          textAlign: "left",
-        }}
-      >
-        <span style={{
-          fontFamily: "var(--font-display)",
-          fontSize: "1.05rem",
-          fontWeight: 700,
-          color: "var(--green-900)",
-        }}>
-          {title}
-        </span>
-        <svg
-          width="16" height="16" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" strokeWidth={2}
+      {/* Header is a flex row, NOT a single button — the title and chevron are
+          separate toggle buttons so an interactive headerRight (with its own
+          buttons) can sit between them without nesting buttons. */}
+      <div style={{
+        padding: "14px 16px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "10px",
+      }}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
           style={{
-            color: "var(--text-muted)",
-            transition: "transform 150ms ease",
-            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            flex: 1,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            font: "inherit",
+            textAlign: "left",
           }}
-          aria-hidden
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
+          <span style={{
+            fontFamily: "var(--font-display)",
+            fontSize: "1.05rem",
+            fontWeight: 700,
+            color: "var(--green-900)",
+          }}>
+            {title}
+          </span>
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {headerRight}
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={open ? "Collapse" : "Expand"}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <svg
+              width="16" height="16" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth={2}
+              style={{
+                color: "var(--text-muted)",
+                transition: "transform 150ms ease",
+                transform: open ? "rotate(180deg)" : "rotate(0deg)",
+              }}
+              aria-hidden
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+      </div>
       {open && (
         <div style={{
           padding: "0 16px 16px",
@@ -570,16 +650,66 @@ function partnerSort(a: Partner, b: Partner) {
   );
 }
 
+// E5 — "This season / All-time" pill toggle for the Played With card header.
+// Uses the page's green palette (the profile has no navy token). aria-pressed
+// marks the active option. Stops click propagation so it doesn't toggle the
+// surrounding accordion.
+function SeasonToggle({
+  value,
+  onChange,
+}: {
+  value: SeasonFilter;
+  onChange: (v: SeasonFilter) => void;
+}) {
+  const opt = (key: SeasonFilter, label: string) => {
+    const selected = value === key;
+    return (
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={(e) => {
+          e.stopPropagation();
+          onChange(key);
+        }}
+        style={{
+          padding: "4px 10px",
+          borderRadius: "999px",
+          fontSize: "0.72rem",
+          fontWeight: 700,
+          cursor: "pointer",
+          fontFamily: "inherit",
+          border: "1px solid var(--green-700)",
+          background: selected ? "var(--green-700)" : "transparent",
+          color: selected ? "#fff" : "var(--green-700)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div style={{ display: "flex", gap: "4px" }}>
+      {opt("this_season", "This season")}
+      {opt("all_time", "All-time")}
+    </div>
+  );
+}
+
 function PlayedWithPanel({
   partners,
   neverPlayed,
   showAllNever,
   onToggleShowAllNever,
+  seasonScoped,
 }: {
   partners: Partner[];
   neverPlayed: NeverPlayed[];
   showAllNever: boolean;
   onToggleShowAllNever: () => void;
+  // When true, the view is scoped to the active season — empty-partner copy
+  // reads "this season" rather than the all-time "Not yet" per bucket.
+  seasonScoped: boolean;
 }) {
   const sorted = [...partners].sort(partnerSort);
   const mostFrequent = sorted.filter((p) => p.rounds_together >= 6);
@@ -599,39 +729,51 @@ function PlayedWithPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <BucketSection title="Most frequent · 6+ rounds">
-        {mostFrequent.length === 0 ? (
-          <NotYet />
-        ) : (
-          <FrequentBars partners={mostFrequent} />
-        )}
-      </BucketSection>
+      {seasonScoped && partners.length === 0 ? (
+        <div style={{
+          fontStyle: "italic",
+          color: "var(--text-muted)",
+          fontSize: "0.85rem",
+        }}>
+          No partners this season yet
+        </div>
+      ) : (
+        <>
+          <BucketSection title="Most frequent · 6+ rounds">
+            {mostFrequent.length === 0 ? (
+              <NotYet />
+            ) : (
+              <FrequentBars partners={mostFrequent} />
+            )}
+          </BucketSection>
 
-      <BucketSection title="Some history · 3–5 rounds">
-        {someHistory.length === 0 ? (
-          <NotYet />
-        ) : (
-          <PillRow
-            partners={someHistory}
-            bg="var(--green-100)"
-            color="var(--green-800)"
-            showCount
-          />
-        )}
-      </BucketSection>
+          <BucketSection title="Some history · 3–5 rounds">
+            {someHistory.length === 0 ? (
+              <NotYet />
+            ) : (
+              <PillRow
+                partners={someHistory}
+                bg="var(--green-100)"
+                color="var(--green-800)"
+                showCount
+              />
+            )}
+          </BucketSection>
 
-      <BucketSection title="Just once or twice · 1–2 rounds">
-        {onceOrTwice.length === 0 ? (
-          <NotYet />
-        ) : (
-          <PillRow
-            partners={onceOrTwice}
-            bg="var(--cream-dark)"
-            color="var(--text-secondary)"
-            showCount
-          />
-        )}
-      </BucketSection>
+          <BucketSection title="Just once or twice · 1–2 rounds">
+            {onceOrTwice.length === 0 ? (
+              <NotYet />
+            ) : (
+              <PillRow
+                partners={onceOrTwice}
+                bg="var(--cream-dark)"
+                color="var(--text-secondary)"
+                showCount
+              />
+            )}
+          </BucketSection>
+        </>
+      )}
 
       <BucketSection title="Never played together · 0 rounds">
         {neverSorted.length === 0 ? (
