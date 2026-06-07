@@ -17,12 +17,6 @@ export type Player = {
   preferred_tee_id: number | null;
 };
 
-export type MatrixRow = {
-  player_a: string;
-  player_b: string;
-  times_played_together: number;
-};
-
 export type LeagueSettings = Record<string, string>;
 
 const TABS = ["Round Setup", "Players", "Played-with", "History", "Settings"] as const;
@@ -39,19 +33,16 @@ const C = {
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Round Setup");
   const [players, setPlayers] = useState<Player[]>([]);
-  const [matrix, setMatrix] = useState<MatrixRow[]>([]);
   const [settings, setSettings] = useState<LeagueSettings>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      const [{ data: p }, { data: m }, { data: s }] = await Promise.all([
+      const [{ data: p }, { data: s }] = await Promise.all([
         supabase.from("players").select("*").order("full_name"),
-        supabase.from("played_with_matrix").select("*"),
         supabase.from("league_settings").select("key, value"),
       ]);
       if (p) setPlayers(p);
-      if (m) setMatrix(m);
 
       const map: LeagueSettings = {};
       if (s) {
@@ -150,14 +141,16 @@ export default function AdminPage() {
         {activeTab === "Round Setup" && (
           <RoundSetup
             allPlayers={players.filter(p => p.is_active)}
-            matrix={matrix}
           />
         )}
         {activeTab === "Players" && (
           <Players players={players} onRefresh={refreshPlayers} />
         )}
         {activeTab === "Played-with" && (
-          <PlayedWith players={players.filter(p => p.is_active)} matrix={matrix} />
+          <PlayedWith
+            players={players.filter(p => p.is_active)}
+            onGoToRoundSetup={() => setActiveTab("Round Setup")}
+          />
         )}
         {activeTab === "History" && (
           <History />

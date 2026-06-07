@@ -267,7 +267,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 ## Phase E — Played-With Redesign
 
-*Independent of B/C/D. Can run in parallel. Phase E v2 (E5 filter toggle + E6 admin redesign) was blocked on H3.x season management — **unblocked 2026-06-06** (H3 shipped).*
+*Independent of B/C/D. Can run in parallel. Phase E v2 (E5 filter toggle + E6 admin redesign) shipped 2026-06-06. The legacy `played_with_matrix` view was dropped with E6 — all Played With surfaces now compute from `round_players` via `src/lib/playedWith/compute.ts`.*
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
@@ -276,7 +276,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 | E3 | Tap any player/cell → detail | 📋 | Shows exact count and last round together. |
 | E4 | Last-played-together computed field | 📋 | New lookup against existing scores tables. |
 | E5 | Season scope filter (Played With v2) | ✅ (2026-06-06) | "This season / All-time" pill toggle on the player-profile Played With card (default This season). When This season, the live JOIN adds `.eq("rounds.season_id", activeSeason.id)`; All-time drops it. Toggle hidden + forced all-time when no active season exists. Decisions locked 2026-05-24 — see Decisions Locked > Played With v2. |
-| E6 | Admin Played-With redesign | 📋 — unblocked (H3 shipped 2026-06-06) | Replaces the current `admin/tabs/PlayedWith.tsx` heatmap. New surface: player picker, "present players today" filter, pair lookup. Will deprecate `played_with_matrix` view in favor of the same `round_players` live-JOIN approach used in E1. |
+| E6 | Admin Played-With redesign | ✅ (2026-06-06) | Replaced the `admin/tabs/PlayedWith.tsx` heatmap with three sections: **Player View** (searchable picker → egocentric four-bucket panel), **Today's Group** (per-player cards for today's round, top partners + never-paired-this-season), **Pair Lookup** (two pickers → count + last-played + round list). Each has an independent season-scope toggle. Extracted shared `src/lib/playedWith/compute.ts`, `PlayedWithPanel`, `SeasonToggle` (now used by the player profile too) + a new `PlayerCombobox`. **Legacy `played_with_matrix` view DROPPED** (migration 015) in favor of the `round_players` live-JOIN. |
 
 **Phase E v1 exit:** ✅ shipped 2026-05-24 — player profile gets the egocentric Played With section.
 

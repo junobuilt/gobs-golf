@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
-import { Player, MatrixRow } from "../page";
+import { Player } from "../page";
 import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
@@ -18,7 +18,6 @@ import SeasonStartModal from "@/components/season/SeasonStartModal";
 
 interface Props {
   allPlayers: Player[];
-  matrix: MatrixRow[];
 }
 
 const C = {

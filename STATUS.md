@@ -2,8 +2,60 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (E5 — Played With season filter)
-**Session purpose:** Added a "This season / All-time" pill toggle to the player-profile Played With card (default This season), now that H3 shipped seasons. Render-time scope toggle: "This season" adds `.eq("rounds.season_id", activeSeason.id)` to the live JOIN; "All-time" drops it; toggle hidden when no active season. Caught + fixed a nested-`<button>` hydration bug in the accordion header during live verify. Also closed the `.gt` mock gap in `player-profile-ordering.test.tsx`. Suite **439/439**, `tsc --noEmit` clean. Live-verified on real profiles.
+**Last updated:** 2026-06-06 (E6 — admin Played-With redesign)
+**Session purpose:** Replaced the legacy `played_with_matrix` heatmap admin tab with three stacked sections (Player View / Today's Group / Pair Lookup), each with an independent season-scope toggle. Extracted the Played With bucket compute (`src/lib/playedWith/compute.ts`), the egocentric panel (`PlayedWithPanel`), and the season toggle (`SeasonToggle`) into shared modules used by both the admin tab and the player profile. Built a small `PlayerCombobox`. Dropped the `played_with_matrix` view (migration 015, applied via MCP). Suite **448/448**, `tsc --noEmit` clean. Player profile live-verified; admin tab covered by tests (PIN gate not passable locally).
+
+---
+
+## 2026-06-06 (E6 — admin Played-With redesign)
+
+### Where we left off
+
+**The admin Played-With tab is now three question-driven sections, not a heatmap.** Closes E6 (was blocked on H3, unblocked 2026-06-06). The legacy `played_with_matrix` full_name-keyed view is gone — every Played With surface now computes from `round_players` via one shared lib.
+
+- **Section 1 — Player View:** `PlayerCombobox` (searchable single-select, active players, alphabetized by `getDisplayName`) → renders the egocentric four-bucket panel inline. Empty state "Pick a player to see their partners". Own season toggle.
+- **Section 2 — Today's Group:** per-player cards (Recommendation A) for everyone in today's round (by `played_on === todayLocal()`, regardless of team). Each card: top-3 partners + first-5 never-paired (this season). Empty state "No round set up for today" + a button that jumps to the Round Setup tab (`onGoToRoundSetup`). Fetches the season's rows once, computes buckets per player in memory. Own season toggle.
+- **Section 3 — Pair Lookup:** two comboboxes (A excludes B and vice-versa) → "N times" headline + "Last played together: {date}" + collapsible "Show all rounds" (date · Team N · format). Zero → "never played together". Own season toggle.
+
+**Step 2–3 extractions (approved — shared lib over copy):**
+- `src/lib/playedWith/compute.ts` — `fetchPlayedWithRows(seasonId)`, `computeBuckets(focalId, rpRows, allPlayers)`, `loadPlayedWith(focalId, seasonId)`, `fetchPairRounds(a, b, seasonId)` + `Partner`/`NeverPlayed`/`PlayedWithBuckets`/`PairRound` types. Byte-faithful to the shipped E5 profile compute; the profile's `loadPlayedWith` is now a thin wrapper (verified by its 4 existing tests, still green).
+- `src/components/playedWith/PlayedWithPanel.tsx` — the egocentric panel + helpers moved out of the profile. `showAllNever` **internalized** as component state (dropped the two lifted props); added optional `focalPlayerName` for third-person "{name} has played with everyone" copy (profile keeps second-person "You've…").
+- `src/components/season/SeasonToggle.tsx` — the pill toggle, with an `accent` prop (`green` default = profile unchanged; `navy` for admin) and optional self-hide via `hideWhenNoActiveSeason`/`activeSeason`. `SeasonFilter` type now lives here.
+- `src/components/playedWith/PlayerCombobox.tsx` — NEW small searchable single-select (none existed; FormatPicker is a card list, PlayerPickerSheet is multi-select).
+
+**Step 5 — view dropped:** verified via MCP that `played_with_matrix` was a VIEW with **no DB-side dependents**, and the only app consumer (`admin/page.tsx`) was removed this session. Migration `015_drop_played_with_matrix_view.sql` applied to prod via MCP; re-queried `still_exists = 0`.
+
+**Files changed:**
+- NEW: `src/lib/playedWith/compute.ts`, `src/components/playedWith/PlayedWithPanel.tsx`, `src/components/playedWith/PlayerCombobox.tsx`, `src/components/season/SeasonToggle.tsx`, `supabase/migrations/015_drop_played_with_matrix_view.sql`.
+- REPLACED: `src/app/admin/tabs/PlayedWith.tsx` (three-section layout; old heatmap + `played_with_matrix` consumption deleted).
+- `src/app/admin/page.tsx` — dropped the `played_with_matrix` fetch + `MatrixRow` type; stopped passing `matrix` to RoundSetup/PlayedWith; wired `onGoToRoundSetup`.
+- `src/app/admin/tabs/RoundSetup.tsx` — removed the dead `matrix`/`MatrixRow` prop (was never used).
+- `src/app/player/[id]/page.tsx` — consumes the three extracted modules; inline panel/toggle/compute removed; behavior unchanged.
+
+**Tests:** NEW `tests/components/PlayedWithPanel.test.tsx` (4 — bucket split, focalPlayerName copy, season-scoped empty, show-all cap) + `tests/components/admin-played-with.test.tsx` (5 — Section 1 pick→buckets; Section 2 with/without a round today [date-mocked per the locked rule]; Section 3 zero pairs, multi-pair + show-all). **439 → 448/448; `tsc --noEmit` clean.**
+
+**Live verification:** `/player/45` — extracted `PlayedWithPanel` renders all four buckets + the internalized "Show all (29)" toggle + the shared `SeasonToggle`; no console errors. `/admin` still redirects to the PIN login (route compiles, no 500). Admin tab itself not click-tested live (no local `ADMIN_PIN`) — covered by the 9 new tests.
+
+### Today's commits
+
+- (this session) — feat(played-with): E6 admin redesign — three sections + shared extractions; drop played_with_matrix view
+
+### DB changes (today, not in git history)
+
+- **Migration 015 applied** to prod via MCP: `DROP VIEW played_with_matrix`. Verified gone (`still_exists = 0`).
+
+### Tomorrow's priority
+
+1. **E2 / E3 / E4** — improved sortable grid (desktop secondary), tap-cell detail, stored last-played-together field — the remaining Phase E items.
+2. Carry-over: live admin smoke test (D.2 + season UI + this E6 tab) once `.env.local` has `ADMIN_PIN`; historical backfill decision for the 5 corrected best-N rounds. (The stale "Played With v2" DB-layer disambiguation locked bullet is being retracted in admin cleanup per this session's note — no longer a carry-over.)
+
+### Considered but not changed (confession)
+
+- **Render-time disambiguation vs. locked decision #575:** the shared compute disambiguates names at render via `getDisplayName` (matching the shipped E5 profile), which contradicts the literal "#575: handle at the DB layer" bullet. Mirrored the shipped behavior for cross-surface consistency; #575 is being retracted as stale in admin cleanup (per the user's instruction this session).
+- **`SeasonToggle` accent:** added a `navy` accent for the admin tab; the profile keeps `green` (default) so its render is byte-identical. No other profile change.
+- **`showAllNever` internalized** into `PlayedWithPanel` (was lifted to the profile page). User-visible behavior identical; the profile's `showAllNever` state was removed.
+- **Admin tab not live click-tested** — no local `ADMIN_PIN`; same gap as prior admin sessions. Covered by the 9 new component tests against a realistic fake (live-JOIN queries actually execute).
+- **Out of scope (per spec):** pair-recommendation engine (I6); E2/E3; E4 stored last-played column (derived inline for now); any visual change to the profile beyond consuming the extracted components; the old desktop heatmap / mobile-search code (deleted, not ported).
 
 ---
 
