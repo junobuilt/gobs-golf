@@ -2,8 +2,46 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (display-name disambiguation — full rollout)
-**Session purpose:** Rolled the `getDisplayName` helper (shipped earlier today for the Played With heatmap) out to **every** player-name rendering surface so short names ("Wayne H" / "Wayne V", "Dan G" / "Dan S") are identical everywhere. Render-time only — no DB / `players.display_name` change, helper itself unchanged. Disambiguation universe is the **full active roster** on every surface (not just the current round), so a player's short name never shifts between screens. Leaderboard/summary handled in the `results.ts` data layer (approved Option A); all other surfaces apply the helper inline. Suite **417/417**, `tsc --noEmit` clean. Live-verified season leaderboard + player profile against the two-Waynes scenario.
+**Last updated:** 2026-06-06 (scorecard 🎲 blind-draw pseudo-rows)
+**Session purpose:** Read-only scorecard now renders a 🎲 "Blind draw: {name}" pseudo-row for each round-start fill on the displayed team, so a finalized short team's moved total has a visible explanation (matching the summary). Pure render addition + one minimal data touch (the drawn player's name wasn't in the existing `blindDrawInputs`). No engine change. Closes the "consistent but not self-summable" flag from 30443bc / 7b6c043. Suite **422/422**, `tsc --noEmit` clean. Live-verified round 101 Team 1 (🎲 Ward C, headline −17 unchanged) + round 161 Team 4 (🎲 Ron L, −11).
+
+---
+
+## 2026-06-06 (scorecard 🎲 blind-draw pseudo-rows)
+
+### Where we left off
+
+**The read-only scorecard now shows WHY a short team's total moved.** After the best-N blind-draw fixes (30443bc engine + 7b6c043 scorecard headline), the scorecard headline correctly included the fill but the drawn player had no row — viewers saw a moved number with no explanation. The summary already rendered a 🎲 pseudo-row; this brings the scorecard to parity. **Pure render addition; no engine change.**
+
+**Investigation (plan-first, AskUserQuestion — user skipped, proceeded on the two Recommended options):**
+- The summary's pseudo-row is `BlindDrawPseudoPlayerSection` ([RoundResultsView.tsx:529](src/components/round/RoundResultsView.tsx)) — local/non-exported, summary-styled, depends on the results.ts `BlindDrawFill` shape + `fillScoreCopy`/`rangeCopy`. Not directly reusable; a scorecard-native card matching the roster-row layout is the right move.
+- The read-only scorecard is the **same render path** as live entry (`+/−` gated on `!isLocked`); rows slot in after the `roundPlayers.map` and before the nav buttons.
+- **Decision 1 (scope):** dropout fills (`holeRangeStart > 1`) are **already shown** on the scorecard — merged into the dropped player's row via `fillsByRpId`, mirroring the summary. So new pseudo-rows are for **round-start fills only** (`holeRangeStart === 1`); rendering dropout fills too would duplicate. All 5 affected prod rounds are round-start; zero dropout fills exist.
+- **Decision 2 (data gap):** the drawn player's **name is not in `blindDrawInputs`** (it stores `round_players.id`, and drawn players are on other teams → not in `roundPlayers`). Minimal fix: added `players(full_name)` to the **existing** `drawnRps` join inside `refreshBlindDrawInputs` (no new query) + a new `blindDrawFillRows` render state. Name disambiguated **at render time** via `getDisplayName(..., allActivePlayers)` (fresh at render; carrying `fullName` keeps it correct even for an inactive drawn player).
+
+**Files touched:**
+- `src/app/round/[id]/scorecard/page.tsx` — new module-level `BlindDrawFillRowData` type + `BlindDrawFillRow` component (muted dashed-border card, 🎲 + "Blind draw: {name}", current-hole big number, expandable `PlayerHoleGrid` with out-of-range holes blank); new `blindDrawFillRows` state; `refreshBlindDrawInputs` enriched (name join + render rows, cleared on the no-rows path); render block after the roster map filtered to `holeRangeStart === 1`.
+- `tests/components/scorecard-blinddraw-row.test.tsx` — NEW, 5 tests (FakeSupabase harness): round-start fill → one 🎲 row + disambiguated "Ward C" + expanded 18-hole grid (F9/B9 = 27); pre-finalize → none; finalized no-draws → none; dropout fill (10–18) → no duplicate pseudo-row; two round-start fills → two rows. **Negative-control verified** (disabling the render fails the 2 positive tests, the 3 absence guards still pass).
+
+**Live verification (`next-dev`, prod data):**
+- `/round/101/scorecard?team=1` — 🎲 "Blind draw: Ward C" row (Kevin I + Wayne H roster), expanded grid shows Ward's scores, **headline Team Net −17 unchanged**.
+- `/round/161/scorecard?team=4` — 🎲 "Blind draw: Ron L", headline −11. No console errors.
+
+### Today's commits
+
+- (this session) — feat(scorecard): render 🎲 blind-draw fill rows on the read-only scorecard
+
+### Tomorrow's priority
+
+1. **H3.x — `seasons` table + migration** — top remaining feature priority.
+2. Carry-over: live admin smoke test (D.2); historical backfill decision for the 5 corrected best-N rounds; retract the superseded "Played With v2" DB-layer disambiguation locked bullet (flagged in the prior session).
+
+### Considered but not changed (confession)
+
+- **Dropout-fill pseudo-rows** — deliberately excluded (Decision 1): dropout fills are already shown via the existing `fillsByRpId` merge into the dropped player's row. Adding pseudo-rows for them would duplicate. No dropout fills exist in current data; if uniform pseudo-rows are ever wanted, the merge would need removing in the same change.
+- **Per-hole fill-contribution highlight** — not implemented (out of scope per the issue): `PlayerHoleGrid` has no per-cell "contributing" highlight and roster rows don't either (contribution is shown at card level via Ball 1/Ball 2). The 🎲 grid renders the drawn scores like any roster grid.
+- **The one data touch** — `players(full_name)` added to an existing join + a render-state array; unavoidable since the name isn't otherwise reachable from `blindDrawInputs`. No new query, no engine change.
+- **Comment-placement glitch** at `scorecard/page.tsx` ~line 77 (the Phase D.2 chip comment now sits above `disambiguatedName` rather than `isHistoricalAdd`, from the prior session's edit) — left as-is to avoid unrelated churn.
 
 ---
 

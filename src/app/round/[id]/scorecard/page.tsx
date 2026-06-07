@@ -93,6 +93,126 @@ function disambiguatedName(
   return getDisplayName({ id: playerId, full_name: fn }, roster);
 }
 
+// D.1 (display): one blind-draw fill, in render-ready shape for the read-only
+// scorecard's 🎲 pseudo-row. `scores` is 18-length with out-of-range holes set
+// to null (rendered blank, not zero / not the dropped player's score).
+type BlindDrawFillRowData = {
+  playerId: number;
+  fullName: string;
+  scores: (number | null)[];
+  par: number[];
+  holeRangeStart: number;
+  holeRangeEnd: number;
+};
+
+// D.1 (display): a 🎲 pseudo-row on the read-only scorecard, mirroring a roster
+// player card (current-hole big number + expandable PlayerHoleGrid) with muted
+// styling and a "Blind draw:" label so the viewer sees why the team total moved.
+// Renders only post-finalize (the source array is empty otherwise).
+function BlindDrawFillRow({
+  name,
+  scores,
+  par,
+  holeRangeStart,
+  holeRangeEnd,
+  currentHole,
+}: {
+  name: string;
+  scores: (number | null)[];
+  par: number[];
+  holeRangeStart: number;
+  holeRangeEnd: number;
+  currentHole: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isFull = holeRangeStart === 1 && holeRangeEnd === 18;
+  const inRange = currentHole >= holeRangeStart && currentHole <= holeRangeEnd;
+  const bigScore = inRange ? scores[currentHole - 1] : null;
+  const cardRadius = expanded ? "16px 16px 0 0" : "16px";
+
+  return (
+    <React.Fragment>
+      <div
+        data-testid="blind-draw-fill-row"
+        style={{
+          background: "#f8fafc",
+          padding: "12px 16px",
+          borderRadius: cardRadius,
+          border: "1px dashed #cbd5e1",
+          borderBottom: expanded ? "1px solid #f1f5f9" : "1px dashed #cbd5e1",
+          marginBottom: expanded ? "0" : "10px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setExpanded(v => !v)}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "1rem" }}>🎲</span>
+            <span style={{ fontWeight: 800, fontSize: "0.95rem", color: "#475569" }}>
+              Blind draw: {name}
+            </span>
+            {!isFull && (
+              <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "#6b7280", fontStyle: "italic" }}>
+                (holes {holeRangeStart}–{holeRangeEnd})
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", marginTop: "2px" }}>
+            Added to this team&apos;s total
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: "35px" }}>
+            <div style={{
+              fontSize: "1.8rem", fontWeight: 900, textAlign: "center",
+              color: bigScore == null ? "#cbd5e1" : "#475569",
+            }}>
+              {bigScore ?? "—"}
+            </div>
+          </div>
+          <button
+            aria-label={expanded ? "Collapse hole-by-hole" : "Expand hole-by-hole"}
+            aria-expanded={expanded}
+            onClick={() => setExpanded(v => !v)}
+            style={{
+              width: "32px", height: "44px", borderRadius: "8px",
+              border: "none", background: "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: "#64748b", padding: 0,
+            }}
+          >
+            <svg
+              width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{
+          background: "white",
+          border: "1px dashed #cbd5e1",
+          borderTop: "none",
+          borderRadius: "0 0 16px 16px",
+          padding: "4px 14px 10px",
+          marginBottom: "10px",
+        }}>
+          <PlayerHoleGrid
+            scores={scores}
+            par={par}
+            currentHoleIndex={currentHole - 1}
+            showRunningTotal={false}
+          />
+        </div>
+      )}
+    </React.Fragment>
+  );
+}
+
 function isHistoricalAdd(createdAt: string | null, playedOn: string | null): boolean {
   if (!createdAt || !playedOn) return false;
   const createdMs = new Date(createdAt).getTime();
@@ -160,6 +280,12 @@ export default function ScorecardPage() {
   // Empty pre-finalize (blind_draws has no rows yet) → no behavior change.
   // Loaded by refreshBlindDrawInputs(); consumed by buildRoundInput().
   const [blindDrawInputs, setBlindDrawInputs] = useState<BlindDrawInput[]>([]);
+
+  // D.1 (display): render-ready blind-draw fill rows for the read-only
+  // scorecard's 🎲 pseudo-rows. Built alongside blindDrawInputs in
+  // refreshBlindDrawInputs (same fetch), so it's empty pre-finalize. The name
+  // is disambiguated at render time via getDisplayName + allActivePlayers.
+  const [blindDrawFillRows, setBlindDrawFillRows] = useState<BlindDrawFillRowData[]>([]);
 
   // Inline handicap entry for players without one
   const [tempHandicaps, setTempHandicaps] = useState<Record<number, string>>({});
@@ -713,6 +839,7 @@ export default function ScorecardPage() {
     const { data: bdRows } = await bdQuery.order("id");
     if (!bdRows || bdRows.length === 0) {
       setBlindDrawInputs([]);
+      setBlindDrawFillRows([]);
       return;
     }
 
@@ -732,15 +859,17 @@ export default function ScorecardPage() {
     const drawnPlayerIds = [...new Set((bdRows as any[]).map(b => b.drawn_player_id as number))];
     const { data: drawnRps } = await supabase
       .from("round_players")
-      .select("id, player_id, tee_id, course_handicap")
+      .select("id, player_id, tee_id, course_handicap, players ( full_name )")
       .eq("round_id", roundId)
       .in("player_id", drawnPlayerIds);
-    const drawnByPlayer: Record<number, { id: number; tee_id: number; ch: number | null }> = {};
+    const drawnByPlayer: Record<number, { id: number; tee_id: number; ch: number | null; fullName: string }> = {};
     (drawnRps ?? []).forEach((r: any) => {
+      const playerRow = Array.isArray(r.players) ? r.players[0] : r.players;
       drawnByPlayer[r.player_id] = {
         id: r.id,
         tee_id: r.tee_id,
         ch: r.course_handicap != null ? Number(r.course_handicap) : null,
+        fullName: playerRow?.full_name ?? "",
       };
     });
 
@@ -792,6 +921,36 @@ export default function ScorecardPage() {
       };
     });
     setBlindDrawInputs(inputs);
+
+    // Render-ready rows for the read-only 🎲 pseudo-rows. Scores/par are built
+    // to 18-length from the same fetched data; holes outside [start,end] are
+    // null so they render blank (not zero). The name is disambiguated at
+    // render time against allActivePlayers.
+    const fillRows: BlindDrawFillRowData[] = (bdRows as any[]).map(b => {
+      const drawn = drawnByPlayer[b.drawn_player_id as number];
+      const drawnRpId = drawn?.id;
+      const scoresMap = drawnRpId != null ? (drawnScoresByRp[drawnRpId] ?? {}) : {};
+      const teeHoles = drawn ? (drawnHolesByTee[drawn.tee_id] ?? []) : [];
+      const start = b.hole_range_start as number;
+      const end = b.hole_range_end as number;
+      const scores18: (number | null)[] = Array.from({ length: 18 }, (_, i) => {
+        const hole = i + 1;
+        if (hole < start || hole > end) return null;
+        return scoresMap[hole] ?? null;
+      });
+      const par18: number[] = Array.from({ length: 18 }, (_, i) =>
+        teeHoles.find(h => h.holeNumber === i + 1)?.par ?? 4,
+      );
+      return {
+        playerId: b.drawn_player_id as number,
+        fullName: drawn?.fullName ?? "",
+        scores: scores18,
+        par: par18,
+        holeRangeStart: start,
+        holeRangeEnd: end,
+      };
+    });
+    setBlindDrawFillRows(fillRows);
   };
 
   // D.1 hotfix: re-read `format_config.submitted_teams` from the DB so this
@@ -1813,6 +1972,26 @@ export default function ScorecardPage() {
           </React.Fragment>
         );
       })}
+
+      {/* D.1 (display): 🎲 blind-draw pseudo-rows. One per round-start fill on
+          the displayed team (holeRangeStart === 1) — these have no roster slot,
+          so without this the read-only scorecard shows a moved total with no
+          visible explanation. Dropout fills (holeRangeStart > 1) are already
+          shown merged into the dropped player's row above (fillsByRpId), so
+          they're excluded here to avoid a duplicate. Empty pre-finalize. */}
+      {blindDrawFillRows
+        .filter(r => r.holeRangeStart === 1)
+        .map((r, i) => (
+          <BlindDrawFillRow
+            key={`bd-fill-${r.playerId}-${i}`}
+            name={r.fullName ? disambiguatedName(r.playerId, r.fullName, allActivePlayers) : "Drawn player"}
+            scores={r.scores}
+            par={r.par}
+            holeRangeStart={r.holeRangeStart}
+            holeRangeEnd={r.holeRangeEnd}
+            currentHole={currentHole}
+          />
+        ))}
 
       {/* Navigation buttons. D.1 hotfix: hole-18 no longer shows a
           "Finish Round" button — finalize happens through the Submit
