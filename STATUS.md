@@ -2,8 +2,56 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (E6 — admin Played-With redesign)
-**Session purpose:** Replaced the legacy `played_with_matrix` heatmap admin tab with three stacked sections (Player View / Today's Group / Pair Lookup), each with an independent season-scope toggle. Extracted the Played With bucket compute (`src/lib/playedWith/compute.ts`), the egocentric panel (`PlayedWithPanel`), and the season toggle (`SeasonToggle`) into shared modules used by both the admin tab and the player profile. Built a small `PlayerCombobox`. Dropped the `played_with_matrix` view (migration 015, applied via MCP). Suite **448/448**, `tsc --noEmit` clean. Player profile live-verified; admin tab covered by tests (PIN gate not passable locally).
+**Last updated:** 2026-06-07 (G2 — payout engine logic module)
+**Session purpose:** Built the GOBS payout engine as a pure, persistence-free logic module (`src/lib/payoutEngine/`) implementing `docs/PAYOUT_ENGINE.md` v3 (cascade balancing). Two modes: abstract what-if (`places_paid`/`per_player`/`bfb_sweep`) and tie-resolved (`team_payouts[]`). Engine validated against the read-only `golden.csv` regression contract (all 73 rows exact) + the four §10 worked examples + a ~54k-input property fuzz. Tie resolver covers 2/3/4-way ties, cutoff straddle, multi-position ties, cap/floor clamps. **Suite 448 → 550/550; `tsc --noEmit` clean.** Coverage: engine.ts 98.8% / tieResolver.ts 100% lines (>95% bar). No DB, no UI — Sessions 2–4. Corrected two arithmetic errors in `PAYOUT_ENGINE.md` §10 (Examples A & B skipped the leftover-spread step). Added `@vitest/coverage-v8` devDep.
+
+---
+
+## 2026-06-07 (G2 — payout engine logic module)
+
+### Where we left off
+
+**The payout engine exists as a pure logic module — no persistence, no UI (those are Sessions 2–4).** Implements `docs/PAYOUT_ENGINE.md` v3 cascade balancing. `calculatePayouts(input)` is the single public entry point with two modes:
+- **Abstract (no `team_finishes`)** — returns `places_paid`, `per_player[]`, `total_paid`, `bfb_sweep`; `team_payouts` empty. Drives the future what-if calculator UI.
+- **Tie-resolved (with `team_finishes`)** — sorts teams (asc best_n / desc stableford), groups ties, combines paid pots, splits evenly per player (floor), populates `team_payouts[]`, recomputes the sweep.
+
+**Files created:**
+- `src/lib/payoutEngine/constants.ts` — CAP 25 / FLOOR 5 / GAP 3→2→1 / PROPORTIONS / `targetPlacesForTeams`.
+- `src/lib/payoutEngine/types.ts` — `PayoutInput` / `TeamFinish` / `PayoutResult` / `TeamPayout`. No `any`. **`places_paid` widened to `0|1|2|3|4`** (was `1|2|3|4`) so the §9 no-payout case is expressible — see confession.
+- `src/lib/payoutEngine/engine.ts` — abstract calculator: §7 places-loop, §8 `build(places,gap)` (proportions → cap+redistribute → gap → cascade w/ 200-iter guard → validate), §7 Step 3 two-pass leftover spread (gap=3 then gap=1). Integer arithmetic throughout.
+- `src/lib/payoutEngine/tieResolver.ts` — `resolveWithTies` + exported pure helper `splitTiedPot`.
+- `src/lib/payoutEngine/index.ts` — `calculatePayouts` dispatch + re-exports.
+
+**Tests created (101, all green):**
+- `golden.test.ts` — parses read-only `golden.csv` at runtime, `it.each` over all 73 rows; exact `per_player` / `places_paid` / `bfb_sweep` + `total_paid === balance − sweep` cross-check.
+- `engine.test.ts` — the four §10 worked examples (as corrected) + structural invariants + a ~54k-input property fuzz (cap/floor/order/conservation).
+- `edge-cases.test.ts` — balance 0, <2 teams, single-team, 2-team capped, max compression, non-divisible remainder, 100-player <10ms perf.
+- `tieResolver.test.ts` — 2/3/4-way top ties, cutoff straddle (5th doesn't back in), multi-position ties, stableford sort, no-tie mirror, `splitTiedPot` cap/floor/remainder clamps. Negative controls throughout.
+
+**Docs corrected:** `PAYOUT_ENGINE.md` §10 Examples A (`[14,8,5]`→`[15,8,5]`, sweep 2→0) and B (`[25,22,16,10]`→`[25,22,19,11]`, sweep 8→0) — both originally skipped the Rule 6 leftover-spread step and disagreed with `golden.csv`. Dated correction notes added; golden.csv declared source of truth.
+
+### Today's commits
+
+- (this session) — feat(payout): G2 payout engine logic module — cascade balancing + tie resolution (pure, tested)
+
+### DB changes (today)
+
+- **None.** Out of scope this session (Sessions 2–4).
+
+### Tomorrow's priority
+
+1. **G2 Session 2** — persistence layer (`round_payouts` records) + integration with `finalize_round_with_blind_draws`. Engine is ready to call.
+2. Carry-over: live admin smoke test once `.env.local` has `ADMIN_PIN`; historical backfill decision for the 5 corrected best-N rounds.
+
+### Considered but not changed (confession)
+
+- **`places_paid` type widened to `0|1|2|3|4`** (spec said `1|2|3|4`). The spec body (§9) mandates an empty "no payout" result for <2 teams, which the literal union can't express honestly. Widened one field rather than fake a `places_paid:1` with an empty array. Minimal, documented deviation.
+- **`BETTING_RULES.md` does not exist** in the repo (a required pre-read). Searched root + all dirs — absent. The money context it would carry is self-contained in `PAYOUT_ENGINE.md` §2 (buy-in → HIO/BFB deductions → balance). Proceeded on the spec doc; flagging rather than inventing the file.
+- **`splitTiedPot` cap-clamp is unreachable via the full public API** — the engine pre-caps 1st place, so the average of any subset of paid pots is ≤ CAP. The branch is retained per spec and unit-tested directly (not through `calculatePayouts`). Documented in code + test.
+- **Below-floor tie splits paid as-is** (v1 limitation, per spec) — `splitTiedPot` flags `belowFloor` but does not redistribute; documented, not "fixed."
+- **`@vitest/coverage-v8` devDependency added** — not in the stated file list, but AC#7 requires a measured coverage number and it's the standard vitest companion. Flagged as an addition.
+- **No-payout sweep semantics:** when <2 teams, the whole balance sweeps to BFB (`bfb_sweep = balance`); when balance is 0, sweep is 0. The spec says "empty result" without specifying the sweep destination — chose BFB as the only fund the money can go to.
+- **Out of scope (per spec):** all DB/migration work, UI/Storybook, `finalize_round_with_blind_draws` integration, admin overrides. Sessions 2–4.
 
 ---
 

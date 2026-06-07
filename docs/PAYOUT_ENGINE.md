@@ -198,18 +198,19 @@ Otherwise, return the array.
 - Proportions 55/30/15 → [$15, $8, $4]
 - Floor check: 3rd is $4, below floor of $5
 - Cascade: pull $1 from 1st, give to 3rd → [$14, $8, $5] ✓
-- No leftover after rounding
-- **Output:** `places_paid=3, per_player=[14, 8, 5], total_paid=54, bfb_sweep=2`
+- Step 3 leftover spread: $2 remains ($56 − $54); one $1/player pass lifts 1st → [$15, $8, $5], no leftover
+- **Output:** `places_paid=3, per_player=[15, 8, 5], total_paid=56, bfb_sweep=0`
+- *Corrected 2026-06-07 — prior values skipped the Rule 6 leftover-spread step; golden.csv is the source of truth.*
 
 ### Example B — cap activates, leftover spreads
 - Input: `players=22, team_size=2, balance=154`
 - num_teams=11 → target_places=4
 - Proportions 50/25/17/8 → [$38, $19, $13, $6]
-- Cap: 1st > $25 → cap to $25, redistribute overflow → [$25, $21, $14, $7]
-- Floor check passes
-- Gap check passes (gaps are $4, $7, $7)
-- Leftover spread fills capacity: [$25, $22, $16, $10]
-- **Output:** `places_paid=4, per_player=[25, 22, 16, 10], total_paid=146, bfb_sweep=8`
+- Cap: 1st > $25 → cap to $25, redistribute overflow → [$25, $25, $17, $8]
+- Gap enforcement (gap=3): [$25, $22, $17, $8]; floor passes
+- Leftover spread fills capacity ($10 leftover, two passes): [$25, $22, $19, $11]
+- **Output:** `places_paid=4, per_player=[25, 22, 19, 11], total_paid=154, bfb_sweep=0`
+- *Corrected 2026-06-07 — prior values skipped the Rule 6 leftover-spread step; golden.csv is the source of truth.*
 
 ### Example C — maximum compression
 - Input: `players=30, team_size=2, balance=210`
