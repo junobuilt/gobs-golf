@@ -8,12 +8,13 @@ import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
-import { ensureRoundShell as ensureRoundShellHelper } from "@/lib/round/ensureRoundShell";
+import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
 import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
+import SeasonStartModal from "@/components/season/SeasonStartModal";
 
 interface Props {
   allPlayers: Player[];
@@ -49,6 +50,11 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("none");
   const [mobileStep, setMobileStep] = useState<"checkin" | "teams">("checkin");
   const [saving, setSaving] = useState(false);
+  // H3.4: auto-start prompt when creating a round with no active season.
+  // pendingAction records which entry button (format vs teams) to resume once
+  // the new season is named.
+  const [seasonPromptOpen, setSeasonPromptOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"format" | "teams" | null>(null);
   // Phase D.2: was_finalized is the latch from migration 012 that tells the
   // banner + reopen flow whether this round was ever finalized. A reopened
   // round is is_complete=false AND was_finalized=true. Used to decide
@@ -383,9 +389,16 @@ export default function RoundSetup({ allPlayers }: Props) {
       return existing.id;
     }
 
-    // No round yet — shared helper handles INSERT + 23505 duplicate guard.
+    // No round yet — season-aware create. If no season is active, bail and
+    // open the name prompt; the prompt's confirm handler resumes creation.
     try {
-      const id = await ensureRoundShellHelper(selectedDate);
+      const res = await ensureSeasonAndRoundShell(selectedDate);
+      if (res.status === "needs_season_name") {
+        setSaving(false);
+        setSeasonPromptOpen(true);
+        return null;
+      }
+      const id = res.roundId;
       setSaving(false);
       setExistingRoundId(id);
       // Explicit reset of format state. In a fresh-mount path these are already
@@ -406,17 +419,47 @@ export default function RoundSetup({ allPlayers }: Props) {
   }, [existingRoundId, selectedDate, loadRoundForDate]);
 
   const openTodaysFormat = useCallback(async () => {
+    setPendingAction("format");
     const rid = await ensureRoundShell();
-    if (!rid) return;
+    if (!rid) return; // null = error OR the season prompt opened (resumes later)
+    setPendingAction(null);
     setFormatPickerOpen(true);
   }, [ensureRoundShell]);
 
   const openEditTeams = useCallback(async () => {
+    setPendingAction("teams");
     const rid = await ensureRoundShell();
-    if (!rid) return;
+    if (!rid) return; // null = error OR the season prompt opened (resumes later)
+    setPendingAction(null);
     setViewMode("edit");
     setMobileStep("checkin");
   }, [ensureRoundShell]);
+
+  // H3.4: resume round creation after the admin names the new season.
+  const handleSeasonPromptConfirm = useCallback(async (name: string) => {
+    setSeasonPromptOpen(false);
+    setSaving(true);
+    try {
+      const res = await ensureSeasonAndRoundShell(selectedDate, { seasonName: name });
+      setSaving(false);
+      if (res.status !== "ok") return;
+      setExistingRoundId(res.roundId);
+      setRoundFormat(null);
+      setRoundFormatConfig(null);
+      setRoundFormatLockedAt(null);
+      setViewMode("active");
+      if (pendingAction === "format") {
+        setFormatPickerOpen(true);
+      } else if (pendingAction === "teams") {
+        setViewMode("edit");
+        setMobileStep("checkin");
+      }
+      setPendingAction(null);
+    } catch (err: unknown) {
+      setSaving(false);
+      alert("Error starting season: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }, [selectedDate, pendingAction]);
 
   // ── Mobile: transition checkin → teams ────────────────────────────────────
   // TD4 fix (2026-05-10): diff-based reconciliation instead of delete-all +
@@ -770,6 +813,14 @@ export default function RoundSetup({ allPlayers }: Props) {
     />
   );
 
+  const seasonModal = seasonPromptOpen ? (
+    <SeasonStartModal
+      defaultName={defaultSeasonName()}
+      onConfirm={handleSeasonPromptConfirm}
+      onCancel={() => { setSeasonPromptOpen(false); setPendingAction(null); }}
+    />
+  ) : null;
+
   // ── STATE 1: No round ──────────────────────────────────────────────────────
   if (viewMode === "none") {
     return (
@@ -785,6 +836,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         </div>
         {dangerModal}
         {formatPicker}
+        {seasonModal}
       </div>
     );
   }
@@ -956,6 +1008,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           />
         )}
         {formatPicker}
+        {seasonModal}
       </div>
     );
   }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { LeagueSettings } from "../page";
+import SeasonManagement from "../components/SeasonManagement";
 
 interface Props {
   settings: LeagueSettings;
@@ -124,6 +125,9 @@ export default function Settings({ settings, onRefresh }: Props) {
   return (
     <div style={{ maxWidth: "600px", margin: "0 auto", padding: "24px 16px" }}>
 
+      {/* Season management (H3.2 current season + End Season, H3.3 past + Reopen) */}
+      <SeasonManagement />
+
       {/* Money */}
       <SectionHeader>Money</SectionHeader>
       <Card>
@@ -179,7 +183,6 @@ export default function Settings({ settings, onRefresh }: Props) {
       <Card>
         <div style={{ color: "#9ca3af", fontSize: "0.85rem", lineHeight: 1.6 }}>
           <div style={{ padding: "8px 0", borderBottom: `1px solid ${C.border}`, opacity: 0.6 }}>Handicap adjustment rules</div>
-          <div style={{ padding: "8px 0", borderBottom: `1px solid ${C.border}`, opacity: 0.6 }}>Season date range</div>
           <div style={{ padding: "8px 0", opacity: 0.6 }}>Payout structure</div>
         </div>
       </Card>

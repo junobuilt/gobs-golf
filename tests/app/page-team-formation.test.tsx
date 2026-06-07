@@ -128,6 +128,7 @@ class MiniBuilder {
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
   private _inFilter: [string, any[]] | null = null;
+  private _isFilter: [string, any] | null = null;
   private _orderField: string | null = null;
 
   constructor(private fake: MiniFake, private table: string) {}
@@ -137,6 +138,7 @@ class MiniBuilder {
   update(payload: any) { this._op = "update"; this._updatePayload = payload; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
   in(col: string, vals: any[]) { this._inFilter = [col, vals]; return this; }
+  is(col: string, val: any) { this._isFilter = [col, val]; return this; }
   or(_f: string) { return this; }
   order(_f: string, _o?: any) { return this; }
   limit(_n: number) { return this; }
@@ -158,6 +160,10 @@ class MiniBuilder {
     if (this._inFilter) {
       const [c, vs] = this._inFilter;
       out = out.filter(r => vs.some(v => this.looseEq(r[c], v)));
+    }
+    if (this._isFilter) {
+      const [c, v] = this._isFilter;
+      out = out.filter(r => (r[c] ?? null) === v);
     }
     return out;
   }
@@ -220,8 +226,13 @@ function makeSeed(opts: {
       { id: 2, full_name: "Bob Brown", display_name: "Bob", handicap_index: 8, is_active: true, preferred_tee_id: null },
       { id: 3, full_name: "Carol Chen", display_name: "Carol", handicap_index: 12, is_active: true, preferred_tee_id: null },
     ],
+    // H3.4: an active season is the normal post-backfill state, so round
+    // creation proceeds straight to the picker (no auto-start prompt).
+    seasons: [
+      { id: 1, name: "2026 Season", started_on: "2026-01-01", ended_on: null, is_active: true, created_at: "2026-01-01T00:00:00Z" },
+    ],
     rounds: opts.todayRoundId
-      ? [{ id: opts.todayRoundId, played_on: TODAY, is_complete: false }]
+      ? [{ id: opts.todayRoundId, played_on: TODAY, is_complete: false, season_id: 1 }]
       : [],
     round_players: opts.roundPlayers ?? [],
     scores: [],
@@ -301,6 +312,25 @@ describe("hero pill '+ Form a Team' button", () => {
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: /Who's playing/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Round is complete/)).toBeInTheDocument();
+  });
+});
+
+describe("auto-start season prompt (H3.4)", () => {
+  it("prompts to name a new season when none is active at round creation", async () => {
+    // No active season, no round today → Form a Team must prompt for a season
+    // name before creating the round (picker stays closed until confirmed).
+    const seed = { ...makeSeed(), seasons: [] };
+    fakeRef.current = new MiniFake(seed);
+    render(<HomePage />);
+    await act(async () => { await flush(); });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Form a Team" }));
+    await act(async () => { await flush(); });
+
+    expect(screen.getByRole("dialog", { name: /Start a new season/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start Season and Create Round/i })).toBeInTheDocument();
+    // Picker did NOT open yet.
+    expect(screen.queryByRole("dialog", { name: /Who's playing/i })).not.toBeInTheDocument();
   });
 });
 

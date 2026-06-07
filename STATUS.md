@@ -2,8 +2,63 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-06 (scorecard 🎲 blind-draw pseudo-rows)
-**Session purpose:** Read-only scorecard now renders a 🎲 "Blind draw: {name}" pseudo-row for each round-start fill on the displayed team, so a finalized short team's moved total has a visible explanation (matching the summary). Pure render addition + one minimal data touch (the drawn player's name wasn't in the existing `blindDrawInputs`). No engine change. Closes the "consistent but not self-summable" flag from 30443bc / 7b6c043. Suite **422/422**, `tsc --noEmit` clean. Live-verified round 101 Team 1 (🎲 Ward C, headline −17 unchanged) + round 161 Team 4 (🎲 Ron L, −11).
+**Last updated:** 2026-06-06 (season management — H3.1–H3.5)
+**Session purpose:** Shipped season management as one unit: `seasons` table + backfill (migration 014), a `src/lib/seasons` module, admin Settings UI (current season + End Season, past seasons + Reopen), and auto-start-on-new-round. Unblocks Phase E v2. Prod has one active "2026 Season" with all 20 rounds backfilled (0 null `season_id`). Suite **436/436**, `tsc --noEmit` clean. Admin UI covered by tests (local PIN gate blocks live click-through); homepage smoke-tested clean.
+
+---
+
+## 2026-06-06 (season management — H3.1–H3.5)
+
+### Where we left off
+
+**GOBS now has seasons.** Schema, backfill, end/reopen flow, and auto-start-on-new-round all shipped together (admin needs the UI to act on the new tables, so schema+UI couldn't split). This unblocks Phase E v2 (E5 season filter, E6 admin redesign).
+
+**Step 1 (Supabase MCP, plan-first, approved via AskUserQuestion):**
+- No `seasons` table, no `rounds.season_id` — clean slate. Found **21 rounds** (ROADMAP's ~16 was stale) and **1 in-progress round (164)** — an empty abandoned shell (format null, 0 players, 0 scores). Per approval, **deleted 164** (→ 20 rounds) so the End-Season gate is clean.
+- **Approved deviations from the spec:** (1) dates of record use **`todayLocal()`** (client) not server `NOW()::date` — matches the locked May-10 UTC-bug pattern; (2) `ensureRoundShell` stays **unchanged**, the wrapper sets `season_id` via a follow-up UPDATE; (3) the season-name prompt lives in the **UI** (the lib returns a `needs_season_name` signal) since a pure lib can't render a modal.
+
+**Migration `014_phase_h3_seasons.sql` (applied to prod via MCP):**
+- `seasons (id, name, started_on, ended_on NULL, is_active, created_at)`.
+- Partial unique index `seasons_only_one_active` — at most one active season.
+- `rounds.season_id` nullable FK.
+- Backfill: created "2026 Season" (active, started 2026-01-01), attached all 20 rounds; a `DO` block aborts the migration if any `season_id` stays NULL. **Verified post-apply: 1 season, 0 null, 20 attached.**
+
+**Files added:**
+- `src/lib/seasons/{types,queries,mutations,index}.ts` — `Season`/`SeasonRound` types + `SeasonHasInProgressRounds` error; `getActiveSeason`, `listSeasons`, `listPastSeasons`, `getRoundCountForSeason`, `getInProgressRoundsForSeason`; `createSeason`, `endSeason` (throws if in-progress rounds), `reopenSeason` (pause-then-activate; partial unique index is the race guard).
+- `src/lib/round/ensureSeasonAndRoundShell.ts` — season-aware wrapper + `defaultSeasonName()`.
+- `src/components/season/SeasonStartModal.tsx` — auto-start name prompt (shared by homepage + Round Setup).
+- `src/app/admin/components/SeasonManagement.tsx` — Current Season (name, started, round count, End Season → block modal or DangerModal) + Past Seasons (Reopen → DangerModal; copy adjusts for the no-active edge case).
+- `supabase/migrations/014_phase_h3_seasons.sql`.
+
+**Files changed:**
+- `src/app/admin/tabs/Settings.tsx` — render `<SeasonManagement/>` above Money; removed the stale "Season date range" Coming-Soon placeholder.
+- `src/app/page.tsx` + `src/app/admin/tabs/RoundSetup.tsx` — round creation now goes through `ensureSeasonAndRoundShell`; both show `SeasonStartModal` when no season is active (RoundSetup tracks `pendingAction` to resume Format vs Teams after naming).
+- `tests/app/page-team-formation.test.tsx` — seeded an active season into the MiniFake (round creation is now season-aware) + added `.is()` support; new auto-start-prompt test.
+
+**Tests:** `tests/lib/seasons/seasons.test.ts` (10 — queries with negative-control filters, mutations, end-of-season + reopen-toggle integration), `tests/components/SeasonManagement.test.tsx` (3). **436/436; `tsc --noEmit` clean.**
+
+### Today's commits
+
+- (this session) — feat(seasons): season management — schema, backfill, admin UI, auto-start (H3.1–H3.5)
+
+### DB changes (today, not in git history)
+
+- **Deleted round 164** (empty abandoned shell, today's date) via SQL — prep so the End-Season gate isn't blocked by junk.
+- **Migration 014 applied** to prod: seasons table + index + `rounds.season_id` + 2026-Season backfill. Verified 0 null `season_id`.
+
+### Tomorrow's priority
+
+1. **Phase E v2 — E5 (Played With season filter)** then E6 (admin Played With redesign). Now unblocked.
+2. Carry-over: live admin smoke test (D.2 + this session's season UI) once `.env.local` has `ADMIN_PIN`; historical backfill decision for the 5 corrected best-N rounds; retract the superseded "Played With v2" DB-layer disambiguation locked bullet.
+
+### Considered but not changed (confession)
+
+- **Admin season UI not click-tested live** — local `.env.local` has no `ADMIN_PIN`, so `/admin` redirects to login (same gap as the D.2 session). Covered by `SeasonManagement.test.tsx` + the seasons integration tests; homepage smoke-tested clean (renders, no console errors).
+- **Auto-start prompt not live-tested** — prod now has an active season, so the prompt won't fire without ending it; I won't end the prod season just to test. Covered by the homepage auto-start test.
+- **Reopen atomicity** — done as two sequential client UPDATEs (pause current, activate target), not an RPC transaction. Matches the spec's "index protects against races" intent and the codebase's serial-usage norm (cf. `submitted_teams`). The partial unique index makes a concurrent double-activate fail loudly; the UI shows a retry. An RPC would be strictly atomic if ever needed.
+- **Spec discrepancy (reopen integration test):** the spec's wording "re-end the reopened → previous active resumes" contradicts the mutation spec (`endSeason` only deactivates; it never reactivates a prior season). Implemented per the mutation spec; tested the reopen *toggle* (reopen A→B, then B→A) instead. Flagged for a decision if auto-resume-on-end is actually wanted.
+- **`rounds.season_id` follow-up UPDATE uses `.is("season_id", null)`** so an existing round keeps its original season; required adding `.is()` to the homepage test's MiniFake.
+- **Out of scope (per spec):** E5/E6, `round_payouts.season_id`, season selectors on leaderboard/history/profile, BFB/HiO fund-season coupling, season-end reminder banner.
 
 ---
 

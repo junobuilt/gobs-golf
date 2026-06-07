@@ -10,11 +10,12 @@ import { getWriteQueue } from "@/lib/writeQueue";
 import type { QueueItem } from "@/lib/writeQueue";
 import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
-import { ensureRoundShell } from "@/lib/round/ensureRoundShell";
+import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import type { Player } from "@/app/admin/page";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 import { RoundPlayer, SmartJoinResult } from "@/lib/teamFormation/smartJoin";
 import PlayerPickerSheet from "@/components/teamFormation/PlayerPickerSheet";
+import SeasonStartModal from "@/components/season/SeasonStartModal";
 import JoinTeamConfirmModal from "@/components/teamFormation/JoinTeamConfirmModal";
 import MixedTeamsErrorModal from "@/components/teamFormation/MixedTeamsErrorModal";
 
@@ -49,6 +50,7 @@ export default function HomePage() {
   const [todayRoundId, setTodayRoundId] = useState<number | null>(null);
   const [todayRoundPlayers, setTodayRoundPlayers] = useState<RoundPlayer[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [seasonPromptOpen, setSeasonPromptOpen] = useState(false);
   const [confirmJoinModal, setConfirmJoinModal] = useState<Extract<SmartJoinResult, { kind: "confirm_join" }> | null>(null);
   const [mixedTeamsModal, setMixedTeamsModal] = useState<Extract<SmartJoinResult, { kind: "mixed_teams_error" }> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -241,21 +243,41 @@ export default function HomePage() {
   // silent_join / confirm_join rather than (mistakenly) create_new. We
   // refetch roundPlayers immediately before opening so the picker renders
   // the freshest server state.
-  const handleOpenPicker = useCallback(async () => {
-    let roundId = todayRoundId;
-    if (!roundId) {
-      try {
-        roundId = await ensureRoundShell(todayLocal());
-        setTodayRoundId(roundId);
-        setTodayRoundPlayers([]);
-      } catch (err) {
-        console.error("[teamFormation] ensureRoundShell failed", err);
-        return;
-      }
-    }
+  const openPickerForRound = useCallback(async (roundId: number) => {
+    setTodayRoundId(roundId);
+    setTodayRoundPlayers([]);
     await loadTodayRoundPlayers(roundId);
     setPickerOpen(true);
-  }, [todayRoundId, loadTodayRoundPlayers]);
+  }, [loadTodayRoundPlayers]);
+
+  const handleOpenPicker = useCallback(async () => {
+    if (todayRoundId) {
+      await loadTodayRoundPlayers(todayRoundId);
+      setPickerOpen(true);
+      return;
+    }
+    try {
+      // H3.4: season-aware. If no season is active, prompt for a name first.
+      const res = await ensureSeasonAndRoundShell(todayLocal());
+      if (res.status === "needs_season_name") {
+        setSeasonPromptOpen(true);
+        return;
+      }
+      await openPickerForRound(res.roundId);
+    } catch (err) {
+      console.error("[teamFormation] ensureSeasonAndRoundShell failed", err);
+    }
+  }, [todayRoundId, loadTodayRoundPlayers, openPickerForRound]);
+
+  const handleSeasonPromptConfirm = useCallback(async (name: string) => {
+    setSeasonPromptOpen(false);
+    try {
+      const res = await ensureSeasonAndRoundShell(todayLocal(), { seasonName: name });
+      if (res.status === "ok") await openPickerForRound(res.roundId);
+    } catch (err) {
+      console.error("[teamFormation] create season + round failed", err);
+    }
+  }, [openPickerForRound]);
 
   // ── SmartJoin resolution handler (called from PlayerPickerSheet.onResolve) ─
   const handleResolve = useCallback(async (result: SmartJoinResult) => {
@@ -553,6 +575,15 @@ export default function HomePage() {
             );
           })}
         </div>
+      )}
+
+      {/* ── Season auto-start prompt (H3.4) ───────────────────────────────── */}
+      {seasonPromptOpen && (
+        <SeasonStartModal
+          defaultName={defaultSeasonName()}
+          onConfirm={handleSeasonPromptConfirm}
+          onCancel={() => setSeasonPromptOpen(false)}
+        />
       )}
 
       {/* ── Player picker sheet ────────────────────────────────────────────── */}
