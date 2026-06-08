@@ -91,6 +91,49 @@ export function seedScorecardRound(opts: { roundId: number; withScore: boolean }
   };
 }
 
+/**
+ * A team-card (Shambles) round set up for the team-card entry surface. One team
+ * (Team 1) of two players on tee 1, 18 holes with known pars. `ballCount`
+ * drives format_config.team_ball_count (1 = one box per hole; 2 = two summed
+ * balls). No team_scores yet — the surface enters them.
+ */
+export function seedTeamCardRound(opts: { roundId: number; ballCount: 1 | 2 }): SeedData {
+  const today = todayLocal();
+  // Par-4-heavy 18 (a couple par 3s / 5s) so par lookups are concrete.
+  const pars = [4, 4, 3, 5, 4, 4, 3, 5, 4, 4, 4, 3, 5, 4, 3, 5, 4, 4];
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 }],
+    holes: pars.map((par, i) => ({
+      id: 7000 + i,
+      tee_id: 1,
+      hole_number: i + 1,
+      par,
+      yardage: 350,
+      stroke_index: i + 1,
+    })),
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: false,
+        season_id: SEASON.id,
+        format: "shambles",
+        format_config: { basis: "gross", scoring_basis: "gross", team_ball_count: opts.ballCount, override_holes: [] },
+        format_locked_at: null,
+      },
+    ],
+    round_players: [
+      { id: 6001, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, handicap_index_snapshot: 10 },
+      { id: 6002, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, handicap_index_snapshot: 12 },
+    ],
+    scores: [],
+    team_scores: [],
+  };
+}
+
 /** Empty world: active roster + active season, but NO round today. */
 export function seedNoRoundToday(): SeedData {
   return {

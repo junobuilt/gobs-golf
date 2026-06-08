@@ -29,6 +29,7 @@ export interface SeedData {
   rounds?: Row[];
   round_players?: Row[];
   scores?: Row[];
+  team_scores?: Row[];
   league_settings?: Row[];
   seasons?: Row[];
   tees?: Row[];
@@ -40,6 +41,9 @@ const KNOWN_TABLES = [
   "rounds",
   "round_players",
   "scores",
+  // Wave 1B team-card scores. The generic upsert handler already honors the
+  // 4-column on_conflict (round_id,team_number,hole_number,ball_index).
+  "team_scores",
   "league_settings",
   "seasons",
   "tees",

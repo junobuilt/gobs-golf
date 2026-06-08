@@ -2,8 +2,50 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (Wave 1B — team-card scoring spine: Commit 0 audit + Commit 1 foundation)
-**Session purpose:** Started Wave 1B (team-card scoring spine for Shambles + 3 future team-card formats). **Commit 0** = approved plan-mode audit + storage proposal. **Commit 1** = foundation: `team_scores` table (migration 018, **applied to prod**), `"shambles"` registered in the `Format` type/labels/defaults + the `rounds_format_check` constraint, `format_config.team_ball_count` (generic, default 1), the `isTeamCardFormat()` single-source classifier + `getTeamBallCount()` reader, and a pure team-score read helper. **`shambles` deliberately NOT in `FORMAT_ORDER` yet** (so prod's admin picker doesn't offer a format with no working screen until C2/C3). **613 → 631/631 vitest; `tsc` clean.** Commits 2–4 (entry surface, routing/read-branches, finalize-without-blind-draw) still pending.
+**Last updated:** 2026-06-07 (Wave 1B — team-card entry surface: Commit 2)
+**Session purpose:** Wave 1B team-card spine for Shambles. **C0** audit + storage proposal (approved). **C1** foundation: `team_scores` table (migration 018, applied to prod), `"shambles"` registration, `team_ball_count`, `isTeamCardFormat`/`getTeamBallCount`, pure read helper. **C2 (this commit)** the NEW team-card entry surface `/round/[id]/team-card?team=N` — team-level score entry (count-1 one box / count-2 two summed balls), dash-until-tap par-anchored, gross-only (allowance disabled), reachable by direct URL only (routing is C3). **638/638 vitest; 15/15 e2e; `tsc` clean.** Commits 3 (routing + read branches + season exclusion) and 4 (finalize without blind draw) still pending.
+
+---
+
+## 2026-06-07 (Wave 1B — Commit 2: team-card entry surface)
+
+### Where we left off
+
+**The team-card entry surface exists and works (entry only).** Reachable at `/round/[id]/team-card?team=N`. Mirrors the individual scorecard's look + A6 interaction but scores at the TEAM level. Per the spec's split, **Submit + finalize is C4** and **homepage routing + `FORMAT_ORDER` registration is C3** — so the surface is direct-URL-only in C2 (nothing in prod reaches it yet; Shambles still isn't pickable).
+
+- **NEW `src/app/round/[id]/team-card/page.tsx`** (`"use client"`) — sibling route to `scorecard`/`summary` (inherits `round/[id]/layout.tsx`). Requires `?team=N` (else "No team selected"); guards `!isTeamCardFormat(format)` ("Not a team-card round"). Loads round + this team's roster (display names) + holes for the team's representative tee (par is consistent across tees) + existing `team_scores` (hydrated). Per-hole +/- entry via `TeamHoleEntry`; **dash-until-tap, par-anchored** (`current == null ? par : ±1`; "—" until first tap; nothing written until then). On change: optimistic state → **direct per-box upsert** to `team_scores` (last-write-wins; the WriteQueue is `scores`-only and NOT reused) → `ensureFormatLocked()` (same idempotent DB-guarded lock as the scorecard). Header: read-only `FormatChip` + "1/2 balls per hole" + **"Gross only — no handicap"** caption (replaces "Handicaps at N%"). Running totals (delta vs par / thru / gross), hole-nav dots, expand → reuse `PlayerHoleGrid` for the team's hole-by-hole single row. Read-only when `is_complete`. **No Submit button (C4).**
+- **NEW `src/lib/round/teamScoresIo.ts`** — `loadTeamScores(roundId)` + `upsertTeamScore({...})` (`onConflict: round_id,team_number,hole_number,ball_index`). Kept out of the pure `teamScores.ts` so the aggregation stays mock-free. C3's `results.ts` will reuse `loadTeamScores`.
+- **NEW `src/components/scorecard/TeamHoleEntry.tsx`** — the per-hole stepper(s); count-1 one stepper, count-2 two + summed hole total. Owns the par-anchor + 1..20 range guard (testable); parent owns persistence via `onSet(ballIndex, value)`.
+- **MODIFIED `src/app/admin/tabs/RoundSetup.tsx`** — handicap-allowance selector disabled + "N/A · gross only" when `isTeamCardFormat(roundFormat)`. (Unreachable until C3 makes Shambles selectable, but satisfies C2's allowance-disable scope.)
+- **MODIFIED `e2e/support/supabaseMock.ts`** — registered `team_scores` (the generic upsert already honors the 4-col `on_conflict`); **MODIFIED `e2e/support/fixtures.ts`** — `seedTeamCardRound({roundId, ballCount})`.
+
+**Files:** NEW `src/app/round/[id]/team-card/page.tsx`, `src/lib/round/teamScoresIo.ts`, `src/components/scorecard/TeamHoleEntry.tsx`, `tests/components/team-hole-entry.test.tsx`, `e2e/teamCard.spec.ts`. MODIFIED `src/app/admin/tabs/RoundSetup.tsx`, `e2e/support/supabaseMock.ts`, `e2e/support/fixtures.ts`, `STATUS.md`.
+
+**Tests:** +7 vitest (`TeamHoleEntry`: dash→par on first +/- tap, increment/decrement, 1..20 guard at both bounds, count-2 two boxes + summed total, total "—" when empty, disabled blocks onSet — fixtures start unscored as negative controls) + 4 Playwright (`teamCard`: dash-until-tap→par + running totals; **writes a `team_scores` row and leaves `scores` empty**; count-2 two boxes + summed hole total 4+5=9; gross-only caption present / "Handicaps at N%" absent). **631 → 638/638 vitest; 11 → 15/15 e2e; `tsc` clean.**
+
+### Today's commits
+
+- (this session) feat(scoring): Wave 1B C2 — team-card entry surface (`/round/[id]/team-card`)
+- (this session) chore(db): refresh schema.sql to canonical pg_dump (captures 017 reset_fund + 018 team_scores)
+
+### DB changes (today)
+
+- **None to prod this commit.** C2 is app code only (the `team_scores` table + constraint were migration 018 in C1). `schema.sql` was regenerated to canonical `pg_dump` (captures the previously-missing 017 `reset_fund`/`note` AND C1's 018 `team_scores`/`shambles`), superseding C1's hand-sync — committed as a separate `chore(db)`.
+
+### Tomorrow's priority
+
+1. **Commit 3** — routing via `isTeamCardFormat` (homepage "tap team" → team-card; round-open routing); add `"shambles"` to `FORMAT_ORDER`; `loadTeamScores` branch in `results.ts` → leaderboard/summary single team row (no per-player rows); season/profile exclusion (`playerStats.ts`, `season/page.tsx`, `player/[id]/page.tsx`) — played-with stays included. **Flag the `TeamRow` `players: []` + additive-optional-field for the expand-row as a contract change at C3 plan time** (payout + S5 tracks consume `TeamRow`).
+2. **Commit 4** — `finalize_team_card_round` RPC (no blind draw) + Submit button + gate at `scorecard/page.tsx:1049`; golden fixtures with the blind-draw negative control.
+
+### Considered but not changed (confession)
+
+- **Submit Final Scores + finalize deferred to C4** (spec puts them there). C2's card is non-submittable — acceptable, as it isn't in production flow until C3/C4.
+- **Homepage routing + `FORMAT_ORDER` registration deferred to C3.** Direct-URL only in C2.
+- **`TeamRow` / `results.ts` untouched** (C3). The `players: []` + additive-optional-field decision for the team expand-row is flagged for C3 plan time per the frozen-contract directive.
+- **WriteQueue not used** — direct per-box upsert to `team_scores` (last-write-wins), per the C0 audit. No DB trigger yet rejecting team_scores writes on finalized rounds (client read-only guard only; possible C4 hardening mirroring `scores_reject_on_complete`).
+- **Allowance-disable added in `RoundSetup` even though Shambles isn't selectable until C3** — spec scopes it to C2; additive + correct now.
+- **No browser-preview screenshot.** The e2e suite runs against a real Next dev server with real render + interaction + `team_scores` writes (stronger than a manual screenshot); a prod preview is moot (no Shambles round exists; surface not routable yet).
+- **Individual scorecard surface + read path untouched.** Par read from the team's representative tee (par consistent across tees).
 
 ---
 

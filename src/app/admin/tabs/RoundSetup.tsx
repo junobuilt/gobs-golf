@@ -8,7 +8,7 @@ import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
-import { getHandicapAllowance } from "@/lib/format/helpers";
+import { getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
 import { todayLocal } from "@/lib/date";
@@ -841,23 +841,33 @@ export default function RoundSetup({ allPlayers }: Props) {
               Handicap Allowance
             </span>
             <span style={{ fontSize: "0.98rem", fontWeight: 700, color: "#1a1a1a" }}>
-              {getHandicapAllowance(roundFormatConfig)}%
-              {getHandicapAllowance(roundFormatConfig) === 100 && (
-                <span style={{ fontWeight: 500, color: "#64748b" }}> · full</span>
+              {/* Wave 1B: team-card formats (Shambles, …) are gross only — no
+                  per-player handicap to scale, so the allowance is N/A and the
+                  control is disabled. */}
+              {isTeamCardFormat(roundFormat) ? (
+                <span style={{ fontWeight: 500, color: "#64748b" }}>N/A · gross only</span>
+              ) : (
+                <>
+                  {getHandicapAllowance(roundFormatConfig)}%
+                  {getHandicapAllowance(roundFormatConfig) === 100 && (
+                    <span style={{ fontWeight: 500, color: "#64748b" }}> · full</span>
+                  )}
+                </>
               )}
             </span>
           </span>
           <select
             aria-label="Handicap allowance percent"
             value={getHandicapAllowance(roundFormatConfig)}
-            disabled={saving || initialLoading || isRoundComplete}
+            disabled={saving || initialLoading || isRoundComplete || isTeamCardFormat(roundFormat)}
             onChange={e => onAllowanceChange(Number(e.target.value))}
             style={{
               padding: "8px 10px", borderRadius: "8px",
               border: `1px solid #cbd5e1`, background: "#fff",
               fontSize: "0.95rem", fontWeight: 600, color: C.navy,
               fontFamily: C.font,
-              cursor: saving || initialLoading || isRoundComplete ? "default" : "pointer",
+              opacity: isTeamCardFormat(roundFormat) ? 0.5 : 1,
+              cursor: saving || initialLoading || isRoundComplete || isTeamCardFormat(roundFormat) ? "default" : "pointer",
             }}
           >
             {ALLOWANCE_OPTIONS.map(v => (
