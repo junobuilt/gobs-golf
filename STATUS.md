@@ -2,8 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (H.2 — DB backup & restore workflow)
-**Session purpose:** Stood up the manual free-tier **database backup + restore workflow** (roadmap H.2) — the safety gate that must exist before any data-affecting migration (S4b/S3). `npm run db:backup` (pg_dump 17 → gitignored `backups/`, prompts for the connection string, never logs it), `npm run db:restore-test` (restores into a throwaway LOCAL Postgres, verifies counts, can't touch prod), committed base-schema artifact `supabase/schema.sql`, runbook `docs/BACKUP_RESTORE.md`. **Tonight's baseline taken + restore-verified; prod provably untouched. No app logic changed; `tsc` clean, vitest 607/607.**
+**Last updated:** 2026-06-08 (G2 S4b — fund-reset write surface)
+**Session purpose:** Shipped the admin fund-reset write surface (roadmap G2 / Session 4b). **Migration 017 applied to prod** (after a transaction-rollback dry-run): nullable `fund_transactions.note` column + `reset_fund(p_fund,p_reason,p_created_by)` SECURITY-DEFINER RPC that zeroes a fund by appending one balancing ledger entry (never deletes history). Reset buttons added to both FundsPanel cards → reused `DangerModal` (additive `children`/`confirmDisabled` props) with a REQUIRED reason, gated client- AND server-side. Payout-override edit was explicitly OUT of scope. **613/613 vitest; 11/11 e2e; `tsc` clean.** Prod money data unchanged by the migration (0 fund rows fired).
+
+---
+
+## 2026-06-08 (G2 S4b — fund-reset write surface)
+
+### Where we left off
+
+**Admins can reset the BFB or HiO fund to $0 with a required, audited reason.** Plan-first + gated (dry-run on prod → review → apply). Payout-override edit was explicitly deferred to a separate session.
+
+- **Migration 017 (`017_phase_g2_fund_reset.sql`) — APPLIED TO PROD** via MCP `apply_migration` after a transaction-rollback dry-run on prod:
+  - `ALTER TABLE fund_transactions ADD COLUMN note text` (nullable) — holds the admin's free-text reason; `reason` stays CATEGORICAL (`'reset'`, already in `REASON_LABELS`), so loadWinnings is untouched and the 016 conventions hold.
+  - `reset_fund(p_fund text, p_reason text, p_created_by text)` SECURITY DEFINER — validates `p_fund ∈ (hio,bfb)` + non-blank reason (else RAISE), recomputes the live balance **inside the txn** (no stale client read), and INSERTs ONE balancing row (`amount = -balance`, `reason='reset'`, `source='reset'` [already passed 016's CHECK], `round_id=NULL`, `created_by=COALESCE(blank→'admin')`, `note=<reason>`). Append-only; never deletes.
+- **Decisions (all approved):** ① `note` column (keep `reason` categorical); ② already-$0 reset logs a harmless $0 entry (audit the action); ③ `created_by='admin'` constant (no per-user identity — shared PIN gate, matching 016's null/constant attribution); ④ reopen-after-reset can drive a balance negative — accepted as honest append-only accounting, logged as a known limitation in ROADMAP; ⑤ DangerModal extended with additive optional props (reuse, no fork).
+- **UI:** `FundsPanel` gains a "Reset Fund…" button per card → `DangerModal` (title "Reset BFB/HiO Fund?", current balance, required reason input as `children`, red confirm gated by `confirmDisabled = reason empty` + the existing 1.5s delay). Success → `resetFund()` → reload → card shows $0 + "Fund reset" in Recent Transactions. `src/lib/payouts/resetFund.ts` wraps the RPC (client never writes `fund_transactions` directly — S2 RLS posture preserved).
+
+**Dry-run (transaction → ROLLBACK, prod):** clean apply; $184→$0 with the correct ledger row; empty reason + bad fund both rejected; already-$0 re-run logs a $0 entry; blank `created_by`→'admin'. Post-rollback: `reset_fund`/`note` absent, 0 rows — prod untouched. **Post-apply verify:** RPC exists (SECURITY DEFINER, correct args), `note` column exists, **0 `fund_transactions` rows / 0 `round_payouts` rows** (migration fired no resets), balances still 0/0.
+
+**Files:** NEW `supabase/migrations/017_phase_g2_fund_reset.sql`, `src/lib/payouts/resetFund.ts`, `tests/lib/payouts/resetFund.test.ts`. MODIFIED `src/components/winnings/FundsPanel.tsx`, `src/app/admin/components/DangerModal.tsx` (additive props), `tests/components/winnings/FundsPanel.test.tsx`, ROADMAP/STATUS.
+
+**Tests:** +4 unit (`resetFund`: RPC name/args + trimmed reason + `created_by='admin'`; blank-reason rejected with NO rpc call; rpc-error propagates) + FundsPanel component tests rewritten (reset buttons render; modal shows balance + gates confirm on required reason — non-zero $184 negative control; confirm → `resetFund('bfb', reason)` → card refreshes to $0 + "Fund reset" entry; modal closes). **613/613 vitest; 11/11 e2e; `tsc` clean.**
+
+### Today's commits
+
+- (this session) feat(winnings): G2 S4b — fund-reset write surface (migration 017 + reset_fund RPC + FundsPanel reset modal)
+
+### DB changes (today)
+
+- **Migration 017 applied to prod** (via MCP, post dry-run + review). Verified post-apply: `reset_fund` exists (SECURITY DEFINER), `fund_transactions.note` exists, **0 fund_transactions / 0 round_payouts** (no reset fired by the migration), balances bfb 0 / hio 0. `gobs_20260607_211143.dump` remains the valid pre-migration restore point (money tables were empty before AND after — no data write).
+
+### Tomorrow's priority
+
+1. **G2 S4b remainder — payout-override edit** (the deferred half; needs a design pass).
+2. **G2 S3** — historical payout backfill.
+3. **Session 5** — Leaderboard + Round Summary payout displays.
+
+### Considered but not changed (confession)
+
+- **`supabase/schema.sql` not refreshed for the `note` column / `reset_fund`.** It's regenerated by `npm run db:backup` (needs the interactive connection string), which I can't run headless. The committed migration `017` is the authoritative change record; `schema.sql` will pick up the new objects on the next backup. Flagged so it's refreshed then (and re-`db:backup` before the next migration, per the runbook).
+- **Reset flow not added to the Playwright e2e suite.** The spec's test plan asked for unit + component + dry-run SQL (not e2e); acceptance #6 is "e2e suite unaffected," which holds (11/11). The modal + success path are covered by the FundsPanel component tests.
+- **Not live click-tested.** `/admin` is PIN-gated and local `.env.local` has no `ADMIN_PIN` (same gap as prior admin sessions) — covered by the component tests + the prod RPC dry-run/post-apply verify. `fund_balances` is $0 in prod, so a live reset would log a $0 entry.
+- **`reason` carries the category, `note` the human text.** Recent Transactions shows the categorical "Fund reset" label (per mockup); the admin's free-text reason is persisted in `note` for the audit trail but not surfaced in the compact 8-row recent list. loadWinnings deliberately left untouched.
+- **Out of scope (per spec, untouched):** payout-override edit modal/RPC, Edit Engine Constants, S5 displays, S3 import, the payout engine, finalize/persist paths, the `fund_balances` view, migrations 001–016, `golden.csv`, the e2e suite.
+- **No fund data was altered by the migration itself** — confirmed by the post-apply 0/0 row counts.
 
 ---
 

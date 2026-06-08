@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 interface DangerModalProps {
   title: string;
@@ -9,6 +9,12 @@ interface DangerModalProps {
   confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  // Wave-adjacent (G2 S4b): optional body content rendered under the
+  // description — e.g. a required reason input for the fund-reset flow.
+  children?: ReactNode;
+  // When true, the confirm button stays disabled even after the 1.5s delay
+  // (e.g. a required field is empty). Combined with the timer via AND.
+  confirmDisabled?: boolean;
 }
 
 export default function DangerModal({
@@ -18,6 +24,8 @@ export default function DangerModal({
   confirmLabel = "Confirm",
   onConfirm,
   onCancel,
+  children,
+  confirmDisabled = false,
 }: DangerModalProps) {
   const [canConfirm, setCanConfirm] = useState(false);
 
@@ -25,6 +33,10 @@ export default function DangerModal({
     const t = setTimeout(() => setCanConfirm(true), 1500);
     return () => clearTimeout(t);
   }, []);
+
+  // Confirm is enabled only after the delay AND when no caller-supplied gate
+  // (e.g. empty required reason) blocks it.
+  const enabled = canConfirm && !confirmDisabled;
 
   return (
     <div style={{
@@ -69,6 +81,8 @@ export default function DangerModal({
           {description}
         </p>
 
+        {children && <div style={{ margin: "0 0 8px" }}>{children}</div>}
+
         {cannotBeUndone && (
           <p style={{
             margin: "0 0 28px", textAlign: "center",
@@ -95,14 +109,14 @@ export default function DangerModal({
           </button>
           <button
             onClick={onConfirm}
-            disabled={!canConfirm}
+            disabled={!enabled}
             style={{
               flex: 1, padding: "13px", borderRadius: "10px",
               border: "none",
-              background: canConfirm ? "#a32d2d" : "#f3f4f6",
-              color: canConfirm ? "white" : "#9ca3af",
+              background: enabled ? "#a32d2d" : "#f3f4f6",
+              color: enabled ? "white" : "#9ca3af",
               fontSize: "0.95rem", fontWeight: 600,
-              cursor: canConfirm ? "pointer" : "not-allowed",
+              cursor: enabled ? "pointer" : "not-allowed",
               transition: "background 0.3s, color 0.3s",
               fontFamily: "DM Sans, system-ui, sans-serif",
             }}
