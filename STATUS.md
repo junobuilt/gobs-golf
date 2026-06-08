@@ -2,8 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (G2 — payout engine logic module)
-**Session purpose:** Built the GOBS payout engine as a pure, persistence-free logic module (`src/lib/payoutEngine/`) implementing `docs/PAYOUT_ENGINE.md` v3 (cascade balancing). Two modes: abstract what-if (`places_paid`/`per_player`/`bfb_sweep`) and tie-resolved (`team_payouts[]`). Engine validated against the read-only `golden.csv` regression contract (all 73 rows exact) + the four §10 worked examples + a ~54k-input property fuzz. Tie resolver covers 2/3/4-way ties, cutoff straddle, multi-position ties, cap/floor clamps. **Suite 448 → 550/550; `tsc --noEmit` clean.** Coverage: engine.ts 98.8% / tieResolver.ts 100% lines (>95% bar). No DB, no UI — Sessions 2–4. Corrected two arithmetic errors in `PAYOUT_ENGINE.md` §10 (Examples A & B skipped the leftover-spread step). Added `@vitest/coverage-v8` devDep.
+**Last updated:** 2026-06-07 (G2 S2 — payout + fund persistence)
+**Session purpose:** Persisted payout + fund movements at finalize. Migration `016` adds `round_payouts`, the append-only `fund_transactions` ledger, the `fund_balances` view, and two SECURITY-DEFINER RPCs (`persist_round_payouts` idempotent, `reverse_round_payouts`), with RLS enabled + read-only public policies (writes only via the RPCs). New `src/lib/payouts/persistRoundPayouts.ts` derives post-blind-draw standings via `loadRoundResults`, runs the frozen engine in tie mode, and persists atomically after finalize at both finalize sites; `reopenRound` reverses. Verified by a transaction-wrapped dry-run on prod (ROLLBACK) since branching needs Pro, then **applied to prod** (objects verified; existing rounds NOT backfilled). **Suite 550 → 562/562; `tsc --noEmit` clean.**
+
+---
+
+## 2026-06-07 (G2 S2 — payout + fund persistence)
+
+### Where we left off
+
+**Payouts + fund movements now persist at finalize.** The frozen S1 engine is wired into the finalize flow via a new orchestration layer; nothing about the engine or `finalize_round_with_blind_draws` changed.
+
+- **Migration `016_phase_g2_payout_persistence.sql`** (NOT yet applied to prod — gated):
+  - `round_payouts` — one row per (round, placing team); ties = multiple rows at the same place; columns per the locked list + `team_size`/`total_for_team` (approved adds), `admin_override`/`was_overridden`/`original_amount`/`import_source` for S4. `UNIQUE(round_id, team_number)`; indexes on round_id + season_id. `season_id` stamped by the RPC from `rounds.season_id`.
+  - `fund_transactions` — append-only ledger (`fund`, signed `amount`, `reason`, nullable `round_id` ON DELETE SET NULL, `source`, `created_by`).
+  - `fund_balances` — VIEW summing the ledger per fund (global, both funds always shown).
+  - `persist_round_payouts(p_round_id, p_payload jsonb)` — SECURITY DEFINER; one txn: replace round_payouts; credit funds guarded by `NOT EXISTS (… GROUP BY fund HAVING SUM<>0)` so re-runs are no-ops and post-reversal re-finalize re-credits.
+  - `reverse_round_payouts(p_round_id)` — SECURITY DEFINER; appends one balancing negative per fund (`GROUP BY … HAVING SUM<>0`) and deletes payout rows. Idempotent.
+  - RLS enabled; public SELECT only; no write policies → RPCs are the sole write path.
+- **`src/lib/payouts/persistRoundPayouts.ts`** — `computeAndPersistRoundPayouts(roundId)`: `loadRoundResults` → derive `team_size = max roster`, `num_teams`, `players = num_teams × team_size` (so short blind-drawn teams still count — validated against round 149), `headcount = Σ rosters`, `balance = (buyIn−3) × headcount` (buyIn from `league_settings`, `?? 10`), `team_finishes` (net_score = `team.total`, basis from `isStablefordFormat`) → engine tie mode → payload. Funds: +$1/pl HiO, +$2/pl BFB, +`bfb_sweep`. `below_floor` derived (`per_player < FLOOR`; engine doesn't expose it). Funds credited even when `places_paid === 0` (whole pot sweeps).
+- **Wiring:** scorecard `tryFinalizeIfAllSubmitted` (on `finalized` + `already_complete`, non-fatal) and `EditModeBanner.handleFinalize` call the orchestration; `reopenRound` calls `reverse_round_payouts` before flipping `is_complete`.
+
+**Verification (branching needs Pro → transaction dry-run on prod, single `execute_sql`, ends in ROLLBACK):** clean DDL apply; persist→3 payout rows/3 fund rows/net $50, season stamped; persist twice→no dups; reverse→0 payout rows/net $0; reverse again→idempotent; re-finalize→recreated/net $50; `fund_balances` `bfb=34 hio=16`; ties→2 rows same place, all `is_tied`. Post-rollback check: all new objects `null`, 0 policies — **prod untouched.**
+
+**Tests:** NEW `tests/lib/payouts/persistRoundPayouts.test.ts` (10 — normal, short-team negative control, tie, below-floor, <2 teams, Stableford sort, buy-in read, unsupported size, load-fail, rpc-error); `tests/lib/round/reopenRound.test.ts` +2 (reversal rpc fired; aborts on reverse error); `tests/components/submit-flow.test.tsx` updated (finalize-once + persist fired). **562/562; `tsc` clean.**
+
+### Today's commits
+
+- (this session) feat(payouts): G2 S2 — persist payouts + fund movements at finalize
+
+### DB changes (today)
+
+- **Migration `016` applied to prod** (via MCP `apply_migration`, after a transaction dry-run + ROLLBACK confirmed it clean). Verified post-apply: 3 tables/view + 2 functions exist, RLS on with 2 read-only policies, `round_payouts`/`fund_transactions` both **0 rows** — existing finalized rounds intentionally NOT backfilled (S3 import). `fund_balances` reads `hio=0 bfb=0`.
+
+### Tomorrow's priority
+
+1. **G2 S3** — historical import / backfill of past finalized rounds' payouts.
+2. **G2 S4** — admin override flow (`was_overridden`/`original_amount`) + Winnings UI + fund-balance surfaces.
+3. Carry-over: live admin smoke test once `.env.local` has `ADMIN_PIN`.
+
+### Considered but not changed (confession)
+
+- **Branch verification → dry-run on prod:** Supabase branching requires Pro (org isn't), so the approved "branch first" step became a transaction-wrapped dry-run on prod ending in ROLLBACK (approved). Persisted nothing.
+- **Short-team payout semantics:** engine pays `per_player × nominal team_size`; a blind-drawn team has fewer real members. Persisted verbatim; `bfb_sweep` used as locked. How a short team's pot is physically handed out is an S4 display concern.
+- **`below_floor` derived, not from engine:** frozen engine doesn't expose it on `TeamPayout`; derived as `per_player < FLOOR`.
+- **Deleting a still-finalized round** won't auto-reverse funds (`round_id` → SET NULL keeps the ledger row but leaves the net credit). Safe path is reopen-then-delete; wiring `doDeleteRound` is out of scope.
+- **`buy_in_amount` absent in prod** → uses the app's `?? "10"` fallback; HiO/BFB fixed at $1/$2.
+- **Out of scope (per spec):** S3 backfill, S4 overrides/UI, any change to `finalize_round_with_blind_draws` or the payout engine.
 
 ---
 

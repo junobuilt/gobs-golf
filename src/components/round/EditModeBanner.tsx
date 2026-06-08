@@ -22,6 +22,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { exitRoundEditMode, useIsAdmin, useIsRoundEditMode } from "@/lib/admin";
 import { supabase } from "@/lib/supabase";
 import { finalizeRoundAdmin } from "@/lib/round/finalizeRoundAdmin";
+import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
 import DangerModal from "@/app/admin/components/DangerModal";
 
 export default function EditModeBanner() {
@@ -73,6 +74,13 @@ export default function EditModeBanner() {
     setFinalizing(true);
     try {
       await finalizeRoundAdmin(roundId);
+      // G2: recompute + persist payouts for the re-finalized round. Non-fatal —
+      // the round is finalized regardless; the RPC is idempotent and recoverable.
+      try {
+        await computeAndPersistRoundPayouts(roundId);
+      } catch (e) {
+        console.warn("[G2] payout persistence failed (round finalized; recoverable)", e);
+      }
       setFinalizeModalOpen(false);
       exitRoundEditMode(router, pathname, params);
       // Hard reload so summary/scorecard re-fetch and pick up

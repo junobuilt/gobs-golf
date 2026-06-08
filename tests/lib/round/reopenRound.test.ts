@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const fromMock = vi.hoisted(() => vi.fn());
+const rpcMock = vi.hoisted(() =>
+  vi.fn((..._args: any[]): Promise<{ error: { message: string } | null }> =>
+    Promise.resolve({ error: null }),
+  ),
+);
 
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: fromMock },
+  supabase: { from: fromMock, rpc: rpcMock },
 }));
 
 import { reopenRound } from "@/lib/round/reopenRound";
@@ -48,6 +53,8 @@ function makeWriteChain(captured: CapturedWrite, result: { error: any }) {
 
 beforeEach(() => {
   fromMock.mockReset();
+  rpcMock.mockReset();
+  rpcMock.mockResolvedValue({ error: null });
 });
 
 describe("reopenRound", () => {
@@ -174,5 +181,29 @@ describe("reopenRound", () => {
       .mockReturnValueOnce(writeChain);
 
     await expect(reopenRound(1)).rejects.toThrow(/conflict/);
+  });
+
+  // G2: reopen reverses persisted payouts + fund contributions.
+  it("calls reverse_round_payouts with the round id", async () => {
+    const readChain = makeReadChain({ data: { format_config: { submitted_teams: [1] } }, error: null });
+    const captured: CapturedWrite = { payload: null, filterCol: null, filterVal: null };
+    const writeChain = makeWriteChain(captured, { error: null });
+
+    fromMock.mockReturnValueOnce(readChain).mockReturnValueOnce(writeChain);
+
+    await reopenRound(42);
+
+    expect(rpcMock).toHaveBeenCalledWith("reverse_round_payouts", { p_round_id: 42 });
+  });
+
+  it("aborts (does not flip is_complete) when the reversal rpc errors", async () => {
+    // Negative control: reversal fails → no write chain should be consumed.
+    const readChain = makeReadChain({ data: { format_config: {} }, error: null });
+    fromMock.mockReturnValueOnce(readChain);
+    rpcMock.mockResolvedValueOnce({ error: { message: "reverse failed" } });
+
+    await expect(reopenRound(7)).rejects.toThrow(/reverse failed/);
+    // Only the read happened on `rounds`; the is_complete write never ran.
+    expect(fromMock.mock.calls.map((c) => c[0])).toEqual(["rounds"]);
   });
 });

@@ -202,12 +202,23 @@ describe("D.1 hotfix — Submit Final Scores", () => {
     );
     await renderAndLoad("1");
     await tapSubmitAndConfirm();
+    // G2 persist is fire-and-forget after finalize and chains several awaited
+    // loadRoundResults queries; flush them before asserting.
+    await settle(0);
+    await settle(0);
 
-    expect(fakeRef.current.rpcCalls).toHaveLength(1);
-    expect(fakeRef.current.rpcCalls[0].name).toBe(
-      "finalize_round_with_blind_draws",
+    // Finalize fires exactly once (no double-fire on the all-submitted detect).
+    const finalizeCalls = fakeRef.current.rpcCalls.filter(
+      (c: { name: string }) => c.name === "finalize_round_with_blind_draws",
     );
-    expect(fakeRef.current.rpcCalls[0].args).toEqual({ p_round_id: 1 });
+    expect(finalizeCalls).toHaveLength(1);
+    expect(finalizeCalls[0].args).toEqual({ p_round_id: 1 });
+    // G2: payout persistence fires after a successful finalize.
+    expect(
+      fakeRef.current.rpcCalls.some(
+        (c: { name: string }) => c.name === "persist_round_payouts",
+      ),
+    ).toBe(true);
   });
 
   it("renders 'Final scores submitted' + hides Submit after my team is in submitted_teams", async () => {

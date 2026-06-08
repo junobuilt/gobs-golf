@@ -18,6 +18,7 @@ import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
+import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 import type { Player } from "@/app/admin/page";
@@ -219,6 +220,17 @@ function isHistoricalAdd(createdAt: string | null, playedOn: string | null): boo
   const playedMs = new Date(playedOn + "T12:00:00Z").getTime();
   if (Number.isNaN(createdMs) || Number.isNaN(playedMs)) return false;
   return createdMs - playedMs > 86_400_000;
+}
+
+// G2: persist payouts after finalize. Swallows errors (logs only) so a payout
+// persistence failure never blocks the finalize UX — the round is finalized and
+// re-running heals it (the RPC is idempotent).
+async function persistPayoutsAfterFinalize(roundId: number): Promise<void> {
+  try {
+    await computeAndPersistRoundPayouts(roundId);
+  } catch (e) {
+    console.warn("[G2] payout persistence failed (round finalized; recoverable)", e);
+  }
 }
 
 export default function ScorecardPage() {
@@ -1044,10 +1056,15 @@ export default function ScorecardPage() {
         setTimeout(() => setFinalizedToastVisible(false), 4000);
         void refreshBlindDrawFills();
         void refreshBlindDrawInputs();
+        // G2: persist payouts + fund movements. Non-fatal — the round is
+        // already finalized; re-running heals a failure (RPC is idempotent).
+        void persistPayoutsAfterFinalize(Number(roundId));
       } else if (status === "already_complete") {
         setIsRoundComplete(true);
         void refreshBlindDrawFills();
         void refreshBlindDrawInputs();
+        // G2: idempotent recovery if a prior persist never completed.
+        void persistPayoutsAfterFinalize(Number(roundId));
       } else if (status === "pool_too_small") {
         setPoolErrorVisible(true);
         setTimeout(() => setPoolErrorVisible(false), 6000);

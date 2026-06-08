@@ -24,6 +24,12 @@ import { supabase } from "@/lib/supabase";
 // scorecard/page.tsx:597). Worst case: a stale submitted_teams entry
 // is lost; admin retries.
 //
+// G2: reopening also reverses the round's persisted payouts — deletes its
+// round_payouts rows and appends balancing (negative) entries to the
+// fund ledger so the round's HiO/BFB net returns to zero. Idempotent
+// (reverse_round_payouts is a no-op when there's nothing to reverse, e.g.
+// a round finalized before G2 shipped). Re-finalize recreates the payouts.
+//
 // UI concerns (modal, navigation, state refresh) belong to the caller.
 export async function reopenRound(roundId: number): Promise<void> {
   const { data: row, error: readErr } = await supabase
@@ -34,6 +40,15 @@ export async function reopenRound(roundId: number): Promise<void> {
 
   if (readErr) throw new Error("reopenRound (read): " + readErr.message);
   if (!row) throw new Error("reopenRound: round " + roundId + " not found");
+
+  // Reverse payouts/funds before clearing is_complete. If this fails we abort
+  // rather than leave a finalized-but-reopened round with stale payout rows.
+  const { error: reverseErr } = await supabase.rpc("reverse_round_payouts", {
+    p_round_id: roundId,
+  });
+  if (reverseErr) {
+    throw new Error("reopenRound (reverse payouts): " + reverseErr.message);
+  }
 
   const currentCfg = (row.format_config ?? {}) as Record<string, unknown>;
   const nextCfg = { ...currentCfg, submitted_teams: [] };

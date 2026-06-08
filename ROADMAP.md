@@ -322,7 +322,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | G1 | Buy-in records per round per player | 📋 | Default $10 each, configurable per round, mark "didn't buy in" for guests/late arrivals |
-| G2 | Payout records per round | 🔨 | Engine logic shipped, persistence + finalize integration pending. Pure module `src/lib/payoutEngine/` (v3 cascade balancing per `docs/PAYOUT_ENGINE.md`) — abstract what-if mode + tie resolution, 101 tests incl. golden.csv contract. Sessions 2–4: DB records, finalize wiring, admin overrides. |
+| G2 | Payout records per round | 🔨 | Engine (S1) + persistence (S2) shipped; admin overrides + Winnings UI pending (S3–S4). S2: migration `016` (`round_payouts`, `fund_transactions`, `fund_balances` view, `persist_round_payouts`/`reverse_round_payouts` SECURITY-DEFINER RPCs, RLS read-only). `src/lib/payouts/persistRoundPayouts.ts` derives standings via `loadRoundResults`, runs the engine in tie mode, persists atomically after finalize; reopen reverses (append-only ledger). Funds: +$1/pl HiO, +$2/pl BFB, +sweep. No prod backfill of existing rounds (S3 import). |
 | G3 | Fund balance computed views | 📋 | Running totals: HiO fund, BFB fund. Computed from contributions − payouts. |
 | G4 | HiO Fund payout flow | 📋 | Manual button: "Pay out HiO Fund" creates payout record, resets fund. Logged for whenever a hole-in-one happens. |
 | G5 | BFB Fund yearly donation flow | 📋 | At end of season, admin records donation. Resets fund. |
