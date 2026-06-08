@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
+import { isTeamCardFormat } from "@/lib/format/helpers";
 import { getActiveSeason, type Season } from "@/lib/seasons";
 import {
   loadPlayedWith as loadPlayedWithBuckets,
@@ -86,7 +87,7 @@ export default function PlayerProfilePage() {
             tee_id,
             course_handicap,
             tees ( color ),
-            rounds!inner ( played_on, is_complete ),
+            rounds!inner ( played_on, is_complete, format ),
             scores ( hole_number, strokes )
           `)
           .eq("player_id", playerId)
@@ -115,7 +116,16 @@ export default function PlayerProfilePage() {
           }
 
           const results: RoundResult[] = roundPlayers
-            .filter((rp: any) => rp.scores && rp.scores.length > 0)
+            // Wave 1B: exclude team-card rounds (Shambles) from the per-player
+            // round history + GHIN-adjusted totals (scores aren't individual).
+            // They carry no `scores` rows so the length guard already drops
+            // them; the format check makes the contract explicit.
+            .filter(
+              (rp: any) =>
+                rp.scores &&
+                rp.scores.length > 0 &&
+                !isTeamCardFormat(rp.rounds?.format ?? null),
+            )
             .map((rp: any) => {
               const total_strokes = rp.scores.reduce(
                 (sum: number, s: any) => sum + (s.strokes || 0),

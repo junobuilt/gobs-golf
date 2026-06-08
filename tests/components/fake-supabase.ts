@@ -18,6 +18,10 @@ export interface FakeData {
   round_players: any[];
   players: any[];
   scores: any[];
+  // Wave 1B — team-card scores (Shambles). Optional; absent on individual-round
+  // seeds. execute() reads `(data as any)[table]`, so an absent key simply
+  // returns [] for a `from("team_scores")` select.
+  team_scores?: any[];
 }
 
 export type WriteOp =

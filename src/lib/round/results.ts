@@ -6,7 +6,7 @@
 import { supabase } from "@/lib/supabase";
 import { computeRoundResult, getPlayingStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
-import { getScoringBasis, getHandicapAllowance } from "@/lib/format/helpers";
+import { getScoringBasis, getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
 import {
   rankTeams,
   holesCompleteForTeam,
@@ -14,6 +14,13 @@ import {
   type RankedTeam,
 } from "@/lib/leaderboard/rank";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
+import { loadTeamScores } from "@/lib/round/teamScoresIo";
+import {
+  buildTeamScoreMap,
+  getTeamHoleTotal,
+  getTeamTotal,
+  holesScoredForTeam,
+} from "@/lib/round/teamScores";
 
 const F9 = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 const B9 = [10, 11, 12, 13, 14, 15, 16, 17, 18] as const;
@@ -89,6 +96,14 @@ export type TeamRow = {
   // the engine's draw order (round-start first, then dropouts by ascending
   // dropout hole). Roster rendering uses this list to lay out 🎲 captions.
   blindDraws: BlindDrawFill[];
+  // Wave 1B: present ONLY for team-card rounds (Shambles). The team's 18-hole
+  // row — `scores[i]` is the hole's summed team total (or null), `par[i]` the
+  // course par — for the summary/leaderboard expand, which shows ONE team row
+  // instead of per-player rows. Undefined for individual formats. Additive:
+  // existing consumers ignore it. For team-card rounds `players` is still
+  // populated (the roster) but score-less (holesPlayed 0), so payout headcount
+  // and the per-player surfaces behave correctly without reading this field.
+  teamGrid?: { scores: (number | null)[]; par: number[] };
 };
 
 export type LoadedRoundResults = {
@@ -224,6 +239,102 @@ export async function loadRoundResults(
     if (!teamMap[tn]) teamMap[tn] = [];
     teamMap[tn].push(rp);
   });
+
+  // Wave 1B: team-card branch. Team-card rounds (Shambles) score at the TEAM
+  // level in `team_scores` — there are NO per-player `scores` rows, and the
+  // per-player engine (computeHoleResult) throws for these formats. Build team
+  // rows directly from the team-score totals. `players` is kept populated (the
+  // roster) but score-less so payout headcount + the per-player filters behave;
+  // `teamGrid` carries the team's hole-by-hole row for the summary expand.
+  if (isTeamCardFormat(format)) {
+    const tsMap = buildTeamScoreMap(await loadTeamScores(roundId));
+
+    const teamRows: TeamRow[] = Object.entries(teamMap).map(([teamNumStr, teamPlayers]) => {
+      const teamNum = parseInt(teamNumStr);
+      const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
+      const teamHoles = holesByTee[firstTeeId] || [];
+      const parByHole: Record<number, number> = {};
+      teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
+
+      const gridScores: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
+        getTeamHoleTotal(tsMap, teamNum, i + 1),
+      );
+      const gridPar: number[] = Array.from({ length: 18 }, (_, i) => parByHole[i + 1] ?? 0);
+
+      const rawTeamScore = getTeamTotal(tsMap, teamNum);
+      let teamPar = 0;
+      for (let i = 0; i < 18; i++) if (gridScores[i] != null) teamPar += gridPar[i];
+      const total = rawTeamScore - teamPar; // signed delta vs par (lower = better)
+      const thru = holesScoredForTeam(tsMap, teamNum);
+
+      const legTotal = (holes: ReadonlyArray<number>): number | null => {
+        let scoreSum = 0, parSum = 0, any = false;
+        for (const h of holes) {
+          const t = getTeamHoleTotal(tsMap, teamNum, h);
+          if (t == null) continue;
+          scoreSum += t;
+          parSum += parByHole[h] ?? 0;
+          any = true;
+        }
+        return any ? scoreSum - parSum : null;
+      };
+
+      const rosterDisplay = (teamPlayers as any[]).map((rp: any) => {
+        const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+        return nameFor(rp.player_id as number, playerRow?.full_name);
+      }).join(" · ");
+
+      // Roster rows, score-less. holesPlayed 0 → excluded from the cross-team
+      // Individual Rankings; players.length still gives payout headcount/teamSize.
+      const players: PlayerRow[] = (teamPlayers as any[]).map((rp: any) => {
+        const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+        return {
+          rpId: rp.id as number,
+          displayName: nameFor(rp.player_id as number, playerRow?.full_name),
+          grossTotal: 0,
+          netValue: 0,
+          netTotal: 0,
+          holesPlayed: 0,
+          scores: Array.from({ length: 18 }, () => null),
+          par: gridPar.slice(),
+          adjScores: Array.from({ length: 18 }, () => null),
+          droppedAfterHole: rp.dropped_after_hole ?? null,
+        };
+      });
+
+      return {
+        id: teamNum,
+        name: `Team ${teamNum}`,
+        rosterDisplay,
+        total,
+        rawTeamScore,
+        teamPar,
+        thru,
+        f9Total: legTotal(F9),
+        b9Total: legTotal(B9),
+        players,
+        blindDraws: [],
+        teamGrid: { scores: gridScores, par: gridPar },
+      };
+    });
+
+    const ranked = rankTeams(teamRows, format);
+    const maxThru = teamRows.reduce((m, t) => Math.max(m, t.thru), 0);
+
+    return {
+      status: "ok",
+      data: {
+        playedOn: round.played_on,
+        isComplete: round.is_complete,
+        roundId,
+        format,
+        formatConfig,
+        formatLocked: round.format_locked_at != null,
+        teams: ranked,
+        maxThru,
+      },
+    };
+  }
 
   const useGross = getScoringBasis(formatConfig) === "gross";
   // Wave 1A: per-round handicap allowance. Scales every player's raw CH before

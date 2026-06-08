@@ -17,7 +17,7 @@
 import { useState } from "react";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { isStablefordFormat, type RankedTeam } from "@/lib/leaderboard/rank";
-import { getScoringBasis } from "@/lib/format/helpers";
+import { getScoringBasis, isTeamCardFormat } from "@/lib/format/helpers";
 import type { Format, FormatConfig } from "@/lib/scoring";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
@@ -146,7 +146,11 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
                 onTogglePlayer={togglePlayer}
               />
             ))}
-            <IndividualRankings teams={data.teams} format={data.format} />
+            {/* Wave 1B: team-card rounds have no per-player scores, so there is
+                no cross-team individual ranking to show. */}
+            {!isTeamCardFormat(data.format) && (
+              <IndividualRankings teams={data.teams} format={data.format} />
+            )}
           </>
         )}
       </div>
@@ -255,6 +259,7 @@ function TeamCard({
   onTogglePlayer: (rpId: number) => void;
 }) {
   const isStableford = isStablefordFormat(format);
+  const isTeamCard = isTeamCardFormat(format);
   const totalColor = scoreColor(team.total, isStableford);
   const { dropoutPairings, roundStartFills, unmatchedPlayers } = pairBlindDraws(team);
   // Map for quick lookup during PlayerSection rendering.
@@ -356,33 +361,47 @@ function TeamCard({
 
       {isTeamExpanded && (
         <div style={{ borderTop: `1px solid ${C.divider}`, background: "white" }}>
-          {team.players.map((player, idx) => {
-            const fill = dropoutFillByRpId.get(player.rpId);
-            const isLastRow =
-              idx === team.players.length - 1 && roundStartFills.length === 0;
-            return (
-              <PlayerSection
-                key={player.rpId}
-                player={player}
-                format={format}
-                formatConfig={formatConfig}
-                expanded={expandedPlayers.has(player.rpId)}
-                isLast={isLastRow}
-                onToggle={() => onTogglePlayer(player.rpId)}
-                dropoutFill={fill}
-                isUnmatchedDropout={unmatchedSet.has(player.rpId)}
+          {isTeamCard ? (
+            // Wave 1B: team-card rounds show ONE team hole-by-hole row (the
+            // team's summed score per hole), not per-player rows — there are
+            // no individual scores.
+            <div style={{ padding: "12px 14px" }}>
+              <PlayerHoleGrid
+                scores={team.teamGrid?.scores ?? Array.from({ length: 18 }, () => null)}
+                par={team.teamGrid?.par ?? Array.from({ length: 18 }, () => 0)}
               />
-            );
-          })}
-          {roundStartFills.map((fill, idx) => (
-            <BlindDrawPseudoPlayerSection
-              key={`bd-fill-${idx}`}
-              fill={fill}
-              format={format}
-              formatConfig={formatConfig}
-              isLast={idx === roundStartFills.length - 1}
-            />
-          ))}
+            </div>
+          ) : (
+            <>
+              {team.players.map((player, idx) => {
+                const fill = dropoutFillByRpId.get(player.rpId);
+                const isLastRow =
+                  idx === team.players.length - 1 && roundStartFills.length === 0;
+                return (
+                  <PlayerSection
+                    key={player.rpId}
+                    player={player}
+                    format={format}
+                    formatConfig={formatConfig}
+                    expanded={expandedPlayers.has(player.rpId)}
+                    isLast={isLastRow}
+                    onToggle={() => onTogglePlayer(player.rpId)}
+                    dropoutFill={fill}
+                    isUnmatchedDropout={unmatchedSet.has(player.rpId)}
+                  />
+                );
+              })}
+              {roundStartFills.map((fill, idx) => (
+                <BlindDrawPseudoPlayerSection
+                  key={`bd-fill-${idx}`}
+                  fill={fill}
+                  format={format}
+                  formatConfig={formatConfig}
+                  isLast={idx === roundStartFills.length - 1}
+                />
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

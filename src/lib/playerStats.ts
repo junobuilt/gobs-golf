@@ -1,4 +1,6 @@
 import { supabase } from "@/lib/supabase";
+import { isTeamCardFormat } from "@/lib/format/helpers";
+import type { Format } from "@/lib/scoring/types";
 
 export type PlayerStatsFilter = {
   startDate?: string;
@@ -45,7 +47,7 @@ export async function fetchPlayerStats(
       `
         round_id,
         course_handicap,
-        rounds!inner ( played_on, is_complete ),
+        rounds!inner ( played_on, is_complete, format ),
         scores ( strokes )
       `,
     )
@@ -63,7 +65,7 @@ export async function fetchPlayerStats(
   if (error || !data) return EMPTY_STATS;
 
   type ScoreRow = { strokes: number | null };
-  type RoundRow = { played_on: string | null; is_complete: boolean | null };
+  type RoundRow = { played_on: string | null; is_complete: boolean | null; format: Format | null };
   type Row = {
     round_id: number;
     course_handicap: number | null;
@@ -85,9 +87,14 @@ export async function fetchPlayerStats(
         totalStrokes,
         scoreCount: scores.length,
         courseHandicap: rp.course_handicap,
+        isTeamCard: isTeamCardFormat(roundsRel?.format ?? null),
       };
     })
-    .filter((r) => r.scoreCount > 0 && r.playedOn !== "");
+    // Wave 1B: exclude team-card rounds (Shambles) from per-player scoring
+    // stats — the scores aren't individual. They also have no `scores` rows so
+    // scoreCount already excludes them, but the explicit format filter makes
+    // this load-bearing contract intentional + robust.
+    .filter((r) => r.scoreCount > 0 && r.playedOn !== "" && !r.isTeamCard);
 
   if (rounds.length === 0) return EMPTY_STATS;
 

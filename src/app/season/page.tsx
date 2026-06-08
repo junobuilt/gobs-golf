@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { computePlayerRoundTotal } from "@/lib/scoring";
+import { isTeamCardFormat } from "@/lib/format/helpers";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface PlayerStats {
@@ -57,7 +58,7 @@ export default function LeaderboardPage() {
       // Get all completed rounds
       const { data: rounds } = await supabase
         .from("rounds")
-        .select("id")
+        .select("id, format")
         .eq("is_complete", true);
 
       if (!rounds || rounds.length === 0) {
@@ -65,7 +66,18 @@ export default function LeaderboardPage() {
         return;
       }
 
-      const roundIds = rounds.map(r => r.id);
+      // Wave 1B: exclude team-card rounds (Shambles) from per-player season
+      // stats — the scores aren't individual. (They also carry no `scores`
+      // rows, so the <9-holes guard below already drops them; this makes the
+      // exclusion explicit for the load-bearing contract.)
+      const roundIds = rounds
+        .filter((r: any) => !isTeamCardFormat(r.format ?? null))
+        .map(r => r.id);
+
+      if (roundIds.length === 0) {
+        setLoading(false);
+        return;
+      }
 
       // Get all round_players for completed rounds
       const { data: rps } = await supabase

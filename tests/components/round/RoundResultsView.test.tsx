@@ -17,6 +17,7 @@ vi.mock("@/lib/supabase", () => ({
 import RoundResultsView from "@/components/round/RoundResultsView";
 import type { LoadedRoundResults, TeamRow } from "@/lib/round/results";
 import type { RankedTeam } from "@/lib/leaderboard/rank";
+import type { Format } from "@/lib/scoring";
 
 const PAR_18 = [4, 4, 4, 3, 5, 4, 3, 5, 4, 4, 4, 3, 5, 4, 3, 5, 4, 4];
 const SCORES_18: (number | null)[] = Array(18).fill(4);
@@ -113,5 +114,27 @@ describe("RoundResultsView — per-team score caption", () => {
       const html = renderToString(<RoundResultsView data={data} />);
       expect(html).not.toContain("Net pts");
     }
+  });
+});
+
+describe("RoundResultsView — team-card (Shambles)", () => {
+  // Players carry holesPlayed 18, so the cross-team Individual Rankings section
+  // WOULD render if it weren't gated — a true negative control for the gate.
+  function teamCardData(format: Format): LoadedRoundResults {
+    const base = makeData(true, [makeTeam(1, 18, 1), makeTeam(2, 18, 2)]);
+    return {
+      ...base,
+      format,
+      teams: base.teams.map(t => ({ ...t, teamGrid: { scores: SCORES_18, par: PAR_18 } })),
+    };
+  }
+
+  it("hides Individual Rankings for team-card (present for an individual format)", () => {
+    expect(renderToString(<RoundResultsView data={teamCardData("2_ball")} />)).toContain("Individual Rankings");
+    expect(renderToString(<RoundResultsView data={teamCardData("shambles")} />)).not.toContain("Individual Rankings");
+  });
+
+  it("still renders the team headline (FINAL) for team-card", () => {
+    expect(renderToString(<RoundResultsView data={teamCardData("shambles")} />)).toContain("FINAL");
   });
 });
