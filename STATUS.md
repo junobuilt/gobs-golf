@@ -2,8 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (G2 S2 — payout + fund persistence)
-**Session purpose:** Persisted payout + fund movements at finalize. Migration `016` adds `round_payouts`, the append-only `fund_transactions` ledger, the `fund_balances` view, and two SECURITY-DEFINER RPCs (`persist_round_payouts` idempotent, `reverse_round_payouts`), with RLS enabled + read-only public policies (writes only via the RPCs). New `src/lib/payouts/persistRoundPayouts.ts` derives post-blind-draw standings via `loadRoundResults`, runs the frozen engine in tie mode, and persists atomically after finalize at both finalize sites; `reopenRound` reverses. Verified by a transaction-wrapped dry-run on prod (ROLLBACK) since branching needs Pro, then **applied to prod** (objects verified; existing rounds NOT backfilled). **Suite 550 → 562/562; `tsc --noEmit` clean.**
+**Last updated:** 2026-06-07 (G2 S4a — read-only Winnings tab)
+**Session purpose:** Built the admin **Winnings** tab (read-only): global Fund Balances + Recent Transactions (from the `fund_balances` view / `fund_transactions`), a what-if Calculator (abstract `calculatePayouts`, displays engine output verbatim), and season-scoped Historical Payouts (expandable per-team rows, override badge, CSV export). No writes, no RPCs, no migration (reset + override are S4b). New `src/lib/payouts/loadWinnings.ts` (read-only fetch + CSV) + `winningsMoney.ts` (pure, supabase-free money helpers mirroring S2). Registered as a sibling admin tab. **Suite 562 → 581/581; `tsc --noEmit` clean.** Also fixed a pre-existing S1 flake (engine property-fuzz test crossed the 5s default timeout under load → raised to 20s).
+
+---
+
+## 2026-06-07 (G2 S4a — read-only Winnings tab)
+
+### Where we left off
+
+**The admin Winnings tab exists (read-only).** Sibling tab between History and Settings, PIN-gated like the rest. Layout per `docs/payout_ui_mockups.html`: Funds + Calculator on the top row (auto-fit → stacked on mobile), Historical Payouts full-width below.
+
+- **FundsPanel** (`src/components/winnings/FundsPanel.tsx`) — GLOBAL (no season toggle): BFB + HiO cards from the `fund_balances` view; Recent Transactions (latest 8 `fund_transactions`, newest-first, signed, friendly reason labels). **No Reset button** (S4b). Subtitle worded globally ("N contributions" / "No hole-in-one payout yet") — deviates from the mockup's "this season" text because funds are season-independent (locked decision).
+- **CalculatorPanel** — pure: `players` (number input, default 24) + `team_size` (select); `balance = players × (buyIn − 3)`; calls `calculatePayouts({players, team_size, balance})` abstract and renders per-place `$/player`, total, sweep verbatim. `players < 2×team_size` → "Not enough players for a payout."
+- **HistoryPanel** — season-scoped via the reused `SeasonToggle` (navy, default This season): one row per finalized round with payout rows, newest-first; header date + format + "N plyrs · M teams" + "$paid · $sweep to BFB"; stats Contributed/HiO/BFB/Balance; **Admin Override** badge when any payout row `was_overridden`; tap → per-team rows (gold rank badge for 1st; tied teams "T{place}" + 🤝); **Export CSV** (one row per team-payout) respecting season scope; empty state.
+- **`src/lib/payouts/loadWinnings.ts`** (read-only): `loadFundBalances`, `loadRecentFundTransactions`, `loadWinningsHistory(seasonId, buyIn)` (round_payouts ⋈ rounds!inner ⋈ round_players for rosters/headcount; money mirrors S2), `winningsToCsv`. **`src/lib/payouts/winningsMoney.ts`** holds the pure money helpers (no supabase) so the calculator/tab don't drag in the DB client.
+
+**Money derivation** mirrors S2 (`persistRoundPayouts.ts`, frozen): `buyIn = settings.buy_in_amount ?? "10"`; per round `contributed = headcount×buyIn`, `hio = ×1`, `bfb = ×2`, `balance = ×(buyIn−3)`; `paid = Σ total_for_team` (authoritative, from `round_payouts`); `sweepToBfb = balance − paid`. `num_teams`/`headcount` from `round_players` (payout rows only cover placing teams).
+
+**Files:** NEW `src/app/admin/tabs/Winnings.tsx`, `src/components/winnings/{FundsPanel,CalculatorPanel,HistoryPanel}.tsx`, `src/lib/payouts/{loadWinnings,winningsMoney}.ts`, `tests/lib/payouts/loadWinnings.test.ts`, `tests/components/winnings/{CalculatorPanel,FundsPanel,HistoryPanel}.test.tsx`. MODIFIED `src/app/admin/page.tsx` (register tab + pass `settings`), `tests/lib/payoutEngine/engine.test.ts` (flake timeout), ROADMAP/STATUS.
+
+**Tests:** 19 new (lib money math + query contracts incl. season-filter & out-of-order negative controls + CSV; Calculator matches engine incl. golden 24/2 → 25/23/20/16 + not-enough-players; Funds render/order/no-reset; History expand + override-badge-only-when-set + season-toggle filter + empty state). **581/581; `tsc` clean** (3 consecutive green runs after the flake fix).
+
+### Today's commits
+
+- (this session) feat(winnings): G2 S4a — read-only admin Winnings tab (funds, calculator, history)
+
+### DB changes (today)
+
+- **None.** Read-only session. `round_payouts` is still empty in prod (no finalized rounds since S2) → History shows its empty state live; Funds show $0.
+
+### Tomorrow's priority
+
+1. **G2 S4b** — fund Reset modal/RPC + payout override editing (the write surfaces; modals already in the mockup).
+2. **G2 S3** — historical import/backfill of past finalized rounds' payouts.
+3. **Session 5** — Leaderboard + Round Summary payout displays (mockups present).
+
+### Considered but not changed (confession)
+
+- **Funds subtitle wording** — global ("N contributions") rather than the mockup's "this season" (funds are season-independent per the locked decision). Approved.
+- **History tie rendering** ("T{place}" + 🤝) extrapolated from the leaderboard mockup; History ties aren't explicitly drawn. Approved.
+- **Buy-in for historical stats** uses the current `buy_in_amount` fallback (same reader as S2); if buy-in ever changes, past rounds' Contributed/Balance reflect the current setting (`paid` is always authoritative). Academic today (buy-in unset → $10).
+- **Money constants duplicated** in `winningsMoney.ts` because `persistRoundPayouts.ts` is frozen (can't add exports). Comment pins it as the source of truth.
+- **Pre-existing flake fixed (out of original scope):** the S1 engine property-fuzz test (~54k runs) intermittently crossed vitest's 5s default timeout under parallel load. Raised that one test's timeout to 20s — no behavior change. Disclosed here since it's outside the Winnings file set.
+- **Not live click-tested** — `/admin` is PIN-gated and local `.env.local` has no `ADMIN_PIN` (same gap as prior admin sessions); covered by the 19 component/lib tests. `round_payouts` empty in prod anyway, so History would show the empty state live.
+- **Out of scope (untouched):** `payoutEngine/*`, `golden.csv`, migration 016 objects, `persistRoundPayouts.ts`, finalize/reopen paths, Leaderboard/Summary (S5), reset/override (S4b).
 
 ---
 

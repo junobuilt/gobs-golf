@@ -117,7 +117,8 @@ describe("payout engine — structural invariants (abstract mode)", () => {
         }
       }
     }
-  });
+  }, 20000); // ~54k engine runs; raise above the 5s default so it can't flake
+             // on a timeout under parallel suite load.
 
   it("number of places paid matches the §7 Step 1 target ladder", () => {
     // 2 teams → 1, 3 → 2, 4–5 → 3, ≥6 → 4. Use a balance large enough that no

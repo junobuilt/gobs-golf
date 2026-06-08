@@ -6,6 +6,7 @@ import RoundSetup from "./tabs/RoundSetup";
 import Players from "./tabs/Players";
 import PlayedWith from "./tabs/PlayedWith";
 import History from "./tabs/History";
+import Winnings from "./tabs/Winnings";
 import Settings from "./tabs/Settings";
 
 export type Player = {
@@ -19,7 +20,7 @@ export type Player = {
 
 export type LeagueSettings = Record<string, string>;
 
-const TABS = ["Round Setup", "Players", "Played-with", "History", "Settings"] as const;
+const TABS = ["Round Setup", "Players", "Played-with", "History", "Winnings", "Settings"] as const;
 type Tab = typeof TABS[number];
 
 const C = {
@@ -154,6 +155,9 @@ export default function AdminPage() {
         )}
         {activeTab === "History" && (
           <History />
+        )}
+        {activeTab === "Winnings" && (
+          <Winnings settings={settings} />
         )}
         {activeTab === "Settings" && (
           <Settings settings={settings} onRefresh={refreshSettings} />
