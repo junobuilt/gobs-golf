@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOBS — Payout UI Mockups</title>
+<style>
+  :root {
+    --navy: #0c3057;
+    --navy-light: #0f4a7a;
+    --navy-deep: #042C53;
+    --bg-warm: #f5f4f0;
+    --bg-page: #e8e6e1;
+    --card-bg: #ffffff;
+    --card-border: #e2e0db;
+    --text-primary: #1a1a1a;
+    --text-secondary: #6b6b6b;
+    --text-muted: #9a9a9a;
+    --accent-blue: #2563eb;
+    --accent-green: #15803d;
+    --accent-red: #b91c1c;
+    --accent-amber: #b45309;
+    --gold: #d4a017;
+    --gold-bg: #faf3dc;
+    --score-under: #15803d;
+    --score-over: #b91c1c;
+    --score-even: #1a1a1a;
+    --money-bg: #ebf5ee;
+    --money-text: #166534;
+    --rank-bg: #0c3057;
+    --rank-text: #ffffff;
+    --rank-gold: #d4a017;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    padding: 30px 20px 80px;
+    line-height: 1.4;
+  }
+  .page-header {
+    max-width: 1400px;
+    margin: 0 auto 30px;
+    text-align: center;
+  }
+  .page-header h1 {
+    color: var(--navy);
+    font-size: 26px;
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+  }
+  .page-header p {
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .nav-tabs {
+    max-width: 1400px;
+    margin: 0 auto 30px;
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: white;
+    padding: 6px;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .nav-tab {
+    padding: 10px 18px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .nav-tab:hover { background: var(--bg-warm); color: var(--text-primary); }
+  .nav-tab.active {
+    background: var(--navy);
+    color: white;
+  }
+  .section {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: none;
+  }
+  .section.active { display: block; }
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-secondary);
+    margin-bottom: 18px;
+    text-align: center;
+  }
+  .mockups-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 30px;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .mockup-card {
+    background: white;
+    border-radius: 16px;
+    padding: 22px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .mockup-card.mobile { width: 380px; }
+  .mockup-card.desktop { width: 920px; max-width: 100%; }
+  .mockup-card.tablet { width: 600px; }
+  .mockup-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--card-border);
+  }
+  .mockup-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin-top: 10px;
+  }
+
+  /* ==================== Phone frame ==================== */
+  .phone-frame {
+    background: var(--bg-warm);
+    border-radius: 28px;
+    padding: 10px;
+    border: 8px solid #2a2a2a;
+    width: 360px;
+  }
+  .phone-inner {
+    background: var(--bg-warm);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+
+  /* ==================== App header ==================== */
+  .app-header {
+    background: var(--navy);
+    color: white;
+    padding: 14px 16px;
+  }
+  .app-title { font-weight: 700; font-size: 16px; }
+  .app-sub { font-size: 11px; opacity: 0.85; letter-spacing: 0.3px; }
+
+  /* Admin tab nav */
+  .admin-tabs {
+    background: var(--navy-deep);
+    display: flex;
+    border-bottom: 2px solid #021a36;
+    overflow-x: auto;
+  }
+  .admin-tab {
+    padding: 12px 14px;
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+  }
+  .admin-tab.active {
+    color: white;
+    border-bottom-color: var(--gold);
+  }
+
+  /* ==================== Round summary block ==================== */
+  .round-summary-block {
+    padding: 16px;
+    background: white;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .round-summary-block h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+  }
+  .round-meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .round-date {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--navy-deep);
+  }
+  .round-stats {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .status-chip {
+    display: inline-block;
+    padding: 3px 8px;
+    background: var(--accent-green);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+  }
+  .status-chip.in-progress { background: var(--accent-amber); }
+
+  /* ==================== Team rows ==================== */
+  .team-row {
+    background: white;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .rank-badge {
+    width: 32px;
+    height: 32px;
+    background: var(--rank-bg);
+    color: var(--rank-text);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .rank-badge.gold {
+    background: var(--rank-gold);
+    color: var(--navy-deep);
+  }
+  .team-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .team-name {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--navy-deep);
+    margin-bottom: 2px;
+  }
+  .team-roster {
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 4px;
+  }
+  .team-f9b9 {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.4px;
+  }
+  .team-score {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .score-big {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .score-big.under { color: var(--score-under); }
+  .score-big.over { color: var(--score-over); }
+  .score-big.even { color: var(--score-even); }
+  .score-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+
+  /* ==================== PAYOUT-SPECIFIC styles ==================== */
+  .payout-pill {
+    background: var(--money-bg);
+    color: var(--money-text);
+    font-weight: 700;
+    font-size: 13px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    border: 1px solid #d3e7da;
+  }
+  .payout-pill::before { content: '💰'; font-size: 11px; }
+  .payout-pill.no-pay {
+    background: #f3f3f1;
+    color: var(--text-muted);
+    border-color: #e5e4e0;
+  }
+  .payout-pill.no-pay::before { content: '—'; }
+  .payout-pill.tied {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fcd96b;
+  }
+
+  .player-payout-line {
+    font-size: 11px;
+    color: var(--money-text);
+    font-weight: 600;
+    margin-left: 6px;
+  }
+
+  /* ==================== Winnings tab page ==================== */
+  .winnings-page {
+    padding: 0;
+  }
+  .winnings-page-mobile {
+    background: var(--bg-warm);
+  }
+  .panel {
+    background: white;
+    border-radius: 12px;
+    margin: 12px;
+    padding: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .panel-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .panel-title-with-action {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .panel-title-with-action .panel-title {
+    margin: 0; padding: 0; border: none;
+  }
+
+  /* Fund cards */
+  .fund-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .fund-card {
+    background: linear-gradient(135deg, var(--gold-bg) 0%, #f8eed1 100%);
+    border-radius: 10px;
+    padding: 14px;
+    border: 1px solid #ecd99c;
+    position: relative;
+  }
+  .fund-card.hio {
+    background: linear-gradient(135deg, #e6f0fa 0%, #d4e6f5 100%);
+    border-color: #b3d4f0;
+  }
+  .fund-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+  .fund-amount {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    line-height: 1;
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fund-subtitle {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .fund-reset-btn {
+    background: white;
+    border: 1px solid #d0c89a;
+    color: var(--accent-amber);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 8px;
+    width: 100%;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .fund-card.hio .fund-reset-btn {
+    border-color: #99c2e6;
+    color: var(--navy-light);
+  }
+
+  /* Calculator */
+  .calculator-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .input-group {
+    display: flex;
+    flex-direction: column;
+  }
+  .input-group label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .input-group select, .input-group input {
+    padding: 8px 10px;
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    color: var(--navy-deep);
+    font-weight: 600;
+  }
+  .calc-result {
+    background: var(--bg-warm);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .calc-result-header {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+  }
+  .calc-payout-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 13px;
+  }
+  .calc-payout-row:last-of-type { border-bottom: none; }
+  .calc-payout-row .place {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .calc-payout-row .amount {
+    font-weight: 700;
+    color: var(--money-text);
+    font-variant-numeric: tabular-nums;
+  }
+  .calc-summary {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 10px;
+    margin-top: 6px;
+    border-top: 2px solid var(--card-border);
+    font-size: 11px;
+  }
+  .calc-summary span:first-child { color: var(--text-secondary); }
+  .calc-summary span:last-child {
+    font-weight: 700;
+    color: var(--navy-deep);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Historical payouts list */
+  .history-row {
+    background: var(--bg-warm);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .history-row:hover { background: #ebe9e3; }
+  .history-row-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .history-date {
+    font-weight: 700;
+    color: var(--navy-deep);
+    font-size: 14px;
+  }
+  .history-format {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+  }
+  .history-stats {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex-wrap: wrap;
+  }
+  .history-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+  }
+  .history-stat strong {
+    color: var(--navy-deep);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .history-row.expanded {
+    background: white;
+    border: 1px solid var(--card-border);
+  }
+  .history-expanded-content {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--card-border);
+    font-size: 12px;
+  }
+  .history-team-payout {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px dashed #ecebe6;
+  }
+  .history-team-payout:last-child { border-bottom: none; }
+  .history-team-name {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .history-team-roster {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .history-team-pay {
+    color: var(--money-text);
+    font-weight: 700;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .history-team-pay-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-align: right;
+  }
+  .history-fund-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .history-fund-row strong {
+    color: var(--navy-deep);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Section header in panel */
+  .subsection-header {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.6px;
+    margin: 12px 0 6px;
+    font-weight: 700;
+  }
+  .subsection-header:first-child { margin-top: 0; }
+
+  /* Override note */
+  .override-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-left: 6px;
+  }
+
+  /* Round summary detail (expanded team) */
+  .player-rows {
+    background: #fafaf8;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .player-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px dashed #ecebe6;
+  }
+  .player-row:last-child { border-bottom: none; }
+  .player-name {
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  .player-stats {
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    font-size: 12px;
+  }
+  .player-stat-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .player-stat-val {
+    font-weight: 700;
+    color: var(--navy-deep);
+    font-variant-numeric: tabular-nums;
+  }
+  .player-stat-val.money { color: var(--money-text); }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-transform: none;
+  }
+  .btn-primary {
+    background: var(--navy);
+    color: white;
+  }
+  .btn-secondary {
+    background: white;
+    color: var(--navy);
+    border: 1px solid var(--navy);
+  }
+  .btn-small {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  /* Empty state */
+  .empty-state {
+    padding: 30px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* Annotations */
+  .annotation {
+    background: #fffaeb;
+    border-left: 3px solid var(--gold);
+    padding: 8px 12px;
+    margin: 12px 0;
+    font-size: 12px;
+    color: #78350f;
+    border-radius: 0 6px 6px 0;
+  }
+  .annotation strong {
+    color: var(--accent-amber);
+  }
+
+  /* Desktop layout for Winnings tab */
+  .winnings-desktop {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    padding: 16px;
+  }
+  .winnings-desktop .full-width {
+    grid-column: 1 / -1;
+  }
+
+  /* Modal mockup */
+  .modal-overlay {
+    background: rgba(0,0,0,0.55);
+    padding: 28px;
+    border-radius: 16px;
+  }
+  .modal-box {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 320px;
+    margin: 0 auto;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+  }
+  .modal-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent-red);
+    margin-bottom: 8px;
+  }
+  .modal-body {
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  /* Mobile/desktop comparison label */
+  .device-label {
+    text-align: center;
+    margin-bottom: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>GOBS — Payout UI Mockups</h1>
+  <p>Click the tabs below to explore each surface. Desktop and mobile views side-by-side where applicable.</p>
+</div>
+
+<div class="nav-tabs">
+  <button class="nav-tab active" onclick="showSection('winnings-desktop')">Winnings Tab (Desktop)</button>
+  <button class="nav-tab" onclick="showSection('winnings-mobile')">Winnings Tab (Mobile)</button>
+  <button class="nav-tab" onclick="showSection('leaderboard')">Leaderboard w/ Payouts</button>
+  <button class="nav-tab" onclick="showSection('summary')">Round Summary w/ Payouts</button>
+  <button class="nav-tab" onclick="showSection('modals')">Reset Confirmation Modals</button>
+</div>
+
+<!-- ==================== WINNINGS TAB (DESKTOP) ==================== -->
+<div id="winnings-desktop" class="section active">
+  <div class="section-label">Admin Panel → Winnings Tab — Desktop / Laptop</div>
+
+  <div class="mockup-card desktop">
+    <div class="mockup-label">Winnings Tab — Full Desktop View</div>
+
+    <div style="background: var(--bg-warm); border-radius: 8px; overflow: hidden;">
+      <!-- Admin tab bar -->
+      <div class="admin-tabs">
+        <div class="admin-tab">Round Setup</div>
+        <div class="admin-tab">Players</div>
+        <div class="admin-tab">Played With</div>
+        <div class="admin-tab">History</div>
+        <div class="admin-tab active">Winnings</div>
+        <div class="admin-tab">Settings</div>
+      </div>
+
+      <div class="winnings-desktop">
+
+        <!-- LEFT: Fund balances -->
+        <div class="panel">
+          <div class="panel-title">Fund Balances</div>
+          <div class="fund-cards">
+            <div class="fund-card">
+              <div class="fund-label">BFB Fund</div>
+              <div class="fund-amount">$184</div>
+              <div class="fund-subtitle">12 contributions this season</div>
+              <button class="fund-reset-btn">Reset Fund...</button>
+            </div>
+            <div class="fund-card hio">
+              <div class="fund-label">HiO Fund</div>
+              <div class="fund-amount">$92</div>
+              <div class="fund-subtitle">No hole-in-one since season start</div>
+              <button class="fund-reset-btn">Reset Fund...</button>
+            </div>
+          </div>
+          <div style="margin-top: 14px;">
+            <div class="subsection-header">Recent Transactions</div>
+            <div class="history-fund-row"><span>2026-05-28 · BFB contribution</span><strong>+$48</strong></div>
+            <div class="history-fund-row"><span>2026-05-21 · BFB contribution</span><strong>+$36</strong></div>
+            <div class="history-fund-row"><span>2026-05-14 · BFB contribution</span><strong>+$50</strong></div>
+            <div class="history-fund-row" style="color: var(--accent-red);"><span>2026-04-30 · BFB donation (Blaine Food Bank)</span><strong>−$320</strong></div>
+          </div>
+        </div>
+
+        <!-- RIGHT: What-if calculator -->
+        <div class="panel">
+          <div class="panel-title">What-if Calculator</div>
+          <div class="calculator-grid">
+            <div class="input-group">
+              <label># of Players</label>
+              <select><option>24</option></select>
+            </div>
+            <div class="input-group">
+              <label>Team Size</label>
+              <select><option>2-player teams</option></select>
+            </div>
+          </div>
+          <div class="calc-result">
+            <div class="calc-result-header">Projected Payouts (12 teams, $168 balance)</div>
+            <div class="calc-payout-row">
+              <span class="place">1st place team</span>
+              <span class="amount">$25/player</span>
+            </div>
+            <div class="calc-payout-row">
+              <span class="place">2nd place team</span>
+              <span class="amount">$23/player</span>
+            </div>
+            <div class="calc-payout-row">
+              <span class="place">3rd place team</span>
+              <span class="amount">$20/player</span>
+            </div>
+            <div class="calc-payout-row">
+              <span class="place">4th place team</span>
+              <span class="amount">$16/player</span>
+            </div>
+            <div class="calc-summary">
+              <span>Total paid out</span>
+              <span>$168</span>
+            </div>
+            <div class="calc-summary" style="border-top: none; padding-top: 4px;">
+              <span>Sweep to BFB</span>
+              <span>$0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- FULL WIDTH: Historical payouts -->
+        <div class="panel full-width">
+          <div class="panel-title-with-action">
+            <div class="panel-title">Historical Payouts (2026 Season)</div>
+            <button class="btn btn-secondary btn-small">Export CSV</button>
+          </div>
+
+          <!-- Expanded row -->
+          <div class="history-row expanded">
+            <div class="history-row-header">
+              <div>
+                <span class="history-date">May 28, 2026</span>
+                <span class="history-format" style="margin-left: 8px;">2-Ball · 24 plyrs · 12 teams</span>
+              </div>
+              <div style="color: var(--money-text); font-weight: 700;">$168 paid · $0 to BFB</div>
+            </div>
+            <div class="history-stats">
+              <div class="history-stat">Contributed: <strong>$240</strong></div>
+              <div class="history-stat">HiO: <strong>$24</strong></div>
+              <div class="history-stat">BFB: <strong>$48</strong></div>
+              <div class="history-stat">Balance: <strong>$168</strong></div>
+            </div>
+            <div class="history-expanded-content">
+              <div class="subsection-header">Team Payouts</div>
+              <div class="history-team-payout">
+                <div>
+                  <div class="history-team-name"><span class="rank-badge gold" style="width: 18px; height: 18px; font-size: 10px; display: inline-flex; vertical-align: middle; margin-right: 6px;">1</span>Team 1</div>
+                  <div class="history-team-roster">Bill C · Dave K</div>
+                </div>
+                <div>
+                  <div class="history-team-pay">$50</div>
+                  <div class="history-team-pay-meta">$25/player × 2</div>
+                </div>
+              </div>
+              <div class="history-team-payout">
+                <div>
+                  <div class="history-team-name"><span class="rank-badge" style="width: 18px; height: 18px; font-size: 10px; display: inline-flex; vertical-align: middle; margin-right: 6px;">2</span>Team 7</div>
+                  <div class="history-team-roster">Wayne V · Jeff I</div>
+                </div>
+                <div>
+                  <div class="history-team-pay">$46</div>
+                  <div class="history-team-pay-meta">$23/player × 2</div>
+                </div>
+              </div>
+              <div class="history-team-payout">
+                <div>
+                  <div class="history-team-name"><span class="rank-badge" style="width: 18px; height: 18px; font-size: 10px; display: inline-flex; vertical-align: middle; margin-right: 6px;">3</span>Team 4</div>
+                  <div class="history-team-roster">Ward C · Alan W</div>
+                </div>
+                <div>
+                  <div class="history-team-pay">$40</div>
+                  <div class="history-team-pay-meta">$20/player × 2</div>
+                </div>
+              </div>
+              <div class="history-team-payout">
+                <div>
+                  <div class="history-team-name"><span class="rank-badge" style="width: 18px; height: 18px; font-size: 10px; display: inline-flex; vertical-align: middle; margin-right: 6px;">4</span>Team 9</div>
+                  <div class="history-team-roster">Norm C · Gary T</div>
+                </div>
+                <div>
+                  <div class="history-team-pay">$32</div>
+                  <div class="history-team-pay-meta">$16/player × 2</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Collapsed rows -->
+          <div class="history-row">
+            <div class="history-row-header">
+              <div>
+                <span class="history-date">May 21, 2026</span>
+                <span class="history-format" style="margin-left: 8px;">3-Ball · 18 plyrs · 6 teams</span>
+              </div>
+              <div style="color: var(--money-text); font-weight: 700;">$120 paid · $6 to BFB</div>
+            </div>
+            <div class="history-stats">
+              <div class="history-stat">Contributed: <strong>$180</strong></div>
+              <div class="history-stat">HiO: <strong>$18</strong></div>
+              <div class="history-stat">BFB: <strong>$36</strong></div>
+              <div class="history-stat">Balance: <strong>$126</strong></div>
+            </div>
+          </div>
+
+          <div class="history-row">
+            <div class="history-row-header">
+              <div>
+                <span class="history-date">May 14, 2026</span>
+                <span class="history-format" style="margin-left: 8px;">Best Ball · 20 plyrs · 5 teams (4-per)</span>
+                <span class="override-badge">Admin Override</span>
+              </div>
+              <div style="color: var(--money-text); font-weight: 700;">$140 paid · $0 to BFB</div>
+            </div>
+            <div class="history-stats">
+              <div class="history-stat">Contributed: <strong>$200</strong></div>
+              <div class="history-stat">HiO: <strong>$20</strong></div>
+              <div class="history-stat">BFB: <strong>$40</strong></div>
+              <div class="history-stat">Balance: <strong>$140</strong></div>
+            </div>
+          </div>
+
+          <div class="history-row">
+            <div class="history-row-header">
+              <div>
+                <span class="history-date">May 7, 2026</span>
+                <span class="history-format" style="margin-left: 8px;">2-Ball · 16 plyrs · 8 teams</span>
+              </div>
+              <div style="color: var(--money-text); font-weight: 700;">$112 paid · $0 to BFB</div>
+            </div>
+            <div class="history-stats">
+              <div class="history-stat">Contributed: <strong>$160</strong></div>
+              <div class="history-stat">HiO: <strong>$16</strong></div>
+              <div class="history-stat">BFB: <strong>$32</strong></div>
+              <div class="history-stat">Balance: <strong>$112</strong></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup-note">
+      Tap any history row to expand and see team-level payouts. "Admin Override" badge appears when payouts were manually edited from engine defaults. Reset buttons trigger confirmation modals (see Modals tab).
+    </div>
+  </div>
+</div>
+
+<!-- ==================== WINNINGS TAB (MOBILE) ==================== -->
+<div id="winnings-mobile" class="section">
+  <div class="section-label">Admin Panel → Winnings Tab — Mobile (Stacked)</div>
+
+  <div class="mockups-row">
+    <!-- Mobile view 1 - Top of page -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Top of Page</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="app-header">
+            <div class="app-title">Admin Panel</div>
+            <div class="app-sub">GOBS Golf · Semiahmoo G&CC</div>
+          </div>
+          <div class="admin-tabs">
+            <div class="admin-tab">Setup</div>
+            <div class="admin-tab">Players</div>
+            <div class="admin-tab active">Winnings</div>
+            <div class="admin-tab">Hist.</div>
+            <div class="admin-tab">⋯</div>
+          </div>
+          <div class="winnings-page-mobile">
+            <div class="panel">
+              <div class="panel-title">Fund Balances</div>
+              <div class="fund-card" style="margin-bottom: 10px;">
+                <div class="fund-label">BFB Fund</div>
+                <div class="fund-amount">$184</div>
+                <div class="fund-subtitle">12 contributions this season</div>
+                <button class="fund-reset-btn">Reset Fund...</button>
+              </div>
+              <div class="fund-card hio">
+                <div class="fund-label">HiO Fund</div>
+                <div class="fund-amount">$92</div>
+                <div class="fund-subtitle">No hole-in-one since season start</div>
+                <button class="fund-reset-btn">Reset Fund...</button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">What-if Calculator</div>
+              <div class="calculator-grid">
+                <div class="input-group">
+                  <label># Players</label>
+                  <select><option>24</option></select>
+                </div>
+                <div class="input-group">
+                  <label>Team Size</label>
+                  <select><option>2-player</option></select>
+                </div>
+              </div>
+              <div class="calc-result">
+                <div class="calc-result-header">12 teams · $168 balance</div>
+                <div class="calc-payout-row"><span class="place">1st</span><span class="amount">$25/player</span></div>
+                <div class="calc-payout-row"><span class="place">2nd</span><span class="amount">$23/player</span></div>
+                <div class="calc-payout-row"><span class="place">3rd</span><span class="amount">$20/player</span></div>
+                <div class="calc-payout-row"><span class="place">4th</span><span class="amount">$16/player</span></div>
+                <div class="calc-summary"><span>Total paid</span><span>$168</span></div>
+                <div class="calc-summary" style="border-top: none; padding-top: 4px;"><span>Sweep → BFB</span><span>$0</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Sections stack vertically. Calculator stays usable — single-column inputs.</div>
+    </div>
+
+    <!-- Mobile view 2 - History scrolled -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Scrolled — History List</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="winnings-page-mobile" style="padding-top: 4px;">
+            <div class="panel">
+              <div class="panel-title-with-action">
+                <div class="panel-title">Historical Payouts</div>
+                <button class="btn btn-secondary btn-small">Export</button>
+              </div>
+
+              <div class="history-row expanded">
+                <div class="history-row-header">
+                  <div>
+                    <div class="history-date">May 28, 2026</div>
+                    <div class="history-format">2-Ball · 24 plyrs</div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="color: var(--money-text); font-weight: 700; font-size: 13px;">$168 paid</div>
+                    <div style="font-size: 10px; color: var(--text-muted);">$0 to BFB</div>
+                  </div>
+                </div>
+                <div class="history-stats">
+                  <div class="history-stat">Contrib: <strong>$240</strong></div>
+                  <div class="history-stat">HiO: <strong>$24</strong></div>
+                  <div class="history-stat">BFB: <strong>$48</strong></div>
+                </div>
+                <div class="history-expanded-content">
+                  <div class="subsection-header">Team Payouts</div>
+                  <div class="history-team-payout">
+                    <div>
+                      <div class="history-team-name">🥇 Team 1</div>
+                      <div class="history-team-roster">Bill C · Dave K</div>
+                    </div>
+                    <div>
+                      <div class="history-team-pay">$50</div>
+                      <div class="history-team-pay-meta">$25/p × 2</div>
+                    </div>
+                  </div>
+                  <div class="history-team-payout">
+                    <div>
+                      <div class="history-team-name">Team 7</div>
+                      <div class="history-team-roster">Wayne V · Jeff I</div>
+                    </div>
+                    <div>
+                      <div class="history-team-pay">$46</div>
+                      <div class="history-team-pay-meta">$23/p × 2</div>
+                    </div>
+                  </div>
+                  <div class="history-team-payout">
+                    <div>
+                      <div class="history-team-name">Team 4</div>
+                      <div class="history-team-roster">Ward C · Alan W</div>
+                    </div>
+                    <div>
+                      <div class="history-team-pay">$40</div>
+                      <div class="history-team-pay-meta">$20/p × 2</div>
+                    </div>
+                  </div>
+                  <div class="history-team-payout">
+                    <div>
+                      <div class="history-team-name">Team 9</div>
+                      <div class="history-team-roster">Norm C · Gary T</div>
+                    </div>
+                    <div>
+                      <div class="history-team-pay">$32</div>
+                      <div class="history-team-pay-meta">$16/p × 2</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="history-row">
+                <div class="history-row-header">
+                  <div>
+                    <div class="history-date">May 21, 2026</div>
+                    <div class="history-format">3-Ball · 18 plyrs</div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="color: var(--money-text); font-weight: 700; font-size: 13px;">$120</div>
+                    <div style="font-size: 10px; color: var(--text-muted);">$6 to BFB</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="history-row">
+                <div class="history-row-header">
+                  <div>
+                    <div class="history-date">May 14, 2026</div>
+                    <div class="history-format">Best Ball · 20 plyrs<span class="override-badge">Override</span></div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="color: var(--money-text); font-weight: 700; font-size: 13px;">$140</div>
+                    <div style="font-size: 10px; color: var(--text-muted);">$0 to BFB</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">History rows show summary by default, tap to expand. Right-aligned $ keeps scannable on narrow screen.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== LEADERBOARD WITH PAYOUTS ==================== -->
+<div id="leaderboard" class="section">
+  <div class="section-label">Leaderboard — Round Complete View with Payouts</div>
+
+  <div class="mockups-row">
+    <!-- Mobile leaderboard -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Leaderboard — Mobile (Critical Info)</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="app-header">
+            <div class="app-title">Leaderboard</div>
+            <div class="app-sub">May 28, 2026 · 2-Ball</div>
+          </div>
+          <div class="round-summary-block">
+            <div class="round-meta-row">
+              <div class="round-date">Final Results</div>
+              <span class="status-chip">Final</span>
+            </div>
+            <div class="round-stats">12 teams · 24 players</div>
+          </div>
+
+          <div class="team-row" style="background: linear-gradient(90deg, #faf3dc 0%, #fff 60%);">
+            <div class="rank-badge gold">1</div>
+            <div class="team-info">
+              <div class="team-name">Team 1</div>
+              <div class="team-roster">Bill C · Dave K</div>
+              <div class="team-f9b9">F9 −3 · B9 −5</div>
+              <span class="payout-pill">$25 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−8</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">2</div>
+            <div class="team-info">
+              <div class="team-name">Team 7</div>
+              <div class="team-roster">Wayne V · Jeff I</div>
+              <div class="team-f9b9">F9 −2 · B9 −4</div>
+              <span class="payout-pill">$23 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−6</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">3</div>
+            <div class="team-info">
+              <div class="team-name">Team 4</div>
+              <div class="team-roster">Ward C · Alan W</div>
+              <div class="team-f9b9">F9 −1 · B9 −3</div>
+              <span class="payout-pill">$20 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−4</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">4</div>
+            <div class="team-info">
+              <div class="team-name">Team 9</div>
+              <div class="team-roster">Norm C · Gary T</div>
+              <div class="team-f9b9">F9 +1 · B9 −3</div>
+              <span class="payout-pill">$16 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−2</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">5</div>
+            <div class="team-info">
+              <div class="team-name">Team 3</div>
+              <div class="team-roster">Gerry H · DeWaal S</div>
+              <div class="team-f9b9">F9 +2 · B9 +1</div>
+              <span class="payout-pill no-pay">No payout</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big over">+3</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">6</div>
+            <div class="team-info">
+              <div class="team-name">Team 11</div>
+              <div class="team-roster">Tom J · Roger M</div>
+              <div class="team-f9b9">F9 +4 · B9 +2</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big over">+6</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Payout pill sits inline next to roster. Lower teams optionally show "No payout" or nothing. Big green $ amount = critical info on mobile.</div>
+    </div>
+
+    <!-- Tied teams variant -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Tied 1st Place Example</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="app-header">
+            <div class="app-title">Leaderboard</div>
+            <div class="app-sub">May 21, 2026 · 3-Ball</div>
+          </div>
+          <div class="round-summary-block">
+            <div class="round-meta-row">
+              <div class="round-date">Final Results</div>
+              <span class="status-chip">Final</span>
+            </div>
+            <div class="round-stats">6 teams · 18 players</div>
+          </div>
+
+          <div class="team-row" style="background: linear-gradient(90deg, #fef3c7 0%, #fff 60%);">
+            <div class="rank-badge gold">T1</div>
+            <div class="team-info">
+              <div class="team-name">Team 2</div>
+              <div class="team-roster">Bill C · Wayne V · Ward C</div>
+              <div class="team-f9b9">F9 −2 · B9 −3</div>
+              <span class="payout-pill tied">🤝 $24 / player (tied)</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−5</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row" style="background: linear-gradient(90deg, #fef3c7 0%, #fff 60%);">
+            <div class="rank-badge gold">T1</div>
+            <div class="team-info">
+              <div class="team-name">Team 5</div>
+              <div class="team-roster">Dave K · Jeff I · Alan W</div>
+              <div class="team-f9b9">F9 −3 · B9 −2</div>
+              <span class="payout-pill tied">🤝 $24 / player (tied)</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−5</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">3</div>
+            <div class="team-info">
+              <div class="team-name">Team 1</div>
+              <div class="team-roster">Norm C · Gary T · Tom J</div>
+              <div class="team-f9b9">F9 −1 · B9 −1</div>
+              <span class="payout-pill">$13 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−2</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">4</div>
+            <div class="team-info">
+              <div class="team-name">Team 6</div>
+              <div class="team-roster">Roger M · DeWaal S · Gerry H</div>
+              <div class="team-f9b9">F9 0 · B9 +1</div>
+              <span class="payout-pill">$6 / player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big over">+1</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Ties show "T1" rank, yellow tied-payout pill with handshake emoji, and same gold-tinted row background. Combined 1st+2nd pots split evenly between tied teams.</div>
+    </div>
+
+    <!-- Live mid-round (no payouts yet) -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Live Mid-Round (No Payouts Yet)</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="app-header">
+            <div class="app-title">Leaderboard</div>
+            <div class="app-sub">Today · 2-Ball</div>
+          </div>
+          <div class="round-summary-block">
+            <div class="round-meta-row">
+              <div class="round-date">Live</div>
+              <span class="status-chip in-progress">In Progress · thru 14</span>
+            </div>
+            <div class="round-stats">8 teams · 16 players</div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge gold">1</div>
+            <div class="team-info">
+              <div class="team-name">Team 3</div>
+              <div class="team-roster">Bill C · Dave K</div>
+              <div class="team-f9b9">F9 −2 · B9 −1</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−3</div>
+              <div class="score-label">THRU 14</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">2</div>
+            <div class="team-info">
+              <div class="team-name">Team 1</div>
+              <div class="team-roster">Wayne V · Jeff I</div>
+              <div class="team-f9b9">F9 −1 · B9 0</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−1</div>
+              <div class="score-label">THRU 14</div>
+            </div>
+          </div>
+
+          <div class="team-row">
+            <div class="rank-badge">3</div>
+            <div class="team-info">
+              <div class="team-name">Team 5</div>
+              <div class="team-roster">Ward C · Alan W</div>
+              <div class="team-f9b9">F9 +1 · B9 −1</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big even">E</div>
+              <div class="score-label">THRU 13</div>
+            </div>
+          </div>
+
+          <div class="annotation" style="margin: 12px;">
+            <strong>Note:</strong> Payouts only show after round finalizes. Mid-round display is unchanged.
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Live view stays clean — no payout speculation during play. Calculation triggers at finalize.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== ROUND SUMMARY WITH PAYOUTS ==================== -->
+<div id="summary" class="section">
+  <div class="section-label">Round Summary — Per-Team and Per-Player Payouts</div>
+
+  <div class="mockups-row">
+    <!-- Mobile summary -->
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Round Summary — Mobile Expanded</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="app-header">
+            <div class="app-title">Round Summary</div>
+            <div class="app-sub">May 28, 2026 · 2-Ball</div>
+          </div>
+          <div class="round-summary-block">
+            <div class="round-meta-row">
+              <div class="round-date">Semiahmoo G&CC</div>
+              <span class="status-chip">Final</span>
+            </div>
+            <div class="round-stats">12 teams · 24 players · $168 paid</div>
+          </div>
+
+          <!-- 1st place expanded -->
+          <div class="team-row" style="background: linear-gradient(90deg, #faf3dc 0%, #fff 60%);">
+            <div class="rank-badge gold">1</div>
+            <div class="team-info">
+              <div class="team-name">Team 1</div>
+              <div class="team-roster">Bill C · Dave K</div>
+              <div class="team-f9b9">F9 −3 · B9 −5</div>
+              <span class="payout-pill">$50 to team · $25/player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−8</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="player-rows">
+            <div class="player-row">
+              <div class="player-name">Bill C <span style="color: var(--text-muted); font-size: 11px;">HI 8.2 · CH 6</span></div>
+              <div class="player-stats">
+                <div><div class="player-stat-label">Net</div><div class="player-stat-val">68</div></div>
+                <div><div class="player-stat-label">Won</div><div class="player-stat-val money">$25</div></div>
+              </div>
+            </div>
+            <div class="player-row">
+              <div class="player-name">Dave K <span style="color: var(--text-muted); font-size: 11px;">HI 11.4 · CH 8</span></div>
+              <div class="player-stats">
+                <div><div class="player-stat-label">Net</div><div class="player-stat-val">71</div></div>
+                <div><div class="player-stat-label">Won</div><div class="player-stat-val money">$25</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2nd place -->
+          <div class="team-row">
+            <div class="rank-badge">2</div>
+            <div class="team-info">
+              <div class="team-name">Team 7</div>
+              <div class="team-roster">Wayne V · Jeff I</div>
+              <div class="team-f9b9">F9 −2 · B9 −4</div>
+              <span class="payout-pill">$46 to team · $23/player</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−6</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <!-- 5th place (no payout) -->
+          <div class="team-row">
+            <div class="rank-badge">5</div>
+            <div class="team-info">
+              <div class="team-name">Team 3</div>
+              <div class="team-roster">Gerry H · DeWaal S</div>
+              <div class="team-f9b9">F9 +2 · B9 +1</div>
+              <span class="payout-pill no-pay">No payout</span>
+            </div>
+            <div class="team-score">
+              <div class="score-big over">+3</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div style="padding: 16px; background: white; border-top: 1px solid var(--card-border);">
+            <div class="subsection-header">Round Money Breakdown</div>
+            <div class="history-fund-row"><span>Total contributed</span><strong>$240</strong></div>
+            <div class="history-fund-row"><span>→ HiO Fund</span><strong>$24</strong></div>
+            <div class="history-fund-row"><span>→ BFB Fund</span><strong>$48</strong></div>
+            <div class="history-fund-row"><span>→ Team payouts</span><strong>$168</strong></div>
+            <div class="history-fund-row"><span>Sweep to BFB</span><strong>$0</strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Per-team payout sits inline with team. Tap team to expand → per-player "Won $X" appears. Round-level money breakdown at bottom.</div>
+    </div>
+
+    <!-- Desktop summary -->
+    <div class="mockup-card tablet">
+      <div class="mockup-label">Round Summary — Desktop (Wider)</div>
+      <div style="background: var(--bg-warm); border-radius: 8px; padding: 16px;">
+        <div style="background: white; border-radius: 8px; overflow: hidden;">
+          <div style="padding: 16px; background: var(--navy); color: white;">
+            <div style="font-weight: 700; font-size: 18px;">Round Summary — May 28, 2026</div>
+            <div style="font-size: 12px; opacity: 0.85;">Semiahmoo G&CC · 2-Ball · 12 teams · 24 players · $168 paid</div>
+          </div>
+
+          <div class="team-row" style="background: linear-gradient(90deg, #faf3dc 0%, #fff 60%); padding: 18px;">
+            <div class="rank-badge gold">1</div>
+            <div class="team-info">
+              <div class="team-name" style="font-size: 16px;">Team 1</div>
+              <div class="team-roster">Bill C · Dave K</div>
+              <div class="team-f9b9">F9 −3 · B9 −5</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 13px; color: var(--money-text); font-weight: 700;">💰 $50 to team</div>
+              <div style="font-size: 11px; color: var(--text-muted);">$25/player × 2</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−8</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+
+          <div class="player-rows">
+            <div class="player-row">
+              <div class="player-name">Bill C <span style="color: var(--text-muted); font-size: 11px;">· HI 8.2 · CH 6</span></div>
+              <div class="player-stats">
+                <div><div class="player-stat-label">Gross</div><div class="player-stat-val">74</div></div>
+                <div><div class="player-stat-label">Net</div><div class="player-stat-val">68</div></div>
+                <div><div class="player-stat-label">Won</div><div class="player-stat-val money">$25</div></div>
+              </div>
+            </div>
+            <div class="player-row">
+              <div class="player-name">Dave K <span style="color: var(--text-muted); font-size: 11px;">· HI 11.4 · CH 8</span></div>
+              <div class="player-stats">
+                <div><div class="player-stat-label">Gross</div><div class="player-stat-val">79</div></div>
+                <div><div class="player-stat-label">Net</div><div class="player-stat-val">71</div></div>
+                <div><div class="player-stat-label">Won</div><div class="player-stat-val money">$25</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="team-row" style="padding: 18px;">
+            <div class="rank-badge">2</div>
+            <div class="team-info">
+              <div class="team-name" style="font-size: 16px;">Team 7</div>
+              <div class="team-roster">Wayne V · Jeff I</div>
+              <div class="team-f9b9">F9 −2 · B9 −4</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 13px; color: var(--money-text); font-weight: 700;">💰 $46 to team</div>
+              <div style="font-size: 11px; color: var(--text-muted);">$23/player × 2</div>
+            </div>
+            <div class="team-score">
+              <div class="score-big under">−6</div>
+              <div class="score-label">Final</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Desktop has more room — payout column gets its own dedicated space between team info and final score.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== MODALS ==================== -->
+<div id="modals" class="section">
+  <div class="section-label">Confirmation Modals — Reset Funds</div>
+
+  <div class="mockups-row">
+    <div class="mockup-card mobile">
+      <div class="mockup-label">BFB Reset Confirmation</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="modal-overlay">
+            <div class="modal-box">
+              <div class="modal-title">Reset BFB Fund?</div>
+              <div class="modal-body">
+                This will zero out the BFB Fund balance of <strong>$184</strong>.<br><br>
+                <strong>Reason</strong> (required for log):
+                <input type="text" placeholder="e.g., Donated to Blaine Food Bank" style="margin-top: 6px; width: 100%; padding: 8px; border: 1px solid var(--card-border); border-radius: 6px; font-size: 13px;">
+                <br><br>
+                This action is logged and cannot be undone.
+              </div>
+              <div class="modal-actions">
+                <button class="btn btn-secondary">Cancel</button>
+                <button class="btn btn-primary" style="background: var(--accent-red);">Reset Fund</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Required reason field ensures every reset is auditable. Red destructive button per dangerous-action pattern.</div>
+    </div>
+
+    <div class="mockup-card mobile">
+      <div class="mockup-label">HiO Reset Confirmation</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="modal-overlay">
+            <div class="modal-box">
+              <div class="modal-title">Reset HiO Fund?</div>
+              <div class="modal-body">
+                This will zero out the HiO Fund balance of <strong>$92</strong>.<br><br>
+                <strong>Reason</strong> (required for log):
+                <input type="text" placeholder="e.g., Bill C ace on hole 12" style="margin-top: 6px; width: 100%; padding: 8px; border: 1px solid var(--card-border); border-radius: 6px; font-size: 13px;">
+                <br><br>
+                This action is logged and cannot be undone.
+              </div>
+              <div class="modal-actions">
+                <button class="btn btn-secondary">Cancel</button>
+                <button class="btn btn-primary" style="background: var(--accent-red);">Reset Fund</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Same pattern. Transaction log will record reset amount, reason, timestamp, and admin user.</div>
+    </div>
+
+    <div class="mockup-card mobile">
+      <div class="mockup-label">Edit Engine Constants (Future / Rare)</div>
+      <div class="phone-frame">
+        <div class="phone-inner">
+          <div class="modal-overlay">
+            <div class="modal-box">
+              <div class="modal-title" style="color: var(--accent-amber);">Edit Payout Rules?</div>
+              <div class="modal-body">
+                Changing payout rules will only affect <strong>future rounds</strong>. Past rounds remain unchanged.<br><br>
+                <div style="background: var(--bg-warm); padding: 10px; border-radius: 6px; font-size: 12px;">
+                  <div style="margin-bottom: 4px;"><strong>1st place cap:</strong> $25/player</div>
+                  <div style="margin-bottom: 4px;"><strong>Min floor:</strong> $5/player</div>
+                  <div style="margin-bottom: 4px;"><strong>Min gap:</strong> $3/player</div>
+                  <div><strong>Proportions:</strong> 50/25/17/8</div>
+                </div>
+                <br>
+                These defaults come from your locked rule set. Edit with care.
+              </div>
+              <div class="modal-actions">
+                <button class="btn btn-secondary">Cancel</button>
+                <button class="btn btn-primary">Edit Rules</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mockup-note">Editing engine constants is intentionally buried/discouraged. Locked rules display upfront; admin must confirm intent to override.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>
