@@ -1,17 +1,16 @@
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 
-// Wave 1B note: "shambles" is intentionally ABSENT from FORMAT_ORDER. This list
-// drives the admin FormatPicker; Shambles is registered in the type system,
-// classifier (isTeamCardFormat), and DEFAULT_FORMAT_CONFIG in Commit 1, but is
-// only added here once the team-card entry surface (Commit 2) and routing
-// (Commit 3) exist — so production never offers a format with no working screen.
+// Drives the admin FormatPicker's selectable list. "shambles" (Wave 1B) was
+// held out until its team-card entry surface (C2), routing + read surfaces (C3)
+// existed; added in C3b now that selecting it is fully wired end-to-end.
 export const FORMAT_ORDER: Format[] = [
   "2_ball",
   "3_ball",
   "best_ball",
   "stableford_standard",
   "gobs_stableford",
+  "shambles",
 ];
 
 export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> = {

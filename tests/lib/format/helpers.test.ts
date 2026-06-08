@@ -48,8 +48,9 @@ describe("defaultConfigFor", () => {
     expect(defaultConfigFor("3_ball").best_n).toBe(3);
   });
 
-  it("returns net basis for every format", () => {
-    for (const f of FORMAT_ORDER) {
+  it("returns net basis for every individual (non-team-card) format", () => {
+    // Team-card formats (Shambles) default to gross — see the dedicated block.
+    for (const f of FORMAT_ORDER.filter((x) => !isTeamCardFormat(x))) {
       expect(defaultConfigFor(f).basis).toBe("net");
     }
   });
@@ -82,8 +83,8 @@ describe("defaultConfigFor", () => {
     expect(b.best_n).toBe(2);
   });
 
-  it("seeds scoring_basis to 'net' for every format", () => {
-    for (const f of FORMAT_ORDER) {
+  it("seeds scoring_basis to 'net' for every individual (non-team-card) format", () => {
+    for (const f of FORMAT_ORDER.filter((x) => !isTeamCardFormat(x))) {
       expect(defaultConfigFor(f).scoring_basis).toBe("net");
     }
   });
@@ -160,12 +161,12 @@ describe("isTeamCardFormat (Wave 1B)", () => {
     expect(isTeamCardFormat("shambles")).toBe(true);
   });
 
-  it("returns false for every individual (non-team-card) format", () => {
+  it("classifies every FORMAT_ORDER entry (shambles team-card, others not)", () => {
+    // shambles is now selectable (in FORMAT_ORDER); it must classify as
+    // team-card, and every other listed format must not.
+    expect(FORMAT_ORDER).toContain("shambles");
     for (const f of FORMAT_ORDER) {
-      // FORMAT_ORDER holds only the individual formats this session; the
-      // classifier must reject all of them. (Negative control: if shambles
-      // were ever added to FORMAT_ORDER, this asserts it is NOT here yet.)
-      expect(isTeamCardFormat(f)).toBe(false);
+      expect(isTeamCardFormat(f)).toBe(f === "shambles");
     }
   });
 

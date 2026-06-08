@@ -11,6 +11,8 @@ import type { QueueItem } from "@/lib/writeQueue";
 import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
+import { scorecardHref } from "@/lib/round/scorecardHref";
+import type { Format } from "@/lib/scoring/types";
 import type { Player } from "@/app/admin/page";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 import { RoundPlayer, SmartJoinResult } from "@/lib/teamFormation/smartJoin";
@@ -34,6 +36,7 @@ type RecentRound = {
   id: number;
   played_on: string;
   is_complete: boolean;
+  format: Format | null;
   isYesterday: boolean;
   teams: TeamInfo[];
   hasAnyScores: boolean;
@@ -48,6 +51,7 @@ export default function HomePage() {
   // Team formation state
   const [activePlayers, setActivePlayers] = useState<Player[]>([]);
   const [todayRoundId, setTodayRoundId] = useState<number | null>(null);
+  const [todayRoundFormat, setTodayRoundFormat] = useState<Format | null>(null);
   const [todayRoundPlayers, setTodayRoundPlayers] = useState<RoundPlayer[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [seasonPromptOpen, setSeasonPromptOpen] = useState(false);
@@ -117,7 +121,7 @@ export default function HomePage() {
 
     const { data: rounds } = await supabase
       .from("rounds")
-      .select("id, played_on, is_complete")
+      .select("id, played_on, is_complete, format")
       .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
       .order("played_on", { ascending: false });
 
@@ -126,9 +130,11 @@ export default function HomePage() {
       const todayRound = rounds.find((r: any) => r.played_on === today);
       if (todayRound) {
         setTodayRoundId(todayRound.id);
+        setTodayRoundFormat((todayRound.format ?? null) as Format | null);
         await loadTodayRoundPlayers(todayRound.id);
       } else {
         setTodayRoundId(null);
+        setTodayRoundFormat(null);
         setTodayRoundPlayers([]);
       }
 
@@ -315,7 +321,7 @@ export default function HomePage() {
         .join(", ");
       showToast(`Team ${newTeamNumber} created — ${names}.`);
       await loadTodayRoundPlayers(roundId);
-      router.push(`/round/${roundId}/scorecard?team=${newTeamNumber}`);
+      router.push(scorecardHref(roundId, newTeamNumber, todayRoundFormat));
     } else if (result.kind === "silent_join") {
       setPickerOpen(false);
       await drainWrites();
@@ -330,7 +336,7 @@ export default function HomePage() {
         )
         .join(", ");
       showToast(`You're on Team ${result.teamNumber} with ${names}.`);
-      router.push(`/round/${roundId}/scorecard?team=${result.teamNumber}`);
+      router.push(scorecardHref(roundId, result.teamNumber, todayRoundFormat));
     } else if (result.kind === "confirm_join") {
       // Keep picker open (mounted beneath modal) so selection is preserved on cancel
       setConfirmJoinModal(result);
@@ -339,7 +345,7 @@ export default function HomePage() {
       setMixedTeamsModal(result);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [todayRoundId, activePlayers, todayRoundPlayers, loadTodayRoundPlayers, router]);
+  }, [todayRoundId, todayRoundFormat, activePlayers, todayRoundPlayers, loadTodayRoundPlayers, router]);
 
   const handleConfirmJoin = useCallback(async () => {
     const roundId = todayRoundId;
@@ -355,9 +361,9 @@ export default function HomePage() {
     setPickerOpen(false);
     showToast(`Added to Team ${confirmJoinModal.teamNumber}.`);
     await loadTodayRoundPlayers(roundId);
-    router.push(`/round/${roundId}/scorecard?team=${confirmJoinModal.teamNumber}`);
+    router.push(scorecardHref(roundId, confirmJoinModal.teamNumber, todayRoundFormat));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [todayRoundId, confirmJoinModal, loadTodayRoundPlayers, router]);
+  }, [todayRoundId, todayRoundFormat, confirmJoinModal, loadTodayRoundPlayers, router]);
 
   const handleStaleRetry = useCallback(async (): Promise<boolean> => {
     const queue = getWriteQueue();
@@ -541,7 +547,7 @@ export default function HomePage() {
                     return (
                       <Link
                         key={team.number}
-                        href={`/round/${round.id}/scorecard?team=${team.number}`}
+                        href={scorecardHref(round.id, team.number, round.format)}
                         style={{
                           display: "flex", flexDirection: "column", padding: "10px 12px",
                           backgroundColor: tc.bg, borderRadius: "10px", textDecoration: "none",

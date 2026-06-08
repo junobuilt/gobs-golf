@@ -70,3 +70,13 @@ test("the handicap-allowance caption is replaced by a gross-only note", async ({
   // The individual card's "Handicaps at N%" allowance caption must NOT appear.
   await expect(page.getByText(/Handicaps at/)).toHaveCount(0);
 });
+
+test("C3b routing: homepage links a Shambles round's team to the team-card surface", async ({ page, db }) => {
+  seed(db, seedTeamCardRound({ roundId: 310, ballCount: 1 }));
+  await page.goto("/");
+
+  // The team card on the homepage routes to /team-card (not /scorecard) for a
+  // team-card format — the single isTeamCardFormat routing decision.
+  await expect(page.locator('a[href="/round/310/team-card?team=1"]')).toHaveCount(1);
+  await expect(page.locator('a[href="/round/310/scorecard?team=1"]')).toHaveCount(0);
+});

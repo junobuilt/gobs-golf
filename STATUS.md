@@ -2,8 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (G2 S4b — payout-override write surface)
-**Session purpose:** The second half of S4b — admins can correct a single team's per-player payout on a finalized round (required reason) and revert it to the engine's original value. Migration `019` (`round_payouts.override_reason` column + `override_round_payout`/`revert_round_payout` SECURITY-DEFINER RPCs) applied to prod after a txn→ROLLBACK dry-run. HistoryPanel gains per-team Edit/Revert affordances → reused `DangerModal` → override lib → reload, plus an amber discrepancy chip when overridden payouts exceed the pot (no auto-rebalance — locked). **657/657 vitest; 15/15 e2e; `tsc` clean.**
+**Last updated:** 2026-06-07 (Wave 1B — Commit 3: team-card routing + read surfaces + selectable)
+**Session purpose:** Wave 1B C3 — make team-card rounds (Shambles) first-class. **C3a** (read surfaces, dormant): `loadRoundResults` team-card branch (one team row from `team_scores`; additive `TeamRow.teamGrid`), `RoundResultsView` shows a single team hole-by-hole row + hides Individual Rankings, and per-player season/profile stats exclude team-card rounds. **C3b** (turn-on): `"shambles"` added to `FORMAT_ORDER`; FormatPicker gains a Balls-per-hole (1/2) control + gross lock; a single `scorecardHref()` routes team-card rounds to `/round/[id]/team-card` from the homepage + admin. A Shambles round is now creatable → scored → viewed end-to-end (finalize still C4). **661/661 vitest; 16/16 e2e; `tsc` clean.** Note: this push also carries the parallel payout track's `7837fbd` (G2 S4b override), which was committed to the shared local master.
+
+---
+
+## 2026-06-07 (Wave 1B — Commit 3: routing + read surfaces + selectable)
+
+### Where we left off
+
+**Shambles is fully wired end-to-end except finalize (C4).** An admin can pick Shambles (+ ball count) in Round Setup; players route to the team-card surface; the leaderboard/summary show one team row; and team-card rounds never pollute per-player season/profile stats. Shipped as two deploy-safe commits.
+
+- **C3a — read surfaces (commit `0951247`).** `loadRoundResults` ([results.ts](src/lib/round/results.ts)) branches on `isTeamCardFormat`: builds team rows from `team_scores` (via `loadTeamScores`/`buildTeamScoreMap`) — `total` = signed gross delta vs par, `thru` = holes scored, ranked ascending; `players` kept populated but **score-less** (holesPlayed 0) so payout headcount + Individual-Rankings filtering behave; new additive `TeamRow.teamGrid?: {scores,par}` carries the team's 18-hole row. `RoundResultsView` renders ONE team hole-by-hole row (teamGrid) for team-card + hides the Individual Rankings section. Season/profile exclusion added to `playerStats.ts`, `season/page.tsx`, `player/[id]/page.tsx` via `isTeamCardFormat` (defense-in-depth — they already excluded team-card implicitly since those players have no `scores` rows; played-with stays inclusive).
+- **C3b — selectable + routing (this commit).** `"shambles"` added to `FORMAT_ORDER` ([copy.ts](src/lib/format/copy.ts)) so it shows in the admin FormatPicker; the picker ([FormatPicker.tsx](src/components/format/FormatPicker.tsx)) gains a **Balls per hole (1/2)** control, locks scoring basis to **gross**, hides override-holes, and persists `format_config.team_ball_count`. New `scorecardHref()` ([scorecardHref.ts](src/lib/round/scorecardHref.ts)) is the single routing decision — team-card → `/round/[id]/team-card?team=N`, else the individual scorecard — used by the homepage team links + 3 post-team-formation pushes ([page.tsx](src/app/page.tsx)) and the admin Round Setup "open scorecard" link ([RoundSetup.tsx](src/app/admin/tabs/RoundSetup.tsx)).
+
+**★ TeamRow contract change (flagged for payout + S5 tracks):** added optional `teamGrid?` (additive); `players` stays populated for team-card (score-less roster) so `persistRoundPayouts` headcount/teamSize are unaffected — **no edit to the payout track's files**. No existing field's name/type/meaning changed.
+
+**Files:** NEW `src/lib/round/scorecardHref.ts`, `tests/lib/round/{results-teamcard,scorecardHref}.test.ts`, `tests/lib/playerStats-teamcard.test.ts`. MODIFIED `src/lib/round/results.ts`, `src/components/round/RoundResultsView.tsx`, `src/lib/playerStats.ts`, `src/app/season/page.tsx`, `src/app/player/[id]/page.tsx`, `src/lib/format/copy.ts`, `src/components/format/FormatPicker.tsx`, `src/app/page.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `tests/lib/format/helpers.test.ts`, `tests/components/fake-supabase.ts`, `tests/components/round/RoundResultsView.test.tsx`, `e2e/teamCard.spec.ts`, `STATUS.md`.
+
+**Tests:** +18 (results-teamcard golden incl. ranking negative control; playerStats exclusion with a true negative control — Shambles round seeded WITH score rows so only the format filter drops it; RoundResultsView hides Individual Rankings for team-card; scorecardHref routing; FORMAT_ORDER classification) + 1 e2e (homepage Shambles round → team-card link). Updated the three C1 FORMAT_ORDER-iterating tests (shambles is now in the list). **657 → 661/661 vitest; 16/16 e2e; `tsc` clean.**
+
+### Today's commits
+
+- `0951247` feat(scoring): Wave 1B C3a — team-card read surfaces (dormant)
+- (this) feat(scoring): Wave 1B C3b — make Shambles selectable + routed
+- (carried) `7837fbd` G2 S4b payout-override (parallel track; committed to shared master)
+
+### DB changes (today)
+
+- **None from C3.** App code only (`team_scores` was migration 018 in C1). (The carried `7837fbd` applied migration 019 to prod per its own entry below.)
+
+### Tomorrow's priority
+
+1. **Commit 4** — `finalize_team_card_round` RPC (no blind draw, `team_scores`-based completion check) + the per-team Submit button on the team-card surface + the gate at `scorecard/page.tsx:1049`; golden fixtures with the blind-draw negative control.
+
+### Considered but not changed (confession)
+
+- **TeamRow contract:** `teamGrid?` added (additive); `players` stays populated (score-less) for team-card. Heads-up given to payout + S5 tracks; no payout-file edit.
+- **Season exclusion is layered:** the three per-player sites already excluded team-card implicitly (no `scores` rows + their scoreCount/holes guards); the explicit `isTeamCardFormat` filter makes the load-bearing contract intentional + robust. The playerStats golden test seeds a Shambles round WITH score rows so only the format filter excludes it (true negative control).
+- **Split into C3a (dormant) + C3b (turn-on)** so each push is deploy-safe (a "selectable but no read branch" intermediate would crash `loadRoundResults`, since the per-player engine throws for shambles).
+- **Cross-track:** a parallel payout track committed `7837fbd` (G2 S4b override) onto the shared local master between my C3a and C3b; its WIP briefly broke a winnings test in my working tree before it was committed. My push advances origin with that commit too — it was a complete, green commit on master, not mine to strip.
+- **Finalize still C4.** A Shambles round can be created/scored/viewed but not finalized through the normal flow yet (no Submit on the team-card surface; no team-card finalize RPC).
+- **Individual scorecard + payout/engine math untouched.**
 
 ---
 

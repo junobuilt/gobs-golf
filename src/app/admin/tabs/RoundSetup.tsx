@@ -9,6 +9,7 @@ import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import { getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
+import { scorecardHref } from "@/lib/round/scorecardHref";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
 import { todayLocal } from "@/lib/date";
@@ -1058,9 +1059,13 @@ export default function RoundSetup({ allPlayers }: Props) {
                       // scorecard URL so the EditModeBanner pins and the
                       // Edit HI affordances render.
                       const isReopened = wasFinalized && !isRoundComplete;
-                      const href = isReopened
-                        ? `/round/${existingRoundId}/scorecard?team=${tn}&admin=1&edit=1`
-                        : `/round/${existingRoundId}/scorecard?team=${tn}`;
+                      // Wave 1B: team-card rounds route to the team-card surface.
+                      const href = scorecardHref(
+                        existingRoundId,
+                        tn,
+                        roundFormat,
+                        isReopened ? { admin: true, edit: true } : undefined,
+                      );
                       return (
                         <Link href={href} style={{
                           fontSize: "0.75rem", fontWeight: 600, color: tc.pillText, textDecoration: "none",
