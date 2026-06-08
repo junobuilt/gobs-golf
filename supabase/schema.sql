@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict UZbgseKkkFFmPY6dL0HTom6C5LZnz2nSKhT4E1S7ZHCeUZdRBb9EW3yhTQOE77W
+\restrict 48DDAh3hWtms8gAUbnhjuAzr32FSqjosQ3acnlUlmTfO3wfqJpC5bljtgb9MhgM
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10
@@ -296,6 +296,36 @@ END; $$;
 
 
 --
+-- Name: reset_fund(text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reset_fund(p_fund text, p_reason text, p_created_by text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_balance integer;
+BEGIN
+  IF p_fund NOT IN ('hio','bfb') THEN
+    RAISE EXCEPTION 'reset_fund: invalid fund %', p_fund;
+  END IF;
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'reset_fund: reason is required';
+  END IF;
+
+  -- Recompute the live balance inside this transaction to avoid a stale-read
+  -- race; the balancing entry brings the running total to exactly 0.
+  SELECT COALESCE(SUM(amount), 0) INTO v_balance
+    FROM fund_transactions WHERE fund = p_fund;
+
+  INSERT INTO fund_transactions (fund, amount, reason, round_id, source, created_by, note)
+  VALUES (p_fund, -v_balance, 'reset', NULL, 'reset',
+          COALESCE(NULLIF(btrim(p_created_by), ''), 'admin'), btrim(p_reason));
+END;
+$$;
+
+
+--
 -- Name: reverse_round_payouts(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -419,6 +449,7 @@ CREATE TABLE public.fund_transactions (
     source text NOT NULL,
     created_by text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    note text,
     CONSTRAINT fund_transactions_fund_check CHECK ((fund = ANY (ARRAY['hio'::text, 'bfb'::text]))),
     CONSTRAINT fund_transactions_source_check CHECK ((source = ANY (ARRAY['finalize'::text, 'reopen_reversal'::text, 'reset'::text, 'import'::text])))
 );
@@ -738,39 +769,6 @@ ALTER TABLE public.scores ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
--- Name: team_scores; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.team_scores (
-    id bigint NOT NULL,
-    round_id bigint NOT NULL,
-    team_number integer NOT NULL,
-    hole_number integer NOT NULL,
-    ball_index integer DEFAULT 1 NOT NULL,
-    strokes integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT team_scores_ball_index_check CHECK (((ball_index >= 1) AND (ball_index <= 2))),
-    CONSTRAINT team_scores_hole_number_check CHECK (((hole_number >= 1) AND (hole_number <= 18))),
-    CONSTRAINT team_scores_strokes_check CHECK (((strokes >= 1) AND (strokes <= 20))),
-    CONSTRAINT team_scores_team_number_check CHECK ((team_number > 0))
-);
-
-
---
--- Name: team_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-ALTER TABLE public.team_scores ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.team_scores_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
 -- Name: season_financials; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -816,6 +814,39 @@ CREATE SEQUENCE public.seasons_id_seq
 --
 
 ALTER SEQUENCE public.seasons_id_seq OWNED BY public.seasons.id;
+
+
+--
+-- Name: team_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_scores (
+    id bigint NOT NULL,
+    round_id bigint NOT NULL,
+    team_number integer NOT NULL,
+    hole_number integer NOT NULL,
+    ball_index integer DEFAULT 1 NOT NULL,
+    strokes integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT team_scores_ball_index_check CHECK (((ball_index >= 1) AND (ball_index <= 2))),
+    CONSTRAINT team_scores_hole_number_check CHECK (((hole_number >= 1) AND (hole_number <= 18))),
+    CONSTRAINT team_scores_strokes_check CHECK (((strokes >= 1) AND (strokes <= 20))),
+    CONSTRAINT team_scores_team_number_check CHECK ((team_number > 0))
+);
+
+
+--
+-- Name: team_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.team_scores ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.team_scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -960,6 +991,14 @@ ALTER TABLE ONLY public.scores
 
 
 --
+-- Name: seasons seasons_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.seasons
+    ADD CONSTRAINT seasons_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: team_scores team_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -976,14 +1015,6 @@ ALTER TABLE ONLY public.team_scores
 
 
 --
--- Name: seasons seasons_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.seasons
-    ADD CONSTRAINT seasons_pkey PRIMARY KEY (id);
-
-
---
 -- Name: tees tees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -996,13 +1027,6 @@ ALTER TABLE ONLY public.tees
 --
 
 CREATE INDEX blind_draws_round_team_idx ON public.blind_draws USING btree (round_id, short_team_number);
-
-
---
--- Name: team_scores_round_team_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX team_scores_round_team_idx ON public.team_scores USING btree (round_id, team_number);
 
 
 --
@@ -1090,6 +1114,13 @@ CREATE UNIQUE INDEX seasons_only_one_active ON public.seasons USING btree (is_ac
 
 
 --
+-- Name: team_scores_round_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX team_scores_round_team_idx ON public.team_scores USING btree (round_id, team_number);
+
+
+--
 -- Name: rounds rounds_set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1117,14 +1148,6 @@ ALTER TABLE ONLY public.blind_draws
 
 ALTER TABLE ONLY public.blind_draws
     ADD CONSTRAINT blind_draws_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
-
-
---
--- Name: team_scores team_scores_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.team_scores
-    ADD CONSTRAINT team_scores_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
 
 
 --
@@ -1221,6 +1244,14 @@ ALTER TABLE ONLY public.rounds
 
 ALTER TABLE ONLY public.scores
     ADD CONSTRAINT scores_round_player_id_fkey FOREIGN KEY (round_player_id) REFERENCES public.round_players(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_scores team_scores_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_scores
+    ADD CONSTRAINT team_scores_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
 
 
 --
@@ -1385,5 +1416,5 @@ ALTER TABLE public.tees ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict UZbgseKkkFFmPY6dL0HTom6C5LZnz2nSKhT4E1S7ZHCeUZdRBb9EW3yhTQOE77W
+\unrestrict 48DDAh3hWtms8gAUbnhjuAzr32FSqjosQ3acnlUlmTfO3wfqJpC5bljtgb9MhgM
 
