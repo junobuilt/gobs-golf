@@ -3,6 +3,7 @@
 // Shared view for the round-results surface. Consumed by:
 //   - /round/[id]/summary (historical / completed rounds)
 //   - /leaderboard (today's live or completed round)
+// TODO(F.1): the History tab's player-detail view inherits Adj Total via this shared grid.
 //
 // Owns the visual chrome — round-meta header (date + FormatChip + course +
 // status tag), ranked team cards with inline two-level drill-down (team →
@@ -514,6 +515,10 @@ function PlayerSection({
             scores={gridScores}
             par={player.par}
             showRunningTotal={false}
+            // Wave 1A: GHIN Adjusted column. Skipped for dropout-merged grids —
+            // the post-drop holes are the drawn player's scores (different
+            // CH/SI), so player.adjScores wouldn't line up with gridScores.
+            adjScores={dropoutFill ? undefined : player.adjScores}
           />
         </div>
       )}

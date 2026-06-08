@@ -46,6 +46,7 @@ function makeTeam(
         holesPlayed: thru,
         scores: SCORES_18,
         par: PAR_18,
+        adjScores: SCORES_18,
         droppedAfterHole: null,
       },
     ],

@@ -13,6 +13,7 @@ import {
 } from "@/lib/playedWith/compute";
 import PlayedWithPanel from "@/components/playedWith/PlayedWithPanel";
 import SeasonToggle, { type SeasonFilter } from "@/components/season/SeasonToggle";
+import { computeAdjustedHoleScores, sumAdjusted } from "@/lib/scoring";
 
 type Player = {
   id: number;
@@ -27,6 +28,9 @@ type RoundResult = {
   tee_color: string;
   total_strokes: number;
   course_handicap: number | null;
+  // Wave 1A: GHIN Adjusted (Net Double Bogey) round total at 100% handicap.
+  // null when hole-level data is unavailable for the round's tee.
+  adj_total: number | null;
 };
 
 export default function PlayerProfilePage() {
@@ -79,10 +83,11 @@ export default function PlayerProfilePage() {
           .select(`
             id,
             round_id,
+            tee_id,
             course_handicap,
             tees ( color ),
             rounds!inner ( played_on, is_complete ),
-            scores ( strokes )
+            scores ( hole_number, strokes )
           `)
           .eq("player_id", playerId)
           .eq("rounds.is_complete", true);
@@ -92,18 +97,54 @@ export default function PlayerProfilePage() {
         );
 
         if (roundPlayers) {
+          // Wave 1A: load hole pars + stroke indexes for each tee in play so we
+          // can compute the GHIN Adjusted (Net Double Bogey) total per round.
+          // Adj is ALWAYS at 100% handicap (raw course_handicap) by design.
+          const teeIds = [
+            ...new Set(
+              roundPlayers.map((rp: any) => rp.tee_id).filter(Boolean),
+            ),
+          ] as number[];
+          const holesByTee: Record<number, { hole_number: number; par: number; stroke_index: number }[]> = {};
+          for (const teeId of teeIds) {
+            const { data: h } = await supabase
+              .from("holes")
+              .select("hole_number, par, stroke_index")
+              .eq("tee_id", teeId);
+            holesByTee[teeId] = (h ?? []) as any[];
+          }
+
           const results: RoundResult[] = roundPlayers
             .filter((rp: any) => rp.scores && rp.scores.length > 0)
-            .map((rp: any) => ({
-              round_id: rp.round_id,
-              played_on: rp.rounds?.played_on || "",
-              tee_color: rp.tees?.color || "?",
-              total_strokes: rp.scores.reduce(
+            .map((rp: any) => {
+              const total_strokes = rp.scores.reduce(
                 (sum: number, s: any) => sum + (s.strokes || 0),
-                0
-              ),
-              course_handicap: rp.course_handicap,
-            }));
+                0,
+              );
+              const scoresByHole: Record<number, number> = {};
+              rp.scores.forEach((s: any) => {
+                if (s.hole_number != null) scoresByHole[s.hole_number] = s.strokes ?? 0;
+              });
+              const teeHoles = holesByTee[rp.tee_id] ?? [];
+              const scores18 = Array.from({ length: 18 }, (_, i) => scoresByHole[i + 1] ?? null);
+              const par18 = Array.from(
+                { length: 18 },
+                (_, i) => teeHoles.find(h => h.hole_number === i + 1)?.par ?? null,
+              );
+              const si18 = Array.from(
+                { length: 18 },
+                (_, i) => teeHoles.find(h => h.hole_number === i + 1)?.stroke_index ?? null,
+              );
+              const adj = computeAdjustedHoleScores(scores18, par18, si18, rp.course_handicap);
+              return {
+                round_id: rp.round_id,
+                played_on: rp.rounds?.played_on || "",
+                tee_color: rp.tees?.color || "?",
+                total_strokes,
+                course_handicap: rp.course_handicap,
+                adj_total: sumAdjusted(adj),
+              };
+            });
           setRounds(results);
         }
 
@@ -292,6 +333,17 @@ export default function PlayerProfilePage() {
                   }}>
                     {scoreLabel(round.total_strokes)}
                   </div>
+                  {/* Wave 1A: GHIN Adjusted total (orange), alongside actual. */}
+                  {round.adj_total !== null && (
+                    <div style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      color: "#c2410c",
+                      marginTop: "2px",
+                    }}>
+                      Adj {round.adj_total}
+                    </div>
+                  )}
                 </div>
               </Link>
             ))}

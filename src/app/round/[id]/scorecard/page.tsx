@@ -11,6 +11,7 @@ import {
   computeRoundResult,
   getHandicapStrokes,
   getPlayingStrokes,
+  computeAdjustedHoleScores,
 } from "@/lib/scoring";
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
@@ -1777,6 +1778,16 @@ export default function ScorecardPage() {
                 : s,
             )
           : ownScores18;
+        // Wave 1A: GHIN Adjusted scores for this player's own grid. ALWAYS at
+        // 100% handicap (raw rp.course_handicap) — the GHIN cap ignores the
+        // round's allowance by design. Skipped when a dropout fill is merged in
+        // (post-drop holes belong to the drawn player's CH/SI, not this row's).
+        const si18 = Array.from({ length: 18 }, (_, i) =>
+          playerHoles.find(ph => ph.hole_number === i + 1)?.stroke_index ?? null
+        );
+        const adjScores18: (number | null)[] | undefined = fillForRp
+          ? undefined
+          : computeAdjustedHoleScores(ownScores18, par18, si18, rp.course_handicap);
 
         const cardBorderRadius = isExpanded ? "16px 16px 0 0" : "16px";
         const cardMarginBottom = isExpanded ? "0" : "10px";
@@ -2010,6 +2021,7 @@ export default function ScorecardPage() {
                   scores={scores18}
                   par={par18}
                   currentHoleIndex={currentHole - 1}
+                  adjScores={adjScores18}
                 />
               </div>
             )}

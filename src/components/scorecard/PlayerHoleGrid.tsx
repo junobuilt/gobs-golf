@@ -6,6 +6,12 @@ import React from "react";
 // Used inline under each player row on the live scorecard (with
 // currentHoleIndex set + showRunningTotal=true) and in the Phase C PR3
 // drill-in summary (with currentHoleIndex omitted + showRunningTotal=false).
+//
+// Wave 1A — optional GHIN Adjusted Score (Net Double Bogey). When `adjScores`
+// is provided (an 18-length array of NDB-capped scores, computed at 100%
+// handicap by the data layer), each nine renders a second summary column
+// (Adj F9 / Adj B9) in orange, and an Adj. Tot nests under Tot. When omitted,
+// the grid renders exactly as before (no Adj column, no behavior change).
 
 export interface PlayerHoleGridProps {
   // 18 entries, in hole order 1..18. null = unplayed (renders "—").
@@ -14,9 +20,14 @@ export interface PlayerHoleGridProps {
   par: number[];
   // 0..17 — highlight that hole's header + score cells. Omit to disable.
   currentHoleIndex?: number;
-  // When true (default) renders the "Total N" line bottom-right. C PR3
-  // passes false because the summary surface already shows totals.
+  // When true (default) renders the totals line bottom-right. C PR3 passes
+  // false because the summary surface already shows totals. (When `adjScores`
+  // is present the totals always render as the nested Tot / Adj Tot rows so
+  // the Adj column has a labeled foot, regardless of this flag.)
   showRunningTotal?: boolean;
+  // Wave 1A — 18-length adjusted (NDB-capped) scores. Presence enables the
+  // Adj summary column + Adj. Tot.
+  adjScores?: (number | null)[];
 }
 
 const COLOR_TERTIARY = "#94a3b8";
@@ -24,8 +35,10 @@ const COLOR_TEXT = "#1e293b";
 const COLOR_NAVY = "#042C53";
 const COLOR_HIGHLIGHT = "#dbeafe";
 const COLOR_DIVIDER = "#e2e8f0";
+const COLOR_ADJ = "#c2410c"; // Wave 1A orange — GHIN-adjusted accent.
 
 const GRID_COLS = "repeat(9, minmax(0, 1fr)) minmax(0, 1.15fr)";
+const GRID_COLS_ADJ = "repeat(9, minmax(0, 1fr)) minmax(0, 1.15fr) minmax(0, 1.15fr)";
 const SCORE_CELL_MIN_HEIGHT = 32;
 
 function sumPlayed(values: (number | null)[]): number | null {
@@ -87,24 +100,29 @@ function NineGrid({
   currentHoleIndex,
   startIdx,
   totalLabel,
+  adjScores,
 }: {
   scores: (number | null)[];
   par: number[];
   currentHoleIndex?: number;
   startIdx: number;
   totalLabel: "F9" | "B9";
+  adjScores?: (number | null)[];
 }) {
   const indices = Array.from({ length: 9 }, (_, i) => startIdx + i);
   const parSlice = indices.map(i => par[i]);
   const scoreSlice = indices.map(i => scores[i]);
   const parSubtotal = parSlice.reduce((a, b) => a + b, 0);
   const scoreSubtotal = sumPlayed(scoreSlice);
+  const showAdj = adjScores != null;
+  const adjSubtotal = showAdj ? sumPlayed(indices.map(i => adjScores![i])) : null;
+  const adjLabel = totalLabel === "F9" ? "Adj F9" : "Adj B9";
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: GRID_COLS,
+        gridTemplateColumns: showAdj ? GRID_COLS_ADJ : GRID_COLS,
         gap: "2px",
         fontSize: "11px",
         textAlign: "center",
@@ -140,6 +158,20 @@ function NineGrid({
       >
         {totalLabel}
       </div>
+      {showAdj && (
+        <div
+          style={{
+            color: COLOR_ADJ,
+            fontWeight: 700,
+            padding: "3px 0",
+            letterSpacing: "0.02em",
+            fontSize: "10px",
+            borderLeft: `1px dashed ${COLOR_ADJ}`,
+          }}
+        >
+          {adjLabel}
+        </div>
+      )}
 
       {/* Row 2 — par (italic, muted — reference info, not data) */}
       {parSlice.map((p, j) => (
@@ -165,6 +197,9 @@ function NineGrid({
       >
         {parSubtotal}
       </div>
+      {showAdj && (
+        <div style={{ borderLeft: `1px dashed ${COLOR_ADJ}` }} />
+      )}
 
       {/* Row 3 — gross score (semibold primary, with notation marks) */}
       {indices.map((i, j) => {
@@ -203,6 +238,22 @@ function NineGrid({
       >
         {scoreSubtotal == null ? "—" : scoreSubtotal}
       </div>
+      {showAdj && (
+        <div
+          style={{
+            color: adjSubtotal == null ? COLOR_TERTIARY : COLOR_ADJ,
+            fontWeight: 700,
+            padding: "3px 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: SCORE_CELL_MIN_HEIGHT,
+            borderLeft: `1px dashed ${COLOR_ADJ}`,
+          }}
+        >
+          {adjSubtotal == null ? "—" : adjSubtotal}
+        </div>
+      )}
     </div>
   );
 }
@@ -212,8 +263,11 @@ export default function PlayerHoleGrid({
   par,
   currentHoleIndex,
   showRunningTotal = true,
+  adjScores,
 }: PlayerHoleGridProps) {
   const total = sumPlayed(scores);
+  const showAdj = adjScores != null;
+  const adjTotal = showAdj ? sumPlayed(adjScores!) : null;
 
   return (
     <div style={{ padding: "10px 4px 4px" }}>
@@ -223,6 +277,7 @@ export default function PlayerHoleGrid({
         currentHoleIndex={currentHoleIndex}
         startIdx={0}
         totalLabel="F9"
+        adjScores={adjScores}
       />
       <div
         style={{
@@ -237,21 +292,58 @@ export default function PlayerHoleGrid({
         currentHoleIndex={currentHoleIndex}
         startIdx={9}
         totalLabel="B9"
+        adjScores={adjScores}
       />
-      {showRunningTotal && (
+      {showAdj ? (
+        // Wave 1A: Tot / Adj. Tot nested under the two B9 summary columns
+        // (per 1A mockup). Renders whenever adjScores is present so the Adj
+        // column has a labeled foot on every surface.
         <div
           style={{
-            textAlign: "right",
-            marginTop: "8px",
+            display: "grid",
+            gridTemplateColumns: GRID_COLS_ADJ,
+            gap: "2px",
             fontSize: "11px",
-            color: "#475569",
+            textAlign: "center",
+            marginTop: "9px",
           }}
         >
-          Total{" "}
-          <span style={{ fontWeight: 700, color: COLOR_TEXT }}>
+          <div style={{ gridColumn: "1 / span 9" }} />
+          <div style={{ fontSize: "10px", color: COLOR_TERTIARY, fontWeight: 600 }}>Tot</div>
+          <div style={{ fontSize: "10px", color: COLOR_ADJ, fontWeight: 600, borderLeft: `1px dashed ${COLOR_ADJ}` }}>
+            Adj Tot
+          </div>
+          <div style={{ gridColumn: "1 / span 9" }} />
+          <div style={{
+            fontSize: "16px", fontWeight: 800, color: COLOR_TEXT,
+            borderTop: `1px solid ${COLOR_DIVIDER}`, paddingTop: "4px",
+          }}>
             {total == null ? "—" : total}
-          </span>
+          </div>
+          <div style={{
+            fontSize: "16px", fontWeight: 800, color: COLOR_ADJ,
+            borderTop: `1px solid ${COLOR_DIVIDER}`, borderLeft: `1px dashed ${COLOR_ADJ}`,
+            paddingTop: "4px",
+          }}>
+            {adjTotal == null ? "—" : adjTotal}
+          </div>
         </div>
+      ) : (
+        showRunningTotal && (
+          <div
+            style={{
+              textAlign: "right",
+              marginTop: "8px",
+              fontSize: "11px",
+              color: "#475569",
+            }}
+          >
+            Total{" "}
+            <span style={{ fontWeight: 700, color: COLOR_TEXT }}>
+              {total == null ? "—" : total}
+            </span>
+          </div>
+        )
       )}
     </div>
   );

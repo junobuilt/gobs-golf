@@ -4,7 +4,7 @@
 // React imports. Consumers wrap the call in their own useEffect.
 
 import { supabase } from "@/lib/supabase";
-import { computeRoundResult, getPlayingStrokes } from "@/lib/scoring";
+import { computeRoundResult, getPlayingStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import { getScoringBasis, getHandicapAllowance } from "@/lib/format/helpers";
 import {
@@ -33,6 +33,11 @@ export type PlayerRow = {
   // 18-length arrays. scores: strokes or null. par: hole par (uses player tee).
   scores: (number | null)[];
   par: number[];
+  // Wave 1A: GHIN Adjusted (Net Double Bogey-capped) per-hole scores, 18-length.
+  // ALWAYS computed at 100% handicap (raw course_handicap), ignoring the round's
+  // handicap allowance by design. Read-only / display-only — never feeds
+  // competition net, ranking, or payouts.
+  adjScores: (number | null)[];
   // D.1: NULL = played all 18 (or hasn't dropped). 1..17 = walked off after
   // that hole. Drives the "Left after hole N" badge and the mid-round
   // dropout merge with a blind_draws fill in PlayerHoleGrid.
@@ -343,6 +348,13 @@ export async function loadRoundResults(
       const scores: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
         rpScores[i + 1] ?? null
       );
+      // Wave 1A: GHIN adjusted scores at 100% handicap (raw CH). Stroke index
+      // is null for any hole missing tee data → the helper passes that hole's
+      // actual score through (no fabricated cap).
+      const strokeIndexes: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
+        playerHoles.find(h => h.holeNumber === i + 1)?.strokeIndex ?? null
+      );
+      const adjScores = computeAdjustedHoleScores(scores, par, strokeIndexes, rp.course_handicap);
 
       const enginePlayer = result.perPlayer.find(p => p.playerId === String(rp.id));
       const grossTotal = enginePlayer?.grossTotal ?? 0;
@@ -379,6 +391,7 @@ export async function loadRoundResults(
         holesPlayed,
         scores,
         par,
+        adjScores,
         droppedAfterHole: rp.dropped_after_hole ?? null,
       };
     });

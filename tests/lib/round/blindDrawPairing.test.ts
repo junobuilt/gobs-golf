@@ -28,6 +28,7 @@ function player(
     holesPlayed: droppedAfterHole ?? 18,
     scores: Array.from({ length: 18 }, () => null),
     par: Array.from({ length: 18 }, () => 4),
+    adjScores: Array.from({ length: 18 }, () => null),
     droppedAfterHole,
   };
 }
