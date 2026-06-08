@@ -65,8 +65,12 @@ function ScoreMark({ delta, score }: { delta: number; score: number }) {
 
   const isCircle = delta < 0;
   const tier = Math.min(Math.abs(delta), 3); // cap at triple
+  // Bug #1 (Wave 1A): concentric rings nested with a CONSISTENT 3px gap on
+  // every side at each tier (each ring is centered in its parent, so the gap is
+  // (outer − inner) / 2). The prior triple [28,22,18] gave uneven 3px/2px gaps,
+  // which read as cramped. Even steps now: double 26→20, triple 28→22→16.
   const sizes =
-    tier === 1 ? [22] : tier === 2 ? [26, 20] : [28, 22, 18];
+    tier === 1 ? [22] : tier === 2 ? [26, 20] : [28, 22, 16];
 
   const borderRadius = isCircle ? "50%" : "0";
 

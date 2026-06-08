@@ -1504,6 +1504,30 @@ export default function ScorecardPage() {
   const teamPar = getTeamParTotal();
   const scoredHoles = holesWithTeamScores();
   const countingIds = getCountingPlayerIds(currentHole);
+  // Bug #2 (Wave 1A): assign sequential ball numbers 1..N to the counting balls,
+  // ordered by net rank (best = Ball 1), ties broken by roster order. N = the
+  // number of balls counting on THIS hole — 3 on a normal 3-Ball hole, up to
+  // the full team on an "all scores count" override hole, 1 for Best Ball. The
+  // engine returns contributingPlayerIds in roster order on override holes, so
+  // we re-rank here for display rather than relying on that order. Each number
+  // is used exactly once (the prior indexOf-based label stamped "Ball 2" on
+  // every counting ball past the first).
+  // TODO(I16): label order follows the hole's selection rule (worst-first on
+  // worst-counts holes); currently always best-first.
+  const ballNumberByRp: Map<number, number> = (() => {
+    const rosterIndex = (id: number) => roundPlayers.findIndex(p => p.id === id);
+    const ordered = [...countingIds].sort((a, b) => {
+      const rpA = roundPlayers.find(p => p.id === a);
+      const rpB = roundPlayers.find(p => p.id === b);
+      const va = rpA ? (getNetScore(rpA, currentHole) ?? Infinity) : Infinity;
+      const vb = rpB ? (getNetScore(rpB, currentHole) ?? Infinity) : Infinity;
+      if (va !== vb) return va - vb;
+      return rosterIndex(a) - rosterIndex(b);
+    });
+    const m = new Map<number, number>();
+    ordered.forEach((id, i) => m.set(id, i + 1));
+    return m;
+  })();
   const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball" || roundFormat === "best_ball";
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
@@ -1736,11 +1760,11 @@ export default function ScorecardPage() {
             )
           : 0;
 
-        const isCounting = countingIds.includes(rp.id);
-        const countingRank = countingIds.indexOf(rp.id); // 0 = Ball 1, 1 = Ball 2
+        const ballNumber = ballNumberByRp.get(rp.id) ?? 0; // 0 = not counting
+        const isCounting = ballNumber > 0;
 
-        const countingBorderColor = countingRank === 0 ? "#0c3057" : "#1e40af";
-        const countingBg = countingRank === 0 ? "#eff6ff" : "#eff6ff";
+        const countingBorderColor = ballNumber === 1 ? "#0c3057" : "#1e40af";
+        const countingBg = "#eff6ff";
 
         // D.1: post-dropout score entry is silently no-op'd. +/− buttons go
         // visually disabled; entered scores on holes 1..dropped stay visible
@@ -1838,7 +1862,7 @@ export default function ScorecardPage() {
                       fontSize: "0.6rem", fontWeight: 800, padding: "1px 6px", borderRadius: "999px",
                       background: countingBorderColor, color: "white", textTransform: "uppercase",
                     }}>
-                      {countingRank === 0 ? "Ball 1" : "Ball 2"}
+                      Ball {ballNumber}
                     </span>
                   )}
                   {/* Phase D.2: HI verification chip. Renders only in admin
@@ -1883,7 +1907,11 @@ export default function ScorecardPage() {
                   {teeColor && (
                     <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: teeColor.bg, border: "1px solid #cbd5e1" }} />
                   )}
-                  {gross != null && net != null && net !== gross && (
+                  {/* Bug #3 (Wave 1A): always render Net when a score exists,
+                      even when net === gross (no stroke on this hole). The old
+                      `net !== gross` clause suppressed it, making no-stroke rows
+                      look like missing data next to rows that showed Net. */}
+                  {gross != null && net != null && (
                     <span style={{ color: "#0c3057" }}>Net: {net}</span>
                   )}
                   {playerTotal > 0 && (
