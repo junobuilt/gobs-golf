@@ -15,6 +15,15 @@ export type FormatConfig = {
   best_n?: number;
   point_values?: Record<string, number>;
   override_holes?: number[];
+  // Wave 1A: per-round handicap allowance as an integer percent (10–100, in
+  // steps of 10). Scales every player's course handicap before strokes are
+  // allocated, so it applies to every net format automatically and is a no-op
+  // under gross scoring. Absent/undefined on all pre-1A rounds → treated as 100
+  // (full handicap) at read time via getHandicapAllowance(). Applied to stroke
+  // allocation ONLY (dots + net engine input) via getPlayingStrokes(); the
+  // displayed Course Handicap number label stays RAW. NOTE: the GHIN Adjusted
+  // Score is always computed at 100% and ignores this value by design.
+  handicap_allowance?: number;
   // D.1 hotfix (2026-05-18): team_numbers that have tapped "Submit Final
   // Scores" on their scorecard. The blind-draw RPC is only called once
   // every team in the round appears in this list. Replaces the previous

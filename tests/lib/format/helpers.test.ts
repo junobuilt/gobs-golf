@@ -5,6 +5,7 @@ import {
   defaultConfigFor,
   getScoringBasis,
   getOverrideHoles,
+  getHandicapAllowance,
 } from "@/lib/format/helpers";
 import { FORMAT_ORDER } from "@/lib/format/copy";
 
@@ -120,5 +121,34 @@ describe("getOverrideHoles", () => {
 
   it("returns the array as-is when present", () => {
     expect(getOverrideHoles({ basis: "net", override_holes: [9, 18] })).toEqual([9, 18]);
+  });
+});
+
+describe("getHandicapAllowance (Wave 1A)", () => {
+  it("defaults to 100 for null/undefined config (back-compat for pre-1A rounds)", () => {
+    expect(getHandicapAllowance(null)).toBe(100);
+    expect(getHandicapAllowance(undefined)).toBe(100);
+  });
+
+  it("defaults to 100 when the key is absent", () => {
+    expect(getHandicapAllowance({ basis: "net", override_holes: [] })).toBe(100);
+  });
+
+  it("returns the stored percent when present", () => {
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 80 })).toBe(80);
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 100 })).toBe(100);
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 10 })).toBe(10);
+  });
+
+  it("defaults to 100 for a non-finite / non-number value", () => {
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: NaN })).toBe(100);
+    // @ts-expect-error — defending against malformed JSON in the column
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: "80" })).toBe(100);
+  });
+
+  it("clamps defensively to [10, 100]", () => {
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 0 })).toBe(10);
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 5 })).toBe(10);
+    expect(getHandicapAllowance({ basis: "net", handicap_allowance: 150 })).toBe(100);
   });
 });

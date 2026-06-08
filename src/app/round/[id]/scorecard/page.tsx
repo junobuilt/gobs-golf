@@ -10,11 +10,12 @@ import {
   computeHoleResult,
   computeRoundResult,
   getHandicapStrokes,
+  getPlayingStrokes,
 } from "@/lib/scoring";
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
-import { getScoringBasis, getOverrideHoles } from "@/lib/format/helpers";
+import { getScoringBasis, getOverrideHoles, getHandicapAllowance } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
@@ -864,6 +865,9 @@ export default function ScorecardPage() {
       .maybeSingle();
     const cfg = (roundRow?.format_config ?? null) as FormatConfig | null;
     const useGross = getScoringBasis(cfg) === "gross";
+    // Wave 1A: reduce the drawn player's CH by this round's allowance too, so
+    // the fill's competition net matches the rest of the team (no-op at 100%).
+    const allowance = getHandicapAllowance(cfg);
 
     // The drawn player is on another team — look up their round_players row
     // (id, tee, CH), scores, and tee holes directly (not in `roundPlayers`,
@@ -925,7 +929,7 @@ export default function ScorecardPage() {
       const drawnRpId = drawn?.id;
       return {
         drawnPlayerId: String(drawnRpId ?? b.drawn_player_id),
-        drawnPlayerCourseHandicap: useGross ? 0 : (drawn?.ch ?? null),
+        drawnPlayerCourseHandicap: useGross ? 0 : getPlayingStrokes(drawn?.ch ?? null, allowance),
         drawnPlayerScores: drawnRpId != null ? (drawnScoresByRp[drawnRpId] ?? {}) : {},
         drawnPlayerHoles: drawn ? (drawnHolesByTee[drawn.tee_id] ?? []) : [],
         holeRangeStart: b.hole_range_start as number,
@@ -1095,6 +1099,9 @@ export default function ScorecardPage() {
     // zero out handicaps before passing to the engine. Net == gross for every
     // format including Stableford (which has no internal `basis` branch).
     const useGross = getScoringBasis(roundFormatConfig) === "gross";
+    // Wave 1A: scale CH by the per-round allowance before the engine allocates
+    // strokes (no-op at 100%). Display of the CH number stays raw.
+    const allowance = getHandicapAllowance(roundFormatConfig);
     return computeHoleResult({
       format: roundFormat,
       formatConfig: { ...roundFormatConfig, basis: mode },
@@ -1102,7 +1109,7 @@ export default function ScorecardPage() {
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
         grossScore: scores[rp.id]?.[holeNumber] ?? null,
-        courseHandicap: useGross ? 0 : rp.course_handicap,
+        courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
       })),
     });
   };
@@ -1136,13 +1143,14 @@ export default function ScorecardPage() {
       strokeIndex: h.stroke_index,
     }));
     const useGross = getScoringBasis(roundFormatConfig) === "gross";
+    const allowance = getHandicapAllowance(roundFormatConfig);
     return computeRoundResult({
       format: roundFormat!,
       formatConfig: { ...roundFormatConfig!, basis: mode },
       holes,
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
-        courseHandicap: useGross ? 0 : rp.course_handicap,
+        courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
         grossScores: scores[rp.id] || {},
       })),
       // Best-N: include the displayed team's blind-draw fill(s) in the per-hole
@@ -1706,7 +1714,14 @@ export default function ScorecardPage() {
         const gross = scores[rp.id]?.[currentHole];
         const net = getNetScore(rp, currentHole);
         const holeInfo = holesByTee[rp.tee_id || 0]?.find(h => h.hole_number === currentHole);
-        const hcpStrokes = holeInfo ? getHandicapStrokes(rp.course_handicap, holeInfo.stroke_index) : 0;
+        // Wave 1A: dots reflect the allowance-reduced playing strokes (no-op at
+        // 100%). The CH *number* label on the meta row below stays raw.
+        const hcpStrokes = holeInfo
+          ? getHandicapStrokes(
+              getPlayingStrokes(rp.course_handicap, getHandicapAllowance(roundFormatConfig)),
+              holeInfo.stroke_index,
+            )
+          : 0;
 
         const isCounting = countingIds.includes(rp.id);
         const countingRank = countingIds.indexOf(rp.id); // 0 = Ball 1, 1 = Ball 2

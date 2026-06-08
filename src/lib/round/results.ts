@@ -4,9 +4,9 @@
 // React imports. Consumers wrap the call in their own useEffect.
 
 import { supabase } from "@/lib/supabase";
-import { computeRoundResult } from "@/lib/scoring";
+import { computeRoundResult, getPlayingStrokes } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
-import { getScoringBasis } from "@/lib/format/helpers";
+import { getScoringBasis, getHandicapAllowance } from "@/lib/format/helpers";
 import {
   rankTeams,
   holesCompleteForTeam,
@@ -221,6 +221,10 @@ export async function loadRoundResults(
   });
 
   const useGross = getScoringBasis(formatConfig) === "gross";
+  // Wave 1A: per-round handicap allowance. Scales every player's raw CH before
+  // the engine allocates strokes (competition net). No-op at 100% and under
+  // gross scoring (CH already zeroed below). Display of the CH number stays raw.
+  const allowance = getHandicapAllowance(formatConfig);
   const isStableford = isStablefordFormat(format);
 
   // D.1 hotfix follow-up: precompute engine + par lookup per team in a
@@ -240,7 +244,7 @@ export async function loadRoundResults(
     teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
     const playersForEngine = (teamPlayers as any[]).map((rp: any) => ({
       playerId: String(rp.id),
-      courseHandicap: useGross ? 0 : rp.course_handicap,
+      courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
       grossScores: scoresByRpId[rp.id] || {},
     }));
     // Blind-draw fills for THIS team. Best-N: the engine injects them into the
@@ -256,7 +260,9 @@ export async function loadRoundResults(
         const drawnRpId = lookup?.rpId;
         const drawnHoles = lookup ? (holesByTee[lookup.teeId] || []) : [];
         const drawnRp = (rps as any[]).find(r => r.id === drawnRpId);
-        const drawnCH = useGross ? 0 : (drawnRp?.course_handicap ?? null);
+        const drawnCH = useGross
+          ? 0
+          : getPlayingStrokes(drawnRp?.course_handicap ?? null, allowance);
         return {
           drawnPlayerId: String(drawnRpId ?? drawnPlayerId),
           drawnPlayerCourseHandicap: drawnCH,

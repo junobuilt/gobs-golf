@@ -1,5 +1,5 @@
 export * from "./types";
-export { getHandicapStrokes, computeCourseHandicap } from "./handicap";
+export { getHandicapStrokes, computeCourseHandicap, getPlayingStrokes } from "./handicap";
 export {
   computeHoleResult,
   computeRoundResult,

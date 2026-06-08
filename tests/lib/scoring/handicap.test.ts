@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getHandicapStrokes, computeCourseHandicap } from "@/lib/scoring/handicap";
+import { getHandicapStrokes, computeCourseHandicap, getPlayingStrokes } from "@/lib/scoring/handicap";
 
 describe("getHandicapStrokes", () => {
   it("returns 0 for scratch player", () => {
@@ -29,6 +29,37 @@ describe("getHandicapStrokes", () => {
     for (let si = 1; si <= 18; si++) {
       expect(getHandicapStrokes(18, si)).toBe(1);
     }
+  });
+});
+
+describe("getPlayingStrokes (Wave 1A handicap allowance)", () => {
+  it("is the identity at 100%", () => {
+    expect(getPlayingStrokes(8, 100)).toBe(8);
+    expect(getPlayingStrokes(0, 100)).toBe(0);
+    expect(getPlayingStrokes(36, 100)).toBe(36);
+  });
+
+  it("80% of 8 = 6 (6.4 rounds to 6)", () => {
+    expect(getPlayingStrokes(8, 80)).toBe(6);
+  });
+
+  it("80% of 9 = 7 (7.2 rounds down to 7)", () => {
+    expect(getPlayingStrokes(9, 80)).toBe(7);
+  });
+
+  it("rounds a .5 boundary up (90% of 5 = 4.5 → 5)", () => {
+    expect(getPlayingStrokes(5, 90)).toBe(5);
+    // 50% of 9 = 4.5 → 5 as well
+    expect(getPlayingStrokes(9, 50)).toBe(5);
+  });
+
+  it("returns null when raw CH is null", () => {
+    expect(getPlayingStrokes(null, 80)).toBe(null);
+    expect(getPlayingStrokes(null, 100)).toBe(null);
+  });
+
+  it("scales a larger handicap (80% of 22 = 18 from 17.6)", () => {
+    expect(getPlayingStrokes(22, 80)).toBe(18);
   });
 });
 
