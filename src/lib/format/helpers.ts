@@ -10,6 +10,36 @@ export type RoundForLockGate = {
   format_locked_at: string | null;
 } | null;
 
+// Wave 1B — single source of truth for "is this a team-card format?" Every
+// routing + read site (scorecard routing, results layer, homepage status,
+// season-stat exclusion) consults this helper rather than comparing the format
+// string inline. Team-card formats store one team-level score per hole in
+// `team_scores` (no per-player `scores` rows) and finalize WITHOUT blind draw.
+// The other three team-card formats (Texas Scramble / 1 Score Only / Alternate
+// Shot) ride this spine later by adding their string to this set (+ the
+// rounds_format_check CHECK constraint) — no other code change.
+const TEAM_CARD_FORMATS = new Set<Format>(["shambles"]);
+
+export function isTeamCardFormat(format: Format | null | undefined): boolean {
+  if (!format) return false;
+  return TEAM_CARD_FORMATS.has(format);
+}
+
+// Wave 1B — reads the per-round team-card ball count (1 or 2). Null/undefined
+// config, a missing key, or any non-finite/out-of-range value falls back to 1
+// (back-compat for every non-team-card and pre-1B round). Clamped to [1, 2]
+// defensively against malformed JSON in the column (mirrors getHandicapAllowance).
+export function getTeamBallCount(
+  formatConfig: FormatConfig | null | undefined,
+): number {
+  if (!formatConfig) return 1;
+  const n = formatConfig.team_ball_count;
+  if (typeof n !== "number" || !Number.isFinite(n)) return 1;
+  if (n < 1) return 1;
+  if (n > 2) return 2;
+  return Math.round(n);
+}
+
 export function roundNeedsFormat(round: RoundForFormatGate): boolean {
   if (!round) return false;
   if (round.is_complete) return false;

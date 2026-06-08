@@ -240,6 +240,14 @@ export function computeHoleResult(input: HoleInput): HoleResult {
         input,
         mergePointTable(GOBS_STABLEFORD_POINTS, input.formatConfig.point_values),
       );
+    // Wave 1B: team-card formats are scored at the TEAM level (one score per
+    // hole in `team_scores`), never through this per-player engine. Reaching
+    // here means a team-card round was wrongly routed into the individual
+    // scoring path — fail loud rather than fabricate a per-player result.
+    case "shambles":
+      throw new Error(
+        `computeHoleResult: team-card format "${input.format}" has no per-player engine path`,
+      );
   }
 }
 

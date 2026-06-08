@@ -1,6 +1,11 @@
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 
+// Wave 1B note: "shambles" is intentionally ABSENT from FORMAT_ORDER. This list
+// drives the admin FormatPicker; Shambles is registered in the type system,
+// classifier (isTeamCardFormat), and DEFAULT_FORMAT_CONFIG in Commit 1, but is
+// only added here once the team-card entry surface (Commit 2) and routing
+// (Commit 3) exist — so production never offers a format with no working screen.
 export const FORMAT_ORDER: Format[] = [
   "2_ball",
   "3_ball",
@@ -29,6 +34,10 @@ export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> 
   "gobs_stableford": {
     title: "GOBS Stableford",
     oneLiner: "League point values you can edit per round. Highest total wins.",
+  },
+  "shambles": {
+    title: "Shambles",
+    oneLiner: "Team enters one score per hole (or two summed balls). Gross only. Lowest team total wins.",
   },
 };
 
@@ -95,6 +104,16 @@ export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
     basis: "net",
     scoring_basis: "net",
     point_values: { ...GOBS_STABLEFORD_DEFAULT_POINT_VALUES },
+    override_holes: [],
+  },
+  // Wave 1B team-card format. Gross only (no per-player handicap to apply) —
+  // basis/scoring_basis are "gross" to reflect that, though the team-card
+  // surface sums raw strokes directly and never consults the per-player engine
+  // or getScoringBasis. team_ball_count defaults to 1 (admin may set 2).
+  "shambles": {
+    basis: "gross",
+    scoring_basis: "gross",
+    team_ball_count: 1,
     override_holes: [],
   },
 };

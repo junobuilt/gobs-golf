@@ -6,6 +6,8 @@ import {
   getScoringBasis,
   getOverrideHoles,
   getHandicapAllowance,
+  isTeamCardFormat,
+  getTeamBallCount,
 } from "@/lib/format/helpers";
 import { FORMAT_ORDER } from "@/lib/format/copy";
 
@@ -150,5 +152,63 @@ describe("getHandicapAllowance (Wave 1A)", () => {
     expect(getHandicapAllowance({ basis: "net", handicap_allowance: 0 })).toBe(10);
     expect(getHandicapAllowance({ basis: "net", handicap_allowance: 5 })).toBe(10);
     expect(getHandicapAllowance({ basis: "net", handicap_allowance: 150 })).toBe(100);
+  });
+});
+
+describe("isTeamCardFormat (Wave 1B)", () => {
+  it("returns true for shambles", () => {
+    expect(isTeamCardFormat("shambles")).toBe(true);
+  });
+
+  it("returns false for every individual (non-team-card) format", () => {
+    for (const f of FORMAT_ORDER) {
+      // FORMAT_ORDER holds only the individual formats this session; the
+      // classifier must reject all of them. (Negative control: if shambles
+      // were ever added to FORMAT_ORDER, this asserts it is NOT here yet.)
+      expect(isTeamCardFormat(f)).toBe(false);
+    }
+  });
+
+  it("returns false for null/undefined", () => {
+    expect(isTeamCardFormat(null)).toBe(false);
+    expect(isTeamCardFormat(undefined)).toBe(false);
+  });
+});
+
+describe("getTeamBallCount (Wave 1B)", () => {
+  it("defaults to 1 for null/undefined config (non-team-card / pre-1B rounds)", () => {
+    expect(getTeamBallCount(null)).toBe(1);
+    expect(getTeamBallCount(undefined)).toBe(1);
+  });
+
+  it("defaults to 1 when the key is absent", () => {
+    expect(getTeamBallCount({ basis: "gross" })).toBe(1);
+  });
+
+  it("returns the stored count when present", () => {
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: 1 })).toBe(1);
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: 2 })).toBe(2);
+  });
+
+  it("defaults to 1 for a non-finite / non-number value", () => {
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: NaN })).toBe(1);
+    // @ts-expect-error — defending against malformed JSON in the column
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: "2" })).toBe(1);
+  });
+
+  it("clamps defensively to [1, 2]", () => {
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: 0 })).toBe(1);
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: 3 })).toBe(2);
+    expect(getTeamBallCount({ basis: "gross", team_ball_count: 5 })).toBe(2);
+  });
+});
+
+describe("defaultConfigFor (Wave 1B — shambles)", () => {
+  it("seeds shambles with team_ball_count = 1", () => {
+    expect(defaultConfigFor("shambles").team_ball_count).toBe(1);
+  });
+
+  it("seeds shambles as gross (no per-player handicap)", () => {
+    expect(defaultConfigFor("shambles").scoring_basis).toBe("gross");
   });
 });

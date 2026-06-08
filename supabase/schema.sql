@@ -690,7 +690,7 @@ CREATE TABLE public.rounds (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     was_finalized boolean DEFAULT false NOT NULL,
     season_id integer,
-    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text])))
+    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text])))
 );
 
 
@@ -729,6 +729,39 @@ CREATE TABLE public.scores (
 
 ALTER TABLE public.scores ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: team_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_scores (
+    id bigint NOT NULL,
+    round_id bigint NOT NULL,
+    team_number integer NOT NULL,
+    hole_number integer NOT NULL,
+    ball_index integer DEFAULT 1 NOT NULL,
+    strokes integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT team_scores_ball_index_check CHECK (((ball_index >= 1) AND (ball_index <= 2))),
+    CONSTRAINT team_scores_hole_number_check CHECK (((hole_number >= 1) AND (hole_number <= 18))),
+    CONSTRAINT team_scores_strokes_check CHECK (((strokes >= 1) AND (strokes <= 20))),
+    CONSTRAINT team_scores_team_number_check CHECK ((team_number > 0))
+);
+
+
+--
+-- Name: team_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.team_scores ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.team_scores_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -927,6 +960,22 @@ ALTER TABLE ONLY public.scores
 
 
 --
+-- Name: team_scores team_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_scores
+    ADD CONSTRAINT team_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: team_scores team_scores_round_team_hole_ball_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_scores
+    ADD CONSTRAINT team_scores_round_team_hole_ball_key UNIQUE (round_id, team_number, hole_number, ball_index);
+
+
+--
 -- Name: seasons seasons_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -947,6 +996,13 @@ ALTER TABLE ONLY public.tees
 --
 
 CREATE INDEX blind_draws_round_team_idx ON public.blind_draws USING btree (round_id, short_team_number);
+
+
+--
+-- Name: team_scores_round_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX team_scores_round_team_idx ON public.team_scores USING btree (round_id, team_number);
 
 
 --
@@ -1061,6 +1117,14 @@ ALTER TABLE ONLY public.blind_draws
 
 ALTER TABLE ONLY public.blind_draws
     ADD CONSTRAINT blind_draws_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: team_scores team_scores_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_scores
+    ADD CONSTRAINT team_scores_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
 
 
 --
@@ -1210,6 +1274,13 @@ CREATE POLICY "Allow all on scores" ON public.scores USING (true) WITH CHECK (tr
 
 
 --
+-- Name: team_scores Allow all on team_scores; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow all on team_scores" ON public.team_scores USING (true) WITH CHECK (true);
+
+
+--
 -- Name: tees Allow all on tees; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -1297,6 +1368,12 @@ ALTER TABLE public.rounds ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: team_scores; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.team_scores ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: tees; Type: ROW SECURITY; Schema: public; Owner: -

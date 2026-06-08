@@ -3,7 +3,12 @@ export type Format =
   | "3_ball"
   | "best_ball"
   | "stableford_standard"
-  | "gobs_stableford";
+  | "gobs_stableford"
+  // Wave 1B: team-card format. The TEAM is the scoring unit — one score per
+  // hole (or two summed balls for count-2), stored in `team_scores`, NOT in
+  // the per-player `scores` table. Never routes through the per-player engine
+  // (computeHoleResult). Classified via isTeamCardFormat() in lib/format/helpers.
+  | "shambles";
 
 export type FormatConfig = {
   basis: "net" | "gross";
@@ -31,6 +36,14 @@ export type FormatConfig = {
   // par behavior and was locking rounds before players could correct.
   // Empty/undefined on rounds created before this hotfix → treat as [].
   submitted_teams?: number[];
+  // Wave 1B: number of counting balls per hole for team-card formats
+  // (Shambles: admin picks 1 or 2). Count-2 → the hole's team score is the
+  // sum of the two entered balls. Generic across all future team-card formats
+  // (Texas Scramble / 1 Score Only / Alternate Shot all use 1). Absent/
+  // undefined on every non-team-card and pre-1B round → treated as 1 at read
+  // time via getTeamBallCount(). Read ONLY for team-card rounds; inert for the
+  // individual per-player formats.
+  team_ball_count?: number;
 };
 
 export type HoleInfo = {

@@ -2,8 +2,50 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-08 (G2 S4b — fund-reset write surface)
-**Session purpose:** Shipped the admin fund-reset write surface (roadmap G2 / Session 4b). **Migration 017 applied to prod** (after a transaction-rollback dry-run): nullable `fund_transactions.note` column + `reset_fund(p_fund,p_reason,p_created_by)` SECURITY-DEFINER RPC that zeroes a fund by appending one balancing ledger entry (never deletes history). Reset buttons added to both FundsPanel cards → reused `DangerModal` (additive `children`/`confirmDisabled` props) with a REQUIRED reason, gated client- AND server-side. Payout-override edit was explicitly OUT of scope. **613/613 vitest; 11/11 e2e; `tsc` clean.** Prod money data unchanged by the migration (0 fund rows fired).
+**Last updated:** 2026-06-07 (Wave 1B — team-card scoring spine: Commit 0 audit + Commit 1 foundation)
+**Session purpose:** Started Wave 1B (team-card scoring spine for Shambles + 3 future team-card formats). **Commit 0** = approved plan-mode audit + storage proposal. **Commit 1** = foundation: `team_scores` table (migration 018, **applied to prod**), `"shambles"` registered in the `Format` type/labels/defaults + the `rounds_format_check` constraint, `format_config.team_ball_count` (generic, default 1), the `isTeamCardFormat()` single-source classifier + `getTeamBallCount()` reader, and a pure team-score read helper. **`shambles` deliberately NOT in `FORMAT_ORDER` yet** (so prod's admin picker doesn't offer a format with no working screen until C2/C3). **613 → 631/631 vitest; `tsc` clean.** Commits 2–4 (entry surface, routing/read-branches, finalize-without-blind-draw) still pending.
+
+---
+
+## 2026-06-07 (Wave 1B — team-card scoring spine: Commit 0 + Commit 1)
+
+### Where we left off
+
+**The team-card scoring spine is laid; only Shambles is registered, and it isn't yet selectable in prod (by design).** Spec: [docs/SPEC_1B_team_card_spine_shambles.md](docs/SPEC_1B_team_card_spine_shambles.md). Plan-first; Commit 0 audit approved before any code.
+
+- **Commit 0 (plan mode) — audit + storage proposal (approved).** Mapped: individual score storage (`scores` per `round_player`); format storage (`rounds.format` + `format_config` jsonb); every score-aggregation read site (`results.ts` keystone → leaderboard/summary; homepage status; scorecard); the finalize/blind-draw gate (**exact point: `scorecard/page.tsx:1049` `rpc("finalize_round_with_blind_draws")`** — and critically the RPC's *completion check* itself counts per-player `scores`, so team-card must bypass the RPC entirely); and the season/profile per-player read sites that must EXCLUDE team-card rounds (`playerStats.ts`, `season/page.tsx`, `player/[id]/page.tsx`) — with **played-with deliberately INCLUDED** (roster is captured normally). **Locked decisions:** storage Option A (long/`ball_index` rows); generic `team_ball_count`; a dedicated `finalize_team_card_round` RPC (C4) for concurrency symmetry; the played-with-include / scoring-exclude asymmetry is intentional.
+- **Commit 1 — foundation (this commit).**
+  - **Migration `018_phase_1b_team_scores.sql` — APPLIED TO PROD** via MCP `apply_migration` (after read-only verifying the live constraint matched + `team_scores` absent). `team_scores(id, round_id FK→rounds ON DELETE CASCADE, team_number>0, hole_number 1–18, ball_index 1–2 default 1, strokes 1–20, created_at)`, `UNIQUE(round_id, team_number, hole_number, ball_index)` (per-box last-write-wins), index `(round_id, team_number)`, RLS enabled + allow-all policy (mirrors `scores`; client-written). `rounds_format_check` extended to allow `'shambles'`. Ball count lives in `format_config`, not a column. **Post-apply verified:** constraint includes shambles, RLS on, 1 policy, unique key + columns correct.
+  - **Classification (single source of truth):** `isTeamCardFormat(format)` in `src/lib/format/helpers.ts` backed by `TEAM_CARD_FORMATS = new Set(["shambles"])` — every future routing/read site consults it; the other 3 formats ride it by one-line registration (+ the CHECK). `getTeamBallCount(config)` reader (default 1, clamp [1,2]).
+  - **Type/registration:** `"shambles"` added to the `Format` union + `FormatConfig.team_ball_count?: number` (`src/lib/scoring/types.ts`); `FORMAT_LABELS` + `DEFAULT_FORMAT_CONFIG` (`copy.ts`, shambles = gross, `team_ball_count: 1`). `computeHoleResult`'s exhaustive `switch` gained a `case "shambles"` that **throws** (team-card never uses the per-player engine — fail loud if mis-routed).
+  - **Read helper:** `src/lib/round/teamScores.ts` — pure `buildTeamScoreMap` + `getTeamHoleTotal` (sum of balls = hole's team score) / `getTeamHoleBalls` / `holesScoredForTeam` (thru-N) / `getTeamTotal`. No supabase import (kept pure for testability per principle #3); the `loadTeamScores` IO read lands in C3 alongside the `results.ts` branch that uses it.
+
+**Files:** NEW `supabase/migrations/018_phase_1b_team_scores.sql`, `src/lib/round/teamScores.ts`, `tests/lib/round/teamScores.test.ts`. MODIFIED `src/lib/scoring/types.ts`, `src/lib/scoring/engine.ts`, `src/lib/format/copy.ts`, `src/lib/format/helpers.ts`, `supabase/schema.sql` (hand-synced — see confession), `tests/lib/format/helpers.test.ts`, `STATUS.md`.
+
+**Tests:** +18 (`isTeamCardFormat` shambles-true / every-FORMAT_ORDER-false / null; `getTeamBallCount` default/clamp/non-finite; `defaultConfigFor("shambles")` ×2; team-score aggregation ×8: count-1, count-2 sum=9, team isolation, null-for-unscored, thru-N not inflated by 2nd ball, total, duplicate-ball overwrite, empty — fixtures seeded out-of-order/multi-team so the aggregation does real work). **631/631 vitest; `tsc --noEmit` clean.**
+
+### Today's commits
+
+- (this session) feat(scoring): Wave 1B C1 — team-card storage spine (migration 018 + shambles registration + isTeamCardFormat/getTeamBallCount + team-score read helper)
+
+### DB changes (today)
+
+- **Migration 018 applied to prod** (via MCP, after read-only pre-check). Additive only: new empty `team_scores` table + extended `rounds_format_check`. **No existing round touched** — all 21 rounds keep their format; no `team_scores` rows exist. `gobs_20260607_211143.dump` remains a valid pre-1B restore point (the change is purely additive DDL).
+
+### Tomorrow's priority
+
+1. **Commit 2** — the NEW team-card entry surface (separate route from the individual scorecard; one team-score row per hole; count-1 one box / count-2 two boxes + summed total; dash-until-tap par-anchored; allowance control disabled; format chip + ball count). Heaviest commit — may split.
+2. **Commit 3** — routing via `isTeamCardFormat` + leaderboard/summary team-row branches + season/profile exclusion (+ add `loadTeamScores` to `results.ts`); add `"shambles"` to `FORMAT_ORDER` once the surface exists.
+3. **Commit 4** — `finalize_team_card_round` RPC (no blind draw) + gate at `scorecard/page.tsx:1049`; golden fixtures with the blind-draw negative control.
+
+### Considered but not changed (confession)
+
+- **`supabase/schema.sql` was HAND-SYNCED, not regenerated.** `npm run db:backup` needs the interactive prod connection string (a SecureString prompt) which I can't run headless. I hand-added `team_scores` across every dump section (TABLE + IDENTITY seq, PK + UNIQUE, INDEX, FK, POLICY, ROW SECURITY) mirroring `blind_draws`, and extended the inline `rounds_format_check`. It is **functionally** correct for a from-scratch rebuild, but **not byte-identical** to what `pg_dump` would emit (the dump's object ordering isn't alphabetical, so a future backup will reorder). **Action for Thomas:** run `npm run db:backup` to canonicalize `schema.sql` before the next migration. Migration `018` is the authoritative change record either way.
+- **`"shambles"` deliberately omitted from `FORMAT_ORDER`.** That list is the admin FormatPicker's only source; adding shambles now would let an admin pick a format whose entry surface (C2) and routing (C3) don't exist yet — and master auto-deploys. Registered everywhere else (type, labels, defaults, classifier, DB constraint); `FORMAT_ORDER` gets it in C3.
+- **`loadTeamScores` (the Supabase read) deferred to C3.** Keeping `teamScores.ts` free of the supabase client import means the pure aggregation is unit-tested without a client mock (principle #3); the IO read belongs with the `results.ts` branch that consumes it (C3) rather than shipping unused now.
+- **`shambles` default config is `scoring_basis: "gross"`** (team-card is gross-only, no per-player handicap). Inert — the team-card surface sums raw strokes and never consults `getScoringBasis`/the per-player engine — but set honestly. Existing "net for every format" tests iterate `FORMAT_ORDER` (which excludes shambles), so they're unaffected.
+- **No live `team_scores` round-trip / PostgREST read smoke-test yet.** The table is new + empty and the read query (`loadTeamScores`) isn't shipped until C3 — so there's no PostgREST shape to smoke-check this commit (principle #2 check deferred to C3 when the read lands). Live DDL shape WAS verified (constraint/RLS/unique/columns).
+- **Out of scope (untouched):** the individual scorecard surface + its read path (C2 builds a separate surface); blind-draw behavior for individual formats (C4 only gates it OFF for team-card); the per-player engine math; the other 3 team-card formats (registration-only later); the pre-existing uncommitted `.claude/settings.local.json` + other untracked files (not mine — left unstaged).
 
 ---
 
