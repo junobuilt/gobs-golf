@@ -2,8 +2,55 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (G2 S4a — read-only Winnings tab)
-**Session purpose:** Built the admin **Winnings** tab (read-only): global Fund Balances + Recent Transactions (from the `fund_balances` view / `fund_transactions`), a what-if Calculator (abstract `calculatePayouts`, displays engine output verbatim), and season-scoped Historical Payouts (expandable per-team rows, override badge, CSV export). No writes, no RPCs, no migration (reset + override are S4b). New `src/lib/payouts/loadWinnings.ts` (read-only fetch + CSV) + `winningsMoney.ts` (pure, supabase-free money helpers mirroring S2). Registered as a sibling admin tab. **Suite 562 → 581/581; `tsc --noEmit` clean.** Also fixed a pre-existing S1 flake (engine property-fuzz test crossed the 5s default timeout under load → raised to 20s).
+**Last updated:** 2026-06-07 (TD29 — Playwright E2E harness)
+**Session purpose:** Stood up Playwright browser E2E testing (TD29) — additive test infra, **zero application-logic changes**. `npm run e2e` runs 8 specs green locally: the Winnings calculator + the 5 render-layer team-formation scenarios + Manage-Team visibility. Test-data strategy = **network interception** (no DB), with a hard prod-safety guard; prod counts verified unchanged before/after. **vitest still 581/581; `tsc --noEmit` clean.**
+
+---
+
+## 2026-06-07 (TD29 — Playwright E2E harness)
+
+### Where we left off
+
+**Playwright E2E is live and green locally.** `npm run e2e` boots a dedicated dev server (port 3100) with a SENTINEL Supabase URL and runs 8 specs. Purely additive test infrastructure — no `src/` logic, migrations, or the vitest suite were touched.
+
+**TEST-DATA STRATEGY (the crux) — network interception, NOT a real DB.** Decisive finding: `supabase/migrations/` is **incremental-only** (starts at "add columns to rounds"); there is **no base-schema bootstrap**, so a disposable test project / local Postgres can't be stood up from the repo alone (would need a prod schema dump first). The 5 priority bugs are client-side render/modal/wiring bugs anyway. So:
+- `e2e/support/supabaseMock.ts` is an in-process PostgREST-over-HTTP shim. The dev server is handed `NEXT_PUBLIC_SUPABASE_URL = https://e2e-supabase.local` (sentinel) — it **never** receives the prod URL. Every `/rest/v1/*` + `/rpc/*` call is served from a per-test in-memory `MockDb`.
+- **Prod safety is airtight + proven:** (1) sentinel env means the app can't reach prod; (2) a Playwright route aborts AND records any request containing the prod ref `crscpwbuhvpiuxdebyxm`, and the fixture **fails the test** on any such hit (`assertNoProdHits`); (3) prod `rounds`/`round_players`/`scores`/`round_payouts`/`fund_transactions` counts were captured before AND after a full run — **identical** (21 / 304 / 4968 / 0 / 0). No path exists by which an E2E finalize hits the prod fund ledger.
+- HONEST CAVEAT (CLAUDE.md principle #2): mocks encode our model of PostgREST, not its real behavior — same blind spot as the vitest fake-supabase. Acceptable here because the scenarios are render-layer; NOT a substitute for real SQL/RPC testing. The finalize/payout-integrity E2E needs a real disposable DB (deferred, see below).
+
+**Auth:** `e2e/global-setup.ts` logs in once via `/admin/login` with the throwaway PIN `0000` and saves `e2e/.auth/admin.json` storageState, reused by all specs (the homepage team-formation flow isn't admin-gated; only the calculator is).
+
+**Specs (8, all green):**
+- `calculator.spec.ts` — admin → Winnings tab → 24 players / 2-per-team renders **25/23/20/16 per player, $168 total, $0 sweep** (independently-known values, not snapshotted from prod). Proves the harness end-to-end (auth + interception + real render).
+- `teamFormation.spec.ts` — the 5 render-layer scenarios: **create_new** (forms new team via the atomic RPC), **silent_join** (no modal, routes to team), **confirm_join** (asserts BOTH buttons of the two-button modal render; Cancel returns to picker with selection intact; Add writes the player), **mixed_teams_error** (⚠️ modal appears, **no silent merge** — verified team_numbers unchanged), and the homepage **empty state**.
+- `buttonVisibility.spec.ts` — **Manage Team** shows pre-score and **hides after the team's first score** (with a negative-control assertion that the main scorecard render was actually reached).
+
+### Today's commits
+
+- (this session) test(e2e): TD29 — Playwright harness + calculator & team-formation specs
+
+### DB changes (today)
+
+- **None.** Test-infra-only session. Prod was never written (proven by before/after counts + the prod-ref guard).
+
+### Tomorrow's priority
+
+1. **TD29 follow-up (a):** CI GitHub Actions wiring — `npm ci` → `npx playwright install --with-deps chromium` → `npm run e2e`. The suite is self-contained (sentinel env baked into `playwright.config.ts`), so this should be a thin workflow file.
+2. **TD29 follow-up (b) — STRETCH that was deferred:** real-DB **finalize → payout/fund** E2E. Requires a disposable Supabase project seeded from a **prod schema dump** (migrations can't reproduce base tables). Only this can validate the real `round_payouts` + `fund_transactions` writes; the network mock deliberately cannot.
+3. Resume feature work: **G2 S4b** (fund Reset + payout override write surfaces) / **G2 S3** (historical payout backfill).
+
+### Files (this session)
+
+- **NEW:** `playwright.config.ts`; `e2e/constants.ts`, `e2e/global-setup.ts`, `e2e/support/{supabaseMock,fixtures}.ts`, `e2e/{calculator,teamFormation,buttonVisibility}.spec.ts`.
+- **MODIFIED:** `package.json` (`e2e`/`e2e:ui`/`e2e:report` scripts + `@playwright/test` devDep), `.gitignore` (test-results/, playwright-report/, playwright/.cache/, e2e/.auth/), `ROADMAP.md` (TD29 → 🚧), `STATUS.md`.
+- **UNTOUCHED (by design):** all `src/` app logic, the vitest suite, migrations, `payoutEngine/*`, the finalize/persist paths.
+
+### Confession (this session)
+
+- **Scenario-3 spec discrepancy (flagged, not "fixed"):** the prompt described the confirm_join modal as "Add X to Team N" vs "Start new team with X only". The CURRENT `JoinTeamConfirmModal` renders **"Add to Team N"** + **"Cancel"** (Cancel returns to the picker) — there is no "Start new team" button in the code. The spec asserts the REAL two buttons. I did not add the missing button (an app-logic change, out of scope). Worth deciding later whether the modal should offer the explicit "start new team" choice.
+- **`tsc` covers e2e:** `tsconfig.json` `include` is `**/*.ts`, so the new e2e files are type-checked by `tsc --noEmit` (clean). Playwright transpiles specs at run time (esbuild), and the green run confirms they execute.
+- **Considered but NOT done:** (a) a dedicated disposable Supabase project / local stack — rejected this session because the repo can't reproduce the schema (logged as the finalize follow-up); (b) the finalize/score-entry E2E (explicit stretch, deferred); (c) CI wiring (deferred per scope). None block the local bar.
+- **Minor harness friction (not app issues):** the controlled-input PIN field needed type-then-poll (fill raced React hydration); a stale `.next/dev` cache from a killed server caused a one-off Sentry-instrumentation parse error (cleared with `rm -rf .next/dev`).
 
 ---
 
