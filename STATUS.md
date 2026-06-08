@@ -80,7 +80,7 @@
 
 **Files:** NEW `src/lib/scoring/adjusted.ts`, `e2e/handicapAllowance.spec.ts`, `tests/lib/scoring/adjusted.test.ts`, `tests/lib/round/results-adjusted.test.ts`, `tests/components/scorecard-ball-labels.test.tsx`. MODIFIED `src/lib/scoring/{types,handicap,index}.ts`, `src/lib/format/helpers.ts`, `src/lib/round/results.ts`, `src/components/scorecard/PlayerHoleGrid.tsx`, `src/components/round/RoundResultsView.tsx`, `src/components/format/FormatPicker.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `src/app/round/[id]/scorecard/page.tsx`, `src/app/player/[id]/page.tsx`, `tests/lib/{scoring/handicap,format/helpers}.test.ts`, two PlayerRow fixtures.
 
-**Tests:** +26 (getPlayingStrokes/getHandicapAllowance, NDB golden + negative control, results-layer adjScores golden, ball-labels Bug#2/#3) + 2 e2e (caption present@80 / absent@100). **607/607 vitest; 10/10 e2e; `tsc --noEmit` clean.**
+**Tests:** +26 (getPlayingStrokes/getHandicapAllowance, NDB golden + negative control, results-layer adjScores golden, ball-labels Bug#2/#3) + 3 e2e (caption present@80 / absent@100; mid-round danger-modal gate + Cancel-reverts + Confirm-writes). **607/607 vitest; 11/11 e2e; `tsc --noEmit` clean.**
 
 ### Today's commits
 
@@ -88,6 +88,7 @@
 - `50bd816` feat(handicap): Wave 1A C2 — allowance UI (Round Setup control + scorecard caption + recalc modal)
 - `00220ac` feat(scoring): Wave 1A C3 — GHIN Adjusted Score (Net Double Bogey)
 - `a209305` fix(scorecard): Wave 1A C4 — three per-player row bugs (ball labels, Net, notation)
+- (trailing) test(e2e): Wave 1A — mid-round handicap-allowance danger-modal spec
 
 ### DB changes (today)
 
@@ -96,7 +97,7 @@
 ### Tomorrow's priority
 
 1. **Resume G2** — S4b (fund Reset + payout override write surfaces) / S3 (historical payout backfill) / S5 (Leaderboard + Round Summary payout displays).
-2. **Live admin smoke test** of the allowance selector + mid-round recalc modal once `.env.local` has `ADMIN_PIN` (Round Setup is PIN-gated; covered locally by the e2e caption spec + unit tests, not yet click-tested live).
+2. **Live admin smoke test** of the allowance selector + mid-round recalc modal once `.env.local` has `ADMIN_PIN`. The gating + write logic is now e2e-covered against the mock (`handicapAllowanceModal.spec.ts`); this remaining step is a real-PIN visual confirmation only. (`.env.local` is gitignored — `.gitignore:45 .env*`, `git check-ignore` confirms — so a PIN can be written there safely; note the e2e suite uses its own sentinel PIN from `e2e/constants.ts`, independent of `.env.local`.)
 
 ### Considered but not changed (confession)
 
