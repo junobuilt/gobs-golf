@@ -2,8 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (TD29 — Playwright E2E harness)
-**Session purpose:** Stood up Playwright browser E2E testing (TD29) — additive test infra, **zero application-logic changes**. `npm run e2e` runs 8 specs green locally: the Winnings calculator + the 5 render-layer team-formation scenarios + Manage-Team visibility. Test-data strategy = **network interception** (no DB), with a hard prod-safety guard; prod counts verified unchanged before/after. **vitest still 581/581; `tsc --noEmit` clean.**
+**Last updated:** 2026-06-08 (Wave 1A — handicap allowance + GHIN adjusted score + 3 scorecard bugs)
+**Session purpose:** Shipped Wave 1A as 4 commits on the scorecard scoring-display read-path: (C1) per-round **handicap allowance** stored in `format_config.handicap_allowance` + a single `getPlayingStrokes` helper routed through every stroke-allocation read site; (C2) allowance selector on Round Setup + scorecard "Handicaps at N%" caption + reuse of the danger modal for mid-round changes; (C3) **GHIN Adjusted Score** (Net Double Bogey, always at 100% handicap, ignoring the allowance) as orange Adj F9/B9/Tot columns on scorecard + summary/leaderboard + a per-round Adj total on the player profile; (C4) three per-player row bugs — sequential ball labels (1..N by net rank), Net always shown, even-nested triple-bogey notation. **No DB migration** (allowance is an additive JSON key). **607/607 vitest; 10/10 e2e; `tsc --noEmit` clean.**
+
+---
+
+## 2026-06-08 (Wave 1A — handicap allowance + GHIN adjusted score + 3 scorecard bugs)
+
+### Where we left off
+
+**Wave 1A shipped as 4 commits, all on the scorecard scoring-display read-path.** A Commit-0 read-site audit (approved) drove the whole batch so "no surface lies." Two new pure helpers carry the two distinct handicap bases by design.
+
+- **C1 (`37c9072`) — allowance storage + single read helper.** `format_config.handicap_allowance` (integer percent, default 100). `getPlayingStrokes(rawCH, allowance)` in `src/lib/scoring/handicap.ts` = `round(rawCH × allowance / 100)` (.5 up, null→null, 100%=identity) — the ONLY place the percentage is applied. `getHandicapAllowance(formatConfig)` in `src/lib/format/helpers.ts` (default 100, clamp [10,100]). Routed through every stroke-allocation read site: `results.ts` roster + blind-draw engine input; scorecard `computeHoleFor`, `buildRoundInput`, the dots, blind-draw drawn-CH. The CH **number label** stays RAW everywhere.
+- **C2 (`50bd816`) — allowance UI.** Round Setup "Handicap Allowance" selector (100→10, steps of 10) in the format strip, shown once a round shell exists; writes `format_config.handicap_allowance` merging onto existing config. Pre-score → immediate write; mid-round (score exists) → existing `DangerModal`. `FormatPicker.commitSave` now preserves `handicap_allowance` across a format change (independent controls). Scorecard caption **"Handicaps at N%"** under the FORMAT chip when ≠100, orange `#c2410c`.
+- **C3 (`00220ac`) — GHIN Adjusted Score (Net Double Bogey).** New pure `src/lib/scoring/adjusted.ts` (`netDoubleBogeyCap`, `computeAdjustedHoleScores`, `sumAdjusted`). Cap = par+2+strokes@**100%** — IGNORES the allowance by design (GHIN posts against full handicap). `PlayerHoleGrid` gains optional `adjScores` → orange Adj F9/Adj B9 second summary column + Adj. Tot nested under Tot (no behavior change when absent). Wired: scorecard expand, summary + `/leaderboard` drill-down (`results.ts` `PlayerRow.adjScores` → `RoundResultsView`), player profile round history (per-round Adj total; query now loads per-hole strokes + tee SI/par). Read-only; never touches competition net/ranking/payouts. `TODO(F.1)` marker left in `RoundResultsView`.
+- **C4 (`a209305`) — three per-player row bugs.** Bug#2: ball labels sequential 1..N by net rank (ties→roster order), each used once — fixes the dup-"Ball 2"/no-"Ball 3" on override holes; re-ranked on the scorecard (engine returns roster order on override holes). `TODO(I16)` near the label logic. Bug#3: Net always renders when a score exists (dropped the `net !== gross` guard). Bug#1: triple-bogey notation evenly nested (28→22→16, consistent 3px gaps).
+
+**Files:** NEW `src/lib/scoring/adjusted.ts`, `e2e/handicapAllowance.spec.ts`, `tests/lib/scoring/adjusted.test.ts`, `tests/lib/round/results-adjusted.test.ts`, `tests/components/scorecard-ball-labels.test.tsx`. MODIFIED `src/lib/scoring/{types,handicap,index}.ts`, `src/lib/format/helpers.ts`, `src/lib/round/results.ts`, `src/components/scorecard/PlayerHoleGrid.tsx`, `src/components/round/RoundResultsView.tsx`, `src/components/format/FormatPicker.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `src/app/round/[id]/scorecard/page.tsx`, `src/app/player/[id]/page.tsx`, `tests/lib/{scoring/handicap,format/helpers}.test.ts`, two PlayerRow fixtures.
+
+**Tests:** +26 (getPlayingStrokes/getHandicapAllowance, NDB golden + negative control, results-layer adjScores golden, ball-labels Bug#2/#3) + 2 e2e (caption present@80 / absent@100). **607/607 vitest; 10/10 e2e; `tsc --noEmit` clean.**
+
+### Today's commits
+
+- `37c9072` feat(handicap): Wave 1A C1 — handicap allowance storage + single read helper
+- `50bd816` feat(handicap): Wave 1A C2 — allowance UI (Round Setup control + scorecard caption + recalc modal)
+- `00220ac` feat(scoring): Wave 1A C3 — GHIN Adjusted Score (Net Double Bogey)
+- `a209305` fix(scorecard): Wave 1A C4 — three per-player row bugs (ball labels, Net, notation)
+
+### DB changes (today)
+
+- **None.** `handicap_allowance` is an additive key inside the existing `format_config` JSONB column — no migration. All pre-1A rounds read as 100% via `getHandicapAllowance`.
+
+### Tomorrow's priority
+
+1. **Resume G2** — S4b (fund Reset + payout override write surfaces) / S3 (historical payout backfill) / S5 (Leaderboard + Round Summary payout displays).
+2. **Live admin smoke test** of the allowance selector + mid-round recalc modal once `.env.local` has `ADMIN_PIN` (Round Setup is PIN-gated; covered locally by the e2e caption spec + unit tests, not yet click-tested live).
+
+### Considered but not changed (confession)
+
+- **Cross-round aggregates left at 100% (approved):** `playerStats.ts` avg-net and `season/page.tsx` cumulative net read raw CH and do NOT apply the per-round allowance. They don't load `format_config`, and season-long net is conventionally full-handicap. An 80% round shows reduced net on its own surfaces (scorecard, summary, `/leaderboard` drill-down) but the player's season/profile avg-net stays full. Deliberate; flagged at audit and confirmed.
+- **Allowance caption is scorecard-only.** Per C2's explicit scope + the 1A mockup. Summary / `/leaderboard` drill-down show allowance-reduced net **without** a "Handicaps at N%" caption — a possible follow-up if it reads as a surface lie in practice.
+- **Adj skipped on two niche surfaces:** dropout-merged grids (post-drop holes are the drawn player's CH/SI, which wouldn't line up with the dropped player's `adjScores`) and the blind-draw pseudo-rows (`BlindDrawFillRow` / `BlindDrawPseudoPlayerSection` — no drawn-player SI/CH carried into the fill shape). Both pass no `adjScores` → no Adj column. Could be added later by threading the drawn player's SI/CH into `BlindDrawFill`.
+- **Net color stays navy `#0c3057`, not orange.** The mockup tinted the always-shown Net orange as a "this is new" annotation; orange `#c2410c` is reserved (C3 locked decision) for Adj numbers only, and Net is an actual competition score. Left navy.
+- **Bug #1 verified by code + ring-count unit tests, not a pixel snapshot.** The notation size change is pure arithmetic; the existing PlayerHoleGrid tests assert ring counts (unchanged) but not sizes. No Playwright snapshot added.
+- **Dots-reduction Playwright assertion substituted** with `getPlayingStrokes` unit tests + live-preview no-regression on a 100% round (the self-heal recompute + hole-nav made an exact dot-count e2e brittle). The caption (present@80/absent@100) is covered by e2e.
+- **Engine untouched.** Allowance is applied at READ time (engine input), not inside the engine; GHIN cap is computed outside the engine. No change to competition net, ranking, payouts, format math, the net/gross basis toggle, `course_handicap` storage, or LT1 self-heal. No per-format allow/deny list. Entry is not blocked at the GHIN cap.
 
 ---
 
