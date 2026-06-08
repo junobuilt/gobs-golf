@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOBS — 1A Scorecard Mockup v2</title>
+<style>
+  :root{
+    --cream:#f4efe2;--navy:#042c53;--navy-pill:#1e3a8a;--muted:#94a3b8;
+    --hl:#dbeafe;--line:#e2dccb;--new:#c2410c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#ece5d4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--navy);padding:24px 12px;}
+  .annot{max-width:430px;margin:0 auto 14px;font-size:13px;color:#6b5d3e;line-height:1.5;}
+  .annot b{color:var(--new);}
+  .phone{max-width:430px;margin:0 auto;background:var(--cream);border-radius:22px;padding:18px 14px 22px;box-shadow:0 8px 30px rgba(0,0,0,.12);}
+  .hdr{text-align:center;margin-bottom:6px;}
+  .fmtrow{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:13px;font-weight:600;}
+  .fmtrow .lbl{color:var(--muted);letter-spacing:.04em;font-size:11px;}
+  .lock{font-size:12px;color:var(--muted);}
+  .alw{display:block;margin-top:8px;font-size:12px;font-weight:700;color:var(--new);letter-spacing:.02em;}
+  .holehdr{margin-top:14px;}
+  .holehdr h1{font-size:30px;margin:0;letter-spacing:-.5px;}
+  .holehdr .sub{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.05em;margin-top:2px;}
+  .card{margin-top:18px;background:#eef4fc;border:1.5px solid var(--navy-pill);border-radius:14px;padding:14px 14px 12px;}
+  .toprow{display:flex;justify-content:space-between;align-items:flex-start;}
+  .nameblk .name{font-size:19px;font-weight:800;display:flex;align-items:center;gap:8px;}
+  .ball{background:var(--navy);color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:3px 9px;letter-spacing:.05em;}
+  .meta{font-size:11.5px;color:#5b6b80;margin-top:4px;}
+  .meta .netnew{color:var(--new);font-weight:700;}
+  .bignum{font-size:40px;font-weight:800;line-height:1;}
+  .grid{margin-top:12px;}
+  table{border-collapse:collapse;width:100%;table-layout:fixed;}
+  td{text-align:center;font-size:12px;padding:3px 0;}
+  .hnum{font-weight:600;color:var(--navy);font-size:11.5px;}
+  .par{font-style:italic;color:var(--muted);font-weight:500;}
+  .gross{font-weight:600;color:var(--navy);}
+  .cur{background:var(--hl);border-radius:6px;}
+  .sumcol{background:#fff;border-left:2px solid var(--line);font-weight:700;}
+  .sumcol.adj{color:var(--new);border-left:1px dashed var(--new);}
+  .sumhd{font-size:10px;letter-spacing:.02em;color:var(--muted);font-weight:700;background:#fff;border-left:2px solid var(--line);}
+  .sumhd.adj{color:var(--new);border-left:1px dashed var(--new);}
+  .mk{display:inline-flex;align-items:center;justify-content:center;position:relative;width:26px;height:26px;}
+  .mk span{position:absolute;display:flex;border:1.4px solid var(--navy);}
+  .sq span{border-radius:0;}.circ span{border-radius:50%;}
+  .num{position:relative;z-index:2;font-weight:600;color:var(--navy);}
+  /* totals nest under summary cols */
+  .totrow td{padding-top:9px;}
+  .totlbl{font-size:10px;color:var(--muted);font-weight:600;}
+  .totlbl.adj{color:var(--new);}
+  .totval{font-size:16px;font-weight:800;border-top:1px solid var(--line);padding-top:5px;}
+  .totval.adj{color:var(--new);}
+  .legend{max-width:430px;margin:16px auto 0;font-size:11.5px;color:#6b5d3e;line-height:1.6;}
+  .legend .dot{color:var(--new);font-weight:800;}
+</style>
+</head>
+<body>
+  <div class="annot">Mockup for <b>1A</b> (v2). Orange = new. Numbers illustrative — locks <b>placement</b>, not math.</div>
+  <div class="phone">
+    <div class="hdr">
+      <div class="fmtrow"><span class="lbl">FORMAT</span> 3-Ball <span class="lock">&#128274;</span></div>
+      <span class="alw">Handicaps at 80%</span>
+      <div class="holehdr"><h1>Hole 9</h1><div class="sub">PAR 5 &bull; 447 YDS</div></div>
+    </div>
+    <div class="card">
+      <div class="toprow">
+        <div class="nameblk">
+          <div class="name">Kevin I <span class="ball">BALL 1</span></div>
+          <div class="meta">Course Handicap: 8 &middot; Handicap Index: 11.4 &middot; <span class="netnew">Net: 5</span> &middot; Tot: 84</div>
+        </div>
+        <div class="bignum">5</div>
+      </div>
+ 
+      <!-- FRONT 9 -->
+      <div class="grid"><table>
+        <colgroup><col span="9"><col style="width:40px"><col style="width:44px"></colgroup>
+        <tr>
+          <td class="hnum">1</td><td class="hnum">2</td><td class="hnum">3</td><td class="hnum">4</td><td class="hnum">5</td><td class="hnum">6</td><td class="hnum">7</td><td class="hnum">8</td><td class="hnum cur">9</td>
+          <td class="sumhd">F9</td><td class="sumhd adj">Adj F9</td>
+        </tr>
+        <tr>
+          <td class="par">5</td><td class="par">4</td><td class="par">3</td><td class="par">4</td><td class="par">3</td><td class="par">4</td><td class="par">5</td><td class="par">4</td><td class="par cur">5</td>
+          <td class="sumcol"></td><td class="sumcol adj"></td>
+        </tr>
+        <tr>
+          <td class="gross">5</td><td class="gross">4</td>
+          <td class="gross"><span class="mk circ"><span style="width:22px;height:22px"></span><span class="num">4</span></span></td>
+          <td class="gross">5</td><td class="gross">5</td><td class="gross">3</td><td class="gross">5</td><td class="gross">4</td>
+          <td class="gross cur">5</td>
+          <td class="sumcol">40</td><td class="sumcol adj">40</td>
+        </tr>
+      </table></div>
+ 
+      <!-- BACK 9 -->
+      <div class="grid"><table>
+        <colgroup><col span="9"><col style="width:40px"><col style="width:44px"></colgroup>
+        <tr>
+          <td class="hnum">10</td><td class="hnum">11</td><td class="hnum">12</td><td class="hnum">13</td><td class="hnum">14</td><td class="hnum">15</td><td class="hnum">16</td><td class="hnum">17</td><td class="hnum">18</td>
+          <td class="sumhd">B9</td><td class="sumhd adj">Adj B9</td>
+        </tr>
+        <tr>
+          <td class="par">4</td><td class="par">4</td><td class="par">5</td><td class="par">3</td><td class="par">4</td><td class="par">4</td><td class="par">5</td><td class="par">4</td><td class="par">5</td>
+          <td class="sumcol"></td><td class="sumcol adj"></td>
+        </tr>
+        <tr>
+          <td class="gross">4</td>
+          <td class="gross"><span class="mk sq"><span style="width:26px;height:26px"></span><span style="width:21px;height:21px"></span><span style="width:16px;height:16px"></span><span class="num">7</span></span></td>
+          <td class="gross">5</td><td class="gross">5</td><td class="gross">5</td><td class="gross">4</td><td class="gross">5</td><td class="gross">5</td><td class="gross">4</td>
+          <td class="sumcol">44</td><td class="sumcol adj">43</td>
+        </tr>
+        <!-- TOTALS nested under the two summary columns -->
+        <tr class="totrow">
+          <td colspan="9"></td>
+          <td class="totlbl">Tot</td><td class="totlbl adj">Adj Tot</td>
+        </tr>
+        <tr>
+          <td colspan="9"></td>
+          <td class="totval">84</td><td class="totval adj">83</td>
+        </tr>
+      </table></div>
+    </div>
+  </div>
+  <div class="legend">
+    <span class="dot">&#9679;</span> Big number = gross on the current hole (Hole 9 = 5).<br>
+    <span class="dot">&#9679;</span> Net = current-hole net (5; equals gross since no stroke here — Bug #3 shows it anyway).<br>
+    <span class="dot">&#9679;</span> Adj F9 / Adj B9 = second summary column; Adj Tot nests under it (B9 44&rarr;43, hole 11 capped).<br>
+    <span class="dot">&#9679;</span> Bug #1 triple squares evenly nested · Bug #2 single sequential BALL 1.
+  </div>
+</body>
+</html>
