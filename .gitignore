@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# database backups — contain the league's REAL data + the local prod
+# connection string (backups/db_url.txt). NEVER commit. Keep off-machine
+# copies per docs/BACKUP_RESTORE.md.
+/backups/
+
 # playwright (e2e)
 /test-results/
 /playwright-report/

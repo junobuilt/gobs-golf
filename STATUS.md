@@ -2,10 +2,70 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-08 (Wave 1A — handicap allowance + GHIN adjusted score + 3 scorecard bugs)
-**Session purpose:** Shipped Wave 1A as 4 commits on the scorecard scoring-display read-path: (C1) per-round **handicap allowance** stored in `format_config.handicap_allowance` + a single `getPlayingStrokes` helper routed through every stroke-allocation read site; (C2) allowance selector on Round Setup + scorecard "Handicaps at N%" caption + reuse of the danger modal for mid-round changes; (C3) **GHIN Adjusted Score** (Net Double Bogey, always at 100% handicap, ignoring the allowance) as orange Adj F9/B9/Tot columns on scorecard + summary/leaderboard + a per-round Adj total on the player profile; (C4) three per-player row bugs — sequential ball labels (1..N by net rank), Net always shown, even-nested triple-bogey notation. **No DB migration** (allowance is an additive JSON key). **607/607 vitest; 10/10 e2e; `tsc --noEmit` clean.**
+**Last updated:** 2026-06-07 (H.2 — DB backup & restore workflow)
+**Session purpose:** Stood up the manual free-tier **database backup + restore workflow** (roadmap H.2) — the safety gate that must exist before any data-affecting migration (S4b/S3). `npm run db:backup` (pg_dump 17 → gitignored `backups/`, prompts for the connection string, never logs it), `npm run db:restore-test` (restores into a throwaway LOCAL Postgres, verifies counts, can't touch prod), committed base-schema artifact `supabase/schema.sql`, runbook `docs/BACKUP_RESTORE.md`. **Tonight's baseline taken + restore-verified; prod provably untouched. No app logic changed; `tsc` clean, vitest 607/607.**
 
 ---
+
+## 2026-06-07 (H.2 — DB backup & restore workflow)
+
+### Where we left off
+
+**GOBS now has a real, tested backup story.** Free tier = no automated/PITR backups, so this is manual discipline with a verified restore path. Nothing in `src/` changed — this is tooling + docs + one committed schema artifact.
+
+**Tooling discovered on this Windows machine:** no `pg_dump`/`psql`/Supabase CLI/Docker were installed; `winget` + node present. Server is **PostgreSQL 17.6**, so we installed **PostgreSQL 17** via `winget install -e --id PostgreSQL.PostgreSQL.17` (gives version-matched `pg_dump`/`pg_restore`/`psql` 17.10 at `C:\Program Files\PostgreSQL\17\bin` **and** a local server for restore testing).
+
+**Snapshot mechanism — `npm run db:backup`** (`scripts/backup-db.ps1`):
+- `pg_dump --format=custom --no-owner --no-privileges --schema=public` of prod → `backups/gobs_<timestamp>.dump` (gitignored; schema **+ data**; restorable).
+- Then derives the committed schema artifact `supabase/schema.sql` from that dump via `pg_restore --schema-only` (no second prod hit).
+- Connection string (Session Pooler, IPv4:5432) is prompted as a **SecureString**, held in memory only, scrubbed after — **never** printed, logged, or written to disk. Honors `$env:SUPABASE_DB_URL` for future automation.
+
+**Restore verification — `npm run db:restore-test`** (`scripts/restore-test.ps1`):
+- Restores the newest `.dump` into a throwaway LOCAL db `gobs_restore_test` on `127.0.0.1` (host hardcoded — **structurally cannot reach prod**), prints structure + per-table row counts, drops the test db.
+- Local superuser password defaults to the winget package's `postgres` (local-only throwaway, not a prod secret).
+
+**Base-schema artifact — `supabase/schema.sql` (committed, 34.7 KB, 1312 lines):** the missing base schema (migrations are incremental-only) is now captured as a full schema-only dump of prod's `public` (16 tables + 6 functions; **0 data rows, 0 secrets** — verified). It is **authoritative for from-scratch rebuilds**; `supabase/migrations/README.md` documents that `001`–`016` are historical change-log only and must NOT be replayed onto `schema.sql`. Closes ROADMAP **TD32** and unblocks the deferred real-DB finalize E2E (a disposable project can be seeded from it).
+
+**Runbook — `docs/BACKUP_RESTORE.md`:** snapshot how-to, local restore-test, from-scratch rebuild path, disaster recovery (Option A: restore into a NEW project + repoint — recommended/reversible; Option B: in-place `pg_restore --clean` — destructive), the **off-machine copy reminder** (copy important `.dump`s to Google Drive/external — a backup on the same laptop doesn't survive a dead laptop), and the run-before-every-migration cadence.
+
+### Tonight's baseline (taken + verified)
+
+- File: `backups/gobs_20260607_211143.dump` (110.4 KB, gitignored).
+- Restore-test: **PASS** — restored counts matched prod exactly: players 55 / tees 4 / holes 72 / rounds 21 / round_players 304 / scores 4968 / league_settings 2 / seasons 1 / round_payouts 0 / fund_transactions 0; 16 tables, 6 routines. Test db dropped.
+- **Prod untouched:** counts + structure identical before and after the session (read-only `pg_dump`; verified via MCP).
+- ⏳ **Action for you:** copy `backups/gobs_20260607_211143.dump` to Google Drive / external (off-machine).
+
+### Today's commits
+
+- (this session) chore(db): H.2 — manual backup/restore workflow + committed base schema (`supabase/schema.sql`)
+
+### DB changes (today)
+
+- **None to prod.** Read-only dump only. (Locally: created + dropped a throwaway `gobs_restore_test` during verification.)
+
+### Tomorrow's priority
+
+1. **Resume feature work** per the priority order (E6 admin Played With redesign, etc.). H.2 was the safety-gate blocker — now cleared.
+2. **Before S4b / S3 (fund reset/override, payout backfill):** run `npm run db:backup` → `npm run db:restore-test` → off-machine copy. This is now mandatory pre-migration.
+3. Optional: real-DB finalize/payout E2E (TD29 follow-up) — now seedable from `supabase/schema.sql`.
+
+### Files (this session)
+
+- **NEW:** `scripts/backup-db.ps1`, `scripts/restore-test.ps1`, `supabase/schema.sql` (committed base-schema artifact), `supabase/migrations/README.md`, `docs/BACKUP_RESTORE.md`.
+- **MODIFIED:** `package.json` (`db:backup` + `db:restore-test` scripts), `.gitignore` (+`/backups/`), `ROADMAP.md` (H2 ✅, TD32 ✅, priority order, TD29 note), `STATUS.md`.
+- **UNTOUCHED (by design):** all `src/` logic, migrations `001`–`016`, payoutEngine, finalize/persist paths, the vitest + e2e suites. The pre-existing uncommitted `src/app/admin/tabs/RoundSetup.tsx` change (not mine) was left unstaged.
+
+### Confession (this session)
+
+- **No credential was committed or logged.** The prod connection string was entered by you at runtime as hidden SecureString input; the backup script never prints/persists it. `supabase/schema.sql` was scanned before commit: 0 `COPY`/`INSERT` (no data), 0 password/secret/connection-string matches. `backups/` (which holds the real-data dumps) is gitignored and not staged.
+- **Scope additions beyond the literal file list (all within intent):** added `supabase/migrations/README.md` to make `schema.sql`'s authority unambiguous; created TD32 in ROADMAP (no standalone base-schema item existed — it had only been described inside TD29).
+- **Considered but NOT done:** a second Supabase project for restore verification (you chose local; it remains the future E2E-DB option, now seedable from `schema.sql`); automated/scheduled backups (Pro-only, explicitly out of scope).
+- **Minor friction (not app issues):** PowerShell 5.1 reads `.ps1` as ANSI, so initial UTF-8 em-dashes in the scripts mangled a `Write-Host` line — fixed by making both scripts ASCII-only (smoke-tested green before the real run). The `schema "public" already exists` line during restore is a benign pg_restore warning (errors-ignored: 1), documented in the runbook.
+- **Date note:** machine clock / backup timestamp is 2026-06-07; the prior STATUS entry is dated 2026-06-08 (Wave 1A, not my work). I dated this entry to the actual backup timestamp and left the Wave 1A entry untouched.
+
+---
+
+## 2026-06-08 (Wave 1A — handicap allowance + GHIN adjusted score + 3 scorecard bugs)
 
 ## 2026-06-08 (Wave 1A — handicap allowance + GHIN adjusted score + 3 scorecard bugs)
 

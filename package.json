@@ -12,6 +12,8 @@
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",
+    "db:backup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-db.ps1",
+    "db:restore-test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-test.ps1",
     "snapshot:b2": "tsx tests/snapshots/snapshot-b2.mjs",
     "snapshot:b3": "tsx tests/snapshots/snapshot-b3.mjs",
     "snapshot:b4": "tsx tests/snapshots/snapshot-b4.mjs",
