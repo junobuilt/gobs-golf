@@ -13,7 +13,13 @@ import {
   loadWinningsHistory,
   winningsToCsv,
   type WinningsRound,
+  type WinningsTeamPayout,
 } from "@/lib/payouts/loadWinnings";
+import {
+  overrideRoundPayout,
+  revertRoundPayout,
+} from "@/lib/payouts/overrideRoundPayout";
+import DangerModal from "@/app/admin/components/DangerModal";
 
 const C = {
   navyDeep: "#042C53",
@@ -50,6 +56,19 @@ export default function HistoryPanel({
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
 
+  // S4b override/revert modal state.
+  const [editing, setEditing] = useState<{
+    roundId: number;
+    teamNumber: number;
+    mode: "override" | "revert";
+    currentPerPlayer: number;
+    engineAmount: number | null;
+  } | null>(null);
+  const [newAmount, setNewAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -62,6 +81,89 @@ export default function HistoryPanel({
       cancelled = true;
     };
   }, [seasonId, buyIn]);
+
+  // Re-fetch after a successful override/revert (no cancelled guard — the
+  // modal flow owns the lifecycle).
+  async function reload() {
+    const data = await loadWinningsHistory(seasonId, buyIn);
+    setRounds(data);
+  }
+
+  function openOverride(
+    e: React.MouseEvent,
+    roundId: number,
+    t: WinningsTeamPayout,
+  ) {
+    e.stopPropagation(); // don't collapse the expanded row
+    setEditing({
+      roundId,
+      teamNumber: t.teamNumber,
+      mode: "override",
+      currentPerPlayer: t.perPlayer,
+      engineAmount: t.wasOverridden ? t.originalAmount : t.perPlayer,
+    });
+    setNewAmount(String(t.perPlayer));
+    setReason("");
+    setActionError(null);
+  }
+
+  function openRevert(
+    e: React.MouseEvent,
+    roundId: number,
+    t: WinningsTeamPayout,
+  ) {
+    e.stopPropagation();
+    setEditing({
+      roundId,
+      teamNumber: t.teamNumber,
+      mode: "revert",
+      currentPerPlayer: t.perPlayer,
+      engineAmount: t.originalAmount,
+    });
+    setReason("");
+    setActionError(null);
+  }
+
+  function closeModal() {
+    setEditing(null);
+    setNewAmount("");
+    setReason("");
+    setSubmitting(false);
+    setActionError(null);
+  }
+
+  const amtNum = Number(newAmount);
+  const amtValid =
+    newAmount.trim() !== "" && Number.isInteger(amtNum) && amtNum >= 0;
+  const confirmDisabled =
+    editing?.mode === "override"
+      ? reason.trim() === "" || !amtValid || submitting
+      : reason.trim() === "" || submitting;
+
+  async function confirmAction() {
+    if (!editing) return;
+    setSubmitting(true);
+    setActionError(null);
+    try {
+      if (editing.mode === "override") {
+        await overrideRoundPayout(
+          editing.roundId,
+          editing.teamNumber,
+          amtNum,
+          reason,
+        );
+      } else {
+        await revertRoundPayout(editing.roundId, editing.teamNumber, reason);
+      }
+      await reload();
+      closeModal();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Action failed. Try again.",
+      );
+      setSubmitting(false);
+    }
+  }
 
   const scopeLabel = effective === "this_season" && activeSeason ? activeSeason.name : "All-time";
 
@@ -146,6 +248,13 @@ export default function HistoryPanel({
 
               {isExpanded && (
                 <div style={expandedStyle}>
+                  {r.paid > r.balance && (
+                    <div style={discrepancyStyle} data-testid="payout-discrepancy">
+                      ⚠ Payouts total ${r.paid} — ${r.paid - r.balance} over the
+                      ${r.balance} pot. Does not reconcile (overrides are not
+                      auto-rebalanced).
+                    </div>
+                  )}
                   <div style={subsectionHeaderStyle}>Team Payouts</div>
                   {r.teams.map((t) => {
                     const rankLabel = (t.isTied ? "T" : "") + t.place;
@@ -169,6 +278,31 @@ export default function HistoryPanel({
                           <div style={{ fontSize: "10px", color: C.textMuted, fontWeight: 500 }}>
                             ${t.perPlayer}/player × {t.teamSize}
                           </div>
+                          {t.wasOverridden && t.originalAmount != null && (
+                            <div style={{ fontSize: "9px", color: C.textMuted }}>
+                              was ${t.originalAmount}/player
+                            </div>
+                          )}
+                          <div style={{ marginTop: "5px", display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={(e) => openOverride(e, r.roundId, t)}
+                              style={editBtnStyle}
+                              data-testid="payout-edit-btn"
+                            >
+                              Edit
+                            </button>
+                            {t.wasOverridden && (
+                              <button
+                                type="button"
+                                onClick={(e) => openRevert(e, r.roundId, t)}
+                                style={revertBtnStyle}
+                                data-testid="payout-revert-btn"
+                              >
+                                Revert
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -178,6 +312,82 @@ export default function HistoryPanel({
             </div>
           );
         })
+      )}
+
+      {editing && (
+        <DangerModal
+          title={
+            editing.mode === "override"
+              ? `Override Team ${editing.teamNumber} payout?`
+              : `Revert Team ${editing.teamNumber} payout?`
+          }
+          description={
+            editing.mode === "override"
+              ? `Currently $${editing.currentPerPlayer}/player. Set a new per-player amount. Other teams are NOT rebalanced.`
+              : `Restore the engine's original payout of $${editing.engineAmount}/player for Team ${editing.teamNumber}.`
+          }
+          cannotBeUndone={false}
+          confirmLabel={
+            submitting
+              ? "Saving…"
+              : editing.mode === "override"
+                ? "Save override"
+                : "Revert to engine value"
+          }
+          confirmDisabled={confirmDisabled}
+          onConfirm={confirmAction}
+          onCancel={closeModal}
+        >
+          <div style={{ textAlign: "left" }}>
+            {editing.mode === "override" && (
+              <>
+                <label htmlFor="override-amount" style={modalLabelStyle}>
+                  New per-player amount ($):
+                </label>
+                <input
+                  id="override-amount"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  aria-label="New per-player payout"
+                  value={newAmount}
+                  onChange={(e) => setNewAmount(e.target.value)}
+                  disabled={submitting}
+                  style={modalInputStyle}
+                />
+              </>
+            )}
+            <label
+              htmlFor="override-reason"
+              style={{ ...modalLabelStyle, marginTop: "10px" }}
+            >
+              Reason (required for log):
+            </label>
+            <input
+              id="override-reason"
+              type="text"
+              aria-label="Override reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={
+                editing.mode === "override"
+                  ? "e.g., side-pot correction agreed at the turn"
+                  : "e.g., entered in error"
+              }
+              disabled={submitting}
+              style={modalInputStyle}
+            />
+            <div style={{ marginTop: "8px", fontSize: "0.72rem", color: C.textMuted }}>
+              Note: reopening this round will discard overrides.
+            </div>
+            {actionError && (
+              <div style={{ marginTop: "6px", fontSize: "0.78rem", color: "#b91c1c" }}>
+                {actionError}
+              </div>
+            )}
+          </div>
+        </DangerModal>
       )}
     </div>
   );
@@ -305,4 +515,47 @@ const emptyStyle: React.CSSProperties = {
   textAlign: "center",
   color: C.textMuted,
   fontSize: "13px",
+};
+const editBtnStyle: React.CSSProperties = {
+  background: "white",
+  border: `1px solid ${C.navy}`,
+  color: C.navy,
+  fontSize: "10px",
+  fontWeight: 600,
+  padding: "3px 9px",
+  borderRadius: "5px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
+const revertBtnStyle: React.CSSProperties = {
+  ...editBtnStyle,
+  border: "1px solid #b45309",
+  color: "#b45309",
+};
+const discrepancyStyle: React.CSSProperties = {
+  background: "#fef3c7",
+  border: "1px solid #f0c869",
+  color: "#92400e",
+  fontSize: "11px",
+  fontWeight: 600,
+  borderRadius: "6px",
+  padding: "6px 8px",
+  marginBottom: "10px",
+  lineHeight: 1.4,
+};
+const modalLabelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: "0.8rem",
+  fontWeight: 600,
+  color: "#4b5563",
+};
+const modalInputStyle: React.CSSProperties = {
+  marginTop: "6px",
+  width: "100%",
+  padding: "8px",
+  border: "1px solid #d1d5db",
+  borderRadius: "6px",
+  fontSize: "0.85rem",
+  fontFamily: "inherit",
+  boxSizing: "border-box",
 };

@@ -2,8 +2,55 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-07 (Wave 1B — team-card entry surface: Commit 2)
-**Session purpose:** Wave 1B team-card spine for Shambles. **C0** audit + storage proposal (approved). **C1** foundation: `team_scores` table (migration 018, applied to prod), `"shambles"` registration, `team_ball_count`, `isTeamCardFormat`/`getTeamBallCount`, pure read helper. **C2 (this commit)** the NEW team-card entry surface `/round/[id]/team-card?team=N` — team-level score entry (count-1 one box / count-2 two summed balls), dash-until-tap par-anchored, gross-only (allowance disabled), reachable by direct URL only (routing is C3). **638/638 vitest; 15/15 e2e; `tsc` clean.** Commits 3 (routing + read branches + season exclusion) and 4 (finalize without blind draw) still pending.
+**Last updated:** 2026-06-07 (G2 S4b — payout-override write surface)
+**Session purpose:** The second half of S4b — admins can correct a single team's per-player payout on a finalized round (required reason) and revert it to the engine's original value. Migration `019` (`round_payouts.override_reason` column + `override_round_payout`/`revert_round_payout` SECURITY-DEFINER RPCs) applied to prod after a txn→ROLLBACK dry-run. HistoryPanel gains per-team Edit/Revert affordances → reused `DangerModal` → override lib → reload, plus an amber discrepancy chip when overridden payouts exceed the pot (no auto-rebalance — locked). **657/657 vitest; 15/15 e2e; `tsc` clean.**
+
+---
+
+## 2026-06-07 (G2 S4b — payout-override write surface)
+
+### Where we left off
+
+**Admins can override one team's per-player payout on a finalized round, with a required reason, and revert it to the engine's original value.** Plan-first + gated (dry-run on prod → review → apply). The reopen/persist path was NOT touched.
+
+- **Migration 019 (`019_phase_g2_payout_override.sql`) — APPLIED TO PROD** via MCP `apply_migration` after a transaction-rollback dry-run:
+  - `ALTER TABLE round_payouts ADD COLUMN override_reason text` (nullable) — holds the admin's reason for the latest override OR revert on the row (decision A: a per-row column mirroring S4b's `fund_transactions.note`; a revert overwrites it with the revert reason).
+  - `override_round_payout(p_round_id, p_team_number, p_new_per_player, p_reason)` SECURITY DEFINER — UPDATES the one matching row IN PLACE (round_id+team_number unique), never delete/re-insert, so the audit chain + `original_amount` survive. Recomputes `total_for_team = new × team_size`; sets `was_overridden`+`admin_override=true`; captures the engine value into `original_amount` **only on the first override** (`CASE WHEN was_overridden THEN original_amount ELSE per_player END`) so a re-edit can't clobber it. Validates non-blank reason + `p_new_per_player ≥ 0` + row exists.
+  - `revert_round_payout(p_round_id, p_team_number, p_reason)` SECURITY DEFINER — restores `per_player`/`total_for_team` from `original_amount`, clears both flags, nulls `original_amount`, records the revert reason. Validates non-blank reason + row exists + row currently overridden + `original_amount` present.
+- **Decisions (approved):** ① reason stored in a new `round_payouts.override_reason` column (option A); ② reopen+re-finalize discards overrides (the engine DELETE+re-INSERTs `round_payouts`) — surfaced via a one-line note in the override modal + documented as a known limitation, NOT silently destructive and NOT fixed (reopen path out of scope); ③ no `created_by`/actor column (no per-user identity; always 'admin'); ④ no auto-rebalance — only the targeted team moves, discrepancy shown not blocked.
+- **UI:** `HistoryPanel` per-team rows gain **Edit** (always — Winnings is PIN-gated) → `DangerModal` (`cannotBeUndone=false`; children = number input for new per-player + required reason + the reopen note, confirm gated by `reason empty || invalid amount || submitting` + the 1.5s delay) and **Revert** (only on overridden rows) → `revertRoundPayout`. Overridden rows show "was $X/player". An amber **discrepancy chip** renders in the expanded round when `paid > balance`. Both write paths go through `src/lib/payouts/overrideRoundPayout.ts` → the RPCs; the client never writes `round_payouts` directly (S2 RLS posture preserved). `loadWinnings.ts` now selects `original_amount`/`override_reason` and exposes per-team `wasOverridden`/`originalAmount`/`overrideReason`.
+
+**Dry-run (transaction → ROLLBACK, prod):** seeded a clean payout row (team 91, $20×4) → override→$25/$100, `was_overridden`+`admin_override`=t, `original_amount`=20; 2nd override→$30/$120, `original_amount` STILL 20 (preserved); revert→$20/$80, flags clear, `original_amount` NULL; empty-reason / negative-amount / missing-row / revert-of-non-overridden all rejected. Post-rollback: column + both functions absent, 0 payout rows — prod untouched. **Post-apply verify:** `override_reason` column exists, both RPCs `prosecdef=true`, **0 round_payouts rows touched** by the migration (purely additive).
+
+**Files:** NEW `supabase/migrations/019_phase_g2_payout_override.sql`, `src/lib/payouts/overrideRoundPayout.ts`, `tests/lib/payouts/overrideRoundPayout.test.ts`. MODIFIED `src/components/winnings/HistoryPanel.tsx`, `src/lib/payouts/loadWinnings.ts`, `tests/components/winnings/HistoryPanel.test.tsx`, ROADMAP/STATUS.
+
+**Tests:** +8 unit (`override`/`revert`: RPC name/args + trimmed reason; blank-reason / negative / non-integer rejected with NO rpc call; rpc-error propagates) + 5 HistoryPanel component (Edit opens pre-filled modal + reason gating; confirm → `overrideRoundPayout(501,1,30,…)` → reload → badge; Revert only on overridden rows → `revertRoundPayout`; discrepancy chip when `paid>balance`, absent otherwise — fixtures start un-overridden as negative controls). **638 → 657/657 vitest; `tsc` clean.**
+
+### Today's commits
+
+- (this session) feat(winnings): G2 S4b — payout-override write surface (migration 019 + override/revert RPCs + HistoryPanel edit/revert modal)
+
+### DB changes (today)
+
+- **Migration 019 applied to prod** (via MCP, post dry-run + review). Additive only: new nullable `round_payouts.override_reason` column + two SECURITY-DEFINER functions. **No existing payout row touched** (verified 0 rows touched; `round_payouts` is empty in prod anyway). `gobs_20260607_211143.dump` remains a valid pre-migration restore point (money tables empty before and after — no data write). `schema.sql` was already canonical (HEAD `de8895b` captured 017+018); 019's objects land on the next `db:backup`.
+
+### Tomorrow's priority
+
+1. **G2 S3** — historical payout backfill.
+2. **Session 5** — Leaderboard + Round Summary payout displays (waiting on formats-track C3 for team-card surfaces).
+3. **Schema refresh** — run `npm run db:backup` to fold migration 019 into `supabase/schema.sql` before the next migration.
+
+### Considered but not changed (confession)
+
+- **`p_created_by` dropped from the spec's suggested RPC signature.** `round_payouts` has no actor column and the app has no per-user identity (shared PIN) — every override is the implicit 'admin', so there was nothing to store. Flagged; an `override_by` column can be added later if persisted attribution is ever wanted.
+- **`override_reason` keeps only the LATEST admin action's reason** (option A, approved). A revert overwrites the override's reason. If full per-event audit history is ever needed, escalate to a separate append-only `payout_overrides` table — flagged at plan time.
+- **Reopen+re-finalize WIPES overrides** (engine DELETE+re-INSERTs `round_payouts`). Surfaced via the override modal's "reopening this round will discard overrides" note + documented here and in ROADMAP — deliberately NOT fixed (the reopen/persist path is out of scope this session).
+- **Discrepancy chip flags only the overpaid case (`paid > balance`).** A normal positive sweep (`paid < balance`) is the engine's BFB sweep, not a discrepancy, so it isn't flagged. The save is never blocked (admin is the authority).
+- **`admin_override` set in lockstep with `was_overridden`** (both true on override, both false on revert). The "Admin Override" badge keys off `was_overridden` (existing behavior); `admin_override` is the 016-reserved companion flag, kept consistent.
+- **Not live click-tested.** `/admin` is PIN-gated and local `.env.local` has no `ADMIN_PIN`; `round_payouts` is empty in prod so History shows its empty state live. Covered by the component tests + the prod dry-run/post-apply verify.
+- **e2e suite re-run, 15/15 green (unaffected).** No e2e files touched; the override surface is admin-PIN + seeded-data territory, covered by component tests. AC#8 "e2e unaffected" confirmed.
+- **Out of scope (per spec, untouched):** the payout engine, finalize/persist paths, `reverse_round_payouts`/reopen path, `fund_balances` view, migrations 001–018, `golden.csv`, the e2e suite, `results.ts` / `team_scores` / any formats-track or S5 surface. No auto-rebalance. No Edit Engine Constants.
+- **No payout data was altered by the migration itself** — confirmed by the post-apply 0-rows-touched count.
 
 ---
 

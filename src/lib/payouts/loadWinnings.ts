@@ -102,6 +102,10 @@ export type WinningsTeamPayout = {
   totalForTeam: number;
   isTied: boolean;
   roster: string; // display names joined with " · "
+  // S4b override surface: per-team override state (drives Edit/Revert + "was $X").
+  wasOverridden: boolean;
+  originalAmount: number | null; // engine value before override; null when not overridden
+  overrideReason: string | null; // latest admin override/revert reason
 };
 
 export type WinningsRound = {
@@ -139,7 +143,8 @@ export async function loadWinningsHistory(
     .from("round_payouts")
     .select(
       "round_id, team_number, place, per_player, team_size, total_for_team, " +
-        "is_tied, was_overridden, rounds!inner ( played_on, format, season_id, is_complete )",
+        "is_tied, was_overridden, original_amount, override_reason, " +
+        "rounds!inner ( played_on, format, season_id, is_complete )",
     )
     .eq("rounds.is_complete", true);
   if (seasonId != null) {
@@ -203,6 +208,9 @@ export async function loadWinningsHistory(
         totalForTeam: r.total_for_team as number,
         isTied: r.is_tied === true,
         roster: (rosterByRoundTeam[rid]?.[r.team_number as number] ?? []).join(" · "),
+        wasOverridden: r.was_overridden === true,
+        originalAmount: (r.original_amount ?? null) as number | null,
+        overrideReason: (r.override_reason ?? null) as string | null,
       }))
       .sort((a, b) => a.place - b.place || a.teamNumber - b.teamNumber);
 
