@@ -207,6 +207,13 @@ export default function FormatPicker({
       nextConfig.point_values = { ...pointValues };
     }
 
+    // Wave 1A: handicap allowance is an independent control (set on the Round
+    // Setup tab, not here). Carry any existing value across a format change so
+    // picking/changing the format doesn't silently reset it back to 100%.
+    if (typeof currentConfig?.handicap_allowance === "number") {
+      nextConfig.handicap_allowance = currentConfig.handicap_allowance;
+    }
+
     const { error } = await supabase
       .from("rounds")
       .update({ format: selectedFormat, format_config: nextConfig })

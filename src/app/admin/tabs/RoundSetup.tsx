@@ -8,6 +8,7 @@ import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
+import { getHandicapAllowance } from "@/lib/format/helpers";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
 import { todayLocal } from "@/lib/date";
@@ -29,6 +30,10 @@ const C = {
   pool: "#1a5a8c",
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
 };
+
+// Wave 1A: handicap-allowance dropdown choices — 100% down to 10% in steps of
+// 10. No 0% (gross play is the net/gross basis toggle's job). Default 100.
+const ALLOWANCE_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
 
 type ViewMode = "none" | "active" | "edit";
 type TeamScoreStatus = "not_started" | "in_progress";
@@ -74,6 +79,10 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [bottomSheetPlayer, setBottomSheetPlayer] = useState<Player | null>(null);
   const [undoAction, setUndoAction] = useState<{ player: Player; fromTeam: number; toTeam: number } | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
+  // Wave 1A: a pending handicap-allowance change awaiting danger-modal confirm.
+  // Only set when a score already exists (roundFormatLockedAt !== null); a
+  // pre-score change writes immediately. null = no pending change / modal closed.
+  const [pendingAllowance, setPendingAllowance] = useState<number | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // D.1: per-player round_players row info, used by the active-view ⋯ menu.
   // Keyed by player_id (since loadedTeams uses Player[] from the allPlayers
@@ -460,6 +469,41 @@ export default function RoundSetup({ allPlayers }: Props) {
     }
   }, [selectedDate, pendingAction]);
 
+  // Wave 1A: persist the handicap allowance into format_config, merging onto
+  // whatever config is already there so format/basis/override/point_values are
+  // preserved (allowance and format are independent controls). Open scorecards
+  // pick up the new value on their next load.
+  const writeAllowance = useCallback(async (value: number) => {
+    if (!existingRoundId) return;
+    setSaving(true);
+    const nextConfig = {
+      ...(roundFormatConfig ?? {}),
+      handicap_allowance: value,
+    } as FormatConfig;
+    const { error } = await supabase
+      .from("rounds")
+      .update({ format_config: nextConfig })
+      .eq("id", existingRoundId);
+    setSaving(false);
+    if (error) {
+      alert("Couldn't save handicap allowance: " + error.message);
+      return;
+    }
+    setRoundFormatConfig(nextConfig);
+  }, [existingRoundId, roundFormatConfig]);
+
+  // A no-op when unchanged. If a score already exists the change routes through
+  // the existing dangerous-action modal (net recalculates); otherwise it writes
+  // immediately.
+  const onAllowanceChange = useCallback((value: number) => {
+    if (value === getHandicapAllowance(roundFormatConfig)) return;
+    if (roundFormatLockedAt !== null) {
+      setPendingAllowance(value);
+    } else {
+      void writeAllowance(value);
+    }
+  }, [roundFormatConfig, roundFormatLockedAt, writeAllowance]);
+
   // ── Mobile: transition checkin → teams ────────────────────────────────────
   // TD4 fix (2026-05-10): diff-based reconciliation instead of delete-all +
   // reinsert. Rows that exist in both sets are never touched, so a partial
@@ -777,6 +821,52 @@ export default function RoundSetup({ allPlayers }: Props) {
         </span>
       </button>
 
+      {/* Wave 1A: handicap allowance selector. Sibling to Today's Format —
+          writes format_config.handicap_allowance. Only meaningful once a round
+          shell exists (hidden in the no-round empty state). A mid-round change
+          (a score already exists) routes through the danger modal below. */}
+      {existingRoundId !== null && (
+        <div style={{
+          width: "100%", padding: "11px 14px", borderRadius: "10px",
+          background: "#fff", border: `1px solid #e4e4e4`,
+          opacity: initialLoading ? 0.5 : 1,
+          fontFamily: C.font,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        }}>
+          <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1, gap: 2 }}>
+            <span style={{
+              fontSize: "0.6rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em",
+              color: "#64748b",
+            }}>
+              Handicap Allowance
+            </span>
+            <span style={{ fontSize: "0.98rem", fontWeight: 700, color: "#1a1a1a" }}>
+              {getHandicapAllowance(roundFormatConfig)}%
+              {getHandicapAllowance(roundFormatConfig) === 100 && (
+                <span style={{ fontWeight: 500, color: "#64748b" }}> · full</span>
+              )}
+            </span>
+          </span>
+          <select
+            aria-label="Handicap allowance percent"
+            value={getHandicapAllowance(roundFormatConfig)}
+            disabled={saving || initialLoading || isRoundComplete}
+            onChange={e => onAllowanceChange(Number(e.target.value))}
+            style={{
+              padding: "8px 10px", borderRadius: "8px",
+              border: `1px solid #cbd5e1`, background: "#fff",
+              fontSize: "0.95rem", fontWeight: 600, color: C.navy,
+              fontFamily: C.font,
+              cursor: saving || initialLoading || isRoundComplete ? "default" : "pointer",
+            }}
+          >
+            {ALLOWANCE_OPTIONS.map(v => (
+              <option key={v} value={v}>{v}%</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <button
         onClick={openEditTeams}
         disabled={saving || initialLoading}
@@ -795,6 +885,23 @@ export default function RoundSetup({ allPlayers }: Props) {
         <span style={{ fontSize: "0.95rem", fontWeight: 700 }}>→</span>
       </button>
     </div>
+  );
+
+  // Wave 1A: mid-round allowance change confirmation (reuses the shared danger
+  // modal, same pattern as a post-lock format_config change in FormatPicker).
+  const allowanceDangerModal = pendingAllowance !== null && (
+    <DangerModal
+      title="Change handicap allowance mid-round?"
+      description={`Net scores will recalculate at ${pendingAllowance}% handicaps. Gross scores are unchanged.`}
+      cannotBeUndone={false}
+      confirmLabel="Change allowance"
+      onConfirm={() => {
+        const v = pendingAllowance;
+        setPendingAllowance(null);
+        void writeAllowance(v);
+      }}
+      onCancel={() => setPendingAllowance(null)}
+    />
   );
 
   const formatPicker = (
@@ -834,6 +941,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           </div>
         </div>
         {dangerModal}
+        {allowanceDangerModal}
         {formatPicker}
         {seasonModal}
       </div>
@@ -990,6 +1098,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           </div>
         </div>
         {dangerModal}
+        {allowanceDangerModal}
         {reopenModal && (
           <DangerModal
             title={isRoundComplete ? "Reopen this round?" : "Reset this round's submissions?"}

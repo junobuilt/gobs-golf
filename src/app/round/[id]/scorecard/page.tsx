@@ -1565,6 +1565,18 @@ export default function ScorecardPage() {
             </button>
           )}
         </div>
+        {/* Wave 1A: round-level handicap-allowance caption. Sits directly under
+            the FORMAT chip per 1A mockup; hidden at 100% (the default). Orange
+            #c2410c matches the GHIN-adjusted accent — "this round's net is
+            scaled." The CH number on each player row stays raw. */}
+        {getHandicapAllowance(roundFormatConfig) !== 100 && (
+          <div style={{
+            fontSize: "0.75rem", fontWeight: 700, color: "#c2410c",
+            letterSpacing: "0.02em", marginBottom: "8px",
+          }}>
+            Handicaps at {getHandicapAllowance(roundFormatConfig)}%
+          </div>
+        )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
           PAR {currentHoleInfo?.par || "?"} • {currentHoleInfo?.yardage || "?"} YDS
