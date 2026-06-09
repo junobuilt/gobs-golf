@@ -6,7 +6,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 import { FORMAT_ORDER, FORMAT_LABELS } from "@/lib/format/copy";
-import { defaultConfigFor, getScoringBasis, getOverrideHoles, isTeamCardFormat, getTeamBallCount } from "@/lib/format/helpers";
+import { defaultConfigFor, getScoringBasis, getOverrideHoles, getTeamBallCount } from "@/lib/format/helpers";
 import DangerModal from "@/app/admin/components/DangerModal";
 
 // GOBS Stableford editable point-value rows. Order is best-result-first so
@@ -138,22 +138,24 @@ export default function FormatPicker({
 
   const isStableford = selectedFormat != null && STABLEFORD_FORMATS.includes(selectedFormat);
   const isBestBall = selectedFormat === "best_ball";
-  // Wave 1B: team-card formats (Shambles) are gross only — no per-player
-  // handicap to apply. Lock the basis like Best Ball locks net.
-  const isTeamCard = selectedFormat != null && isTeamCardFormat(selectedFormat);
-  // Best Ball is locked to net per the May 9 decision (handicap equalization);
-  // team-card is locked to gross. Use a derived effective basis instead of
-  // mutating state in an effect — the toggle UI reads from this, and commitSave
-  // persists this value, so any stale choice from a previous format can't leak.
+  // Wave 1B follow-up: Shambles is a net best-ball format — lock the basis to
+  // net exactly like Best Ball, keep the 1/2 ball-count control, and let the
+  // override-holes section render (it's a best-N family format).
+  const isShambles = selectedFormat === "shambles";
+  // Best Ball and Shambles are locked to net (handicap equalization / net
+  // best-ball). Use a derived effective basis instead of mutating state in an
+  // effect — the toggle UI reads from this, and commitSave persists this value,
+  // so any stale choice from a previous format can't leak.
+  const isNetLocked = isBestBall || isShambles;
   const effectiveScoringBasis: "net" | "gross" =
-    isTeamCard ? "gross" : isBestBall ? "net" : scoringBasis;
+    isNetLocked ? "net" : scoringBasis;
 
   const hasChanges =
     selectedFormat !== baseline.format ||
     effectiveScoringBasis !== baseline.basis ||
     [...overrideHoles].sort((a, b) => a - b).join(",") !== baseline.holes ||
     pointsChanged ||
-    (isTeamCard && ballCount !== baseline.ballCount);
+    (isShambles && ballCount !== baseline.ballCount);
 
   if (!open) return null;
 
@@ -216,9 +218,9 @@ export default function FormatPicker({
       nextConfig.point_values = { ...pointValues };
     }
 
-    // Wave 1B: team-card formats carry the per-round ball count (Shambles 1/2).
-    // effectiveScoringBasis already forced these to gross above.
-    if (isTeamCard) {
+    // Wave 1B follow-up: Shambles carries the per-round ball count (1/2).
+    // effectiveScoringBasis already forced net above.
+    if (isShambles) {
       nextConfig.team_ball_count = ballCount;
     }
 
@@ -384,9 +386,9 @@ export default function FormatPicker({
         {/* Rules sections — only shown after a format is selected. */}
         {selectedFormat && (
           <>
-            {/* Net / Gross segmented control. Best Ball is locked to net — UI
-                disables the control and renders a small caption. */}
-            <div style={{ marginTop: 20, opacity: (isBestBall || isTeamCard) ? 0.55 : 1 }}>
+            {/* Net / Gross segmented control. Best Ball and Shambles are locked
+                to net — UI disables the control and renders a small caption. */}
+            <div style={{ marginTop: 20, opacity: isNetLocked ? 0.55 : 1 }}>
               <div style={{
                 fontSize: "0.78rem", fontWeight: 700, color: C.navy,
                 textTransform: "uppercase", letterSpacing: "0.06em",
@@ -401,12 +403,12 @@ export default function FormatPicker({
                     (Best Ball is always net)
                   </span>
                 )}
-                {isTeamCard && (
+                {isShambles && (
                   <span style={{
                     marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
                     color: C.muted, textTransform: "none", letterSpacing: 0,
                   }}>
-                    (Shambles is gross only)
+                    (Shambles is always net)
                   </span>
                 )}
               </div>
@@ -420,11 +422,11 @@ export default function FormatPicker({
                    }}>
                 {(["net", "gross"] as const).map((opt, idx) => {
                   const active = effectiveScoringBasis === opt;
-                  const disabled = saving || isBestBall || isTeamCard;
+                  const disabled = saving || isNetLocked;
                   return (
                     <button
                       key={opt}
-                      onClick={() => { if (!isBestBall && !isTeamCard) setScoringBasis(opt); }}
+                      onClick={() => { if (!isNetLocked) setScoringBasis(opt); }}
                       disabled={disabled}
                       style={{
                         flex: 1,
@@ -447,9 +449,9 @@ export default function FormatPicker({
               </div>
             </div>
 
-            {/* Wave 1B: Shambles ball count (1 or 2). Count-2 sums the two
-                entered balls into the hole's team score. Team-card only. */}
-            {isTeamCard && (
+            {/* Wave 1B follow-up: Shambles ball count (1 or 2). Count-1 takes
+                the best net ball; count-2 sums the two best net balls per hole. */}
+            {isShambles && (
               <div style={{ marginTop: 20 }}>
                 <div style={{
                   fontSize: "0.78rem", fontWeight: 700, color: C.navy,
@@ -490,8 +492,8 @@ export default function FormatPicker({
               </div>
             )}
 
-            {/* Override-holes section (not applicable to team-card formats) */}
-            {!isTeamCard && (
+            {/* Override-holes section. Applies to every per-player engine format
+                (best-N family incl. Shambles); dimmed + no-op for Stableford. */}
             <div style={{ marginTop: 20, opacity: isStableford ? 0.55 : 1 }}>
               <div style={{
                 fontSize: "0.78rem", fontWeight: 700, color: C.navy,
@@ -571,7 +573,6 @@ export default function FormatPicker({
                 </button>
               </div>
             </div>
-            )}
 
             {/* GOBS Stableford editable point-values section. Only renders for
                 gobs_stableford — Standard's table is locked at the constant

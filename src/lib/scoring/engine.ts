@@ -77,7 +77,13 @@ function computeBestNHole(input: HoleInput): HoleResult {
   } else {
     // bestN is computed lazily here so it isn't evaluated on override holes
     // (defaultBestN throws for non-best-N formats; we don't want a dead call).
-    const bestN = formatConfig.best_n ?? defaultBestN(input.format);
+    // Shambles (Wave 1B follow-up) resolves N from team_ball_count (1 or 2)
+    // rather than best_n — read inline to avoid a helpers→copy→engine import
+    // cycle. team_ball_count is always set on shambles configs (defaults to 1).
+    const isShambles = input.format === "shambles";
+    const bestN = isShambles
+      ? (formatConfig.team_ball_count ?? 1)
+      : (formatConfig.best_n ?? defaultBestN(input.format));
     if (manualContributors) {
       contributingPlayerIds = manualContributors;
     } else {
@@ -92,11 +98,19 @@ function computeBestNHole(input: HoleInput): HoleResult {
           idx: number;
         }>;
       candidates.sort((a, b) => a.sortValue - b.sortValue || a.idx - b.idx);
-      if (candidates.length >= bestN) {
-        contributingPlayerIds = candidates.slice(0, bestN).map(c => c.playerId);
+      // Shambles relaxed close: take the best min(N, present) NET balls and
+      // count the hole as soon as ONE ball is present (count-2 degrades to
+      // best-available when a player picked up). Other best-N formats require
+      // exactly N present — short teams are filled by blind draw, not relaxed.
+      const minPresent = isShambles ? 1 : bestN;
+      const takeN = isShambles ? Math.min(bestN, candidates.length) : bestN;
+      if (candidates.length >= minPresent) {
+        contributingPlayerIds = candidates.slice(0, takeN).map(c => c.playerId);
       }
     }
-    countIsValid = contributingPlayerIds.length === bestN;
+    countIsValid = isShambles
+      ? contributingPlayerIds.length >= 1
+      : contributingPlayerIds.length === bestN;
   }
 
   let teamScore: number | null = null;
@@ -240,14 +254,12 @@ export function computeHoleResult(input: HoleInput): HoleResult {
         input,
         mergePointTable(GOBS_STABLEFORD_POINTS, input.formatConfig.point_values),
       );
-    // Wave 1B: team-card formats are scored at the TEAM level (one score per
-    // hole in `team_scores`), never through this per-player engine. Reaching
-    // here means a team-card round was wrongly routed into the individual
-    // scoring path — fail loud rather than fabricate a per-player result.
+    // Wave 1B follow-up: Shambles is an individual best-ball NET format. It
+    // reuses the best-N machinery — N comes from team_ball_count (1 or 2) and
+    // the hole takes the best N NET balls among the scores PRESENT (relaxed
+    // close; count-2 degrades to best-available). See computeBestNHole.
     case "shambles":
-      throw new Error(
-        `computeHoleResult: team-card format "${input.format}" has no per-player engine path`,
-      );
+      return computeBestNHole(input);
   }
 }
 
@@ -292,6 +304,10 @@ export function computeRoundResult(input: RoundInput): RoundResult {
   // for Stableford formats, which are points-based and have no team-level
   // "par" reference.
   const isBestN = format === "2_ball" || format === "3_ball" || format === "best_ball";
+  // Shambles (Wave 1B follow-up) is a net best-ball format: it accrues a par
+  // reference like best-N (so the team total reads as a net delta vs par) but
+  // takes NO blind-draw fills — short teams play short under the relaxed close.
+  const accumulatesPar = isBestN || format === "shambles";
 
   for (const hole of holes) {
     const holeInput: HoleInput = {
@@ -317,7 +333,7 @@ export function computeRoundResult(input: RoundInput): RoundResult {
       // holes (where contributingPlayerIds.length === bestN by construction)
       // and par × (count of non-null scorers) on override holes — the par
       // reference scales with the number of scores actually counting.
-      if (isBestN) teamParAtScored += hole.par * result.contributingPlayerIds.length;
+      if (accumulatesPar) teamParAtScored += hole.par * result.contributingPlayerIds.length;
       holesScored++;
       anyTeamScore = true;
     }

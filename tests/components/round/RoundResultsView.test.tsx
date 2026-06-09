@@ -117,24 +117,23 @@ describe("RoundResultsView — per-team score caption", () => {
   });
 });
 
-describe("RoundResultsView — team-card (Shambles)", () => {
-  // Players carry holesPlayed 18, so the cross-team Individual Rankings section
-  // WOULD render if it weren't gated — a true negative control for the gate.
-  function teamCardData(format: Format): LoadedRoundResults {
+describe("RoundResultsView — Shambles renders as an individual format (Wave 1B follow-up)", () => {
+  // Shambles left the team-card spine: it now shows the cross-team Individual
+  // Rankings + per-player rows like any other individual format. (The
+  // isTeamCardFormat gate in RoundResultsView stays for future Scramble/Alt-Shot
+  // but no selectable format triggers its hide-branch today — that branch is
+  // dormant until a real team-card format lands.)
+  function individualData(format: Format): LoadedRoundResults {
     const base = makeData(true, [makeTeam(1, 18, 1), makeTeam(2, 18, 2)]);
-    return {
-      ...base,
-      format,
-      teams: base.teams.map(t => ({ ...t, teamGrid: { scores: SCORES_18, par: PAR_18 } })),
-    };
+    return { ...base, format };
   }
 
-  it("hides Individual Rankings for team-card (present for an individual format)", () => {
-    expect(renderToString(<RoundResultsView data={teamCardData("2_ball")} />)).toContain("Individual Rankings");
-    expect(renderToString(<RoundResultsView data={teamCardData("shambles")} />)).not.toContain("Individual Rankings");
+  it("shows Individual Rankings for shambles (now individual best-ball net)", () => {
+    expect(renderToString(<RoundResultsView data={individualData("2_ball")} />)).toContain("Individual Rankings");
+    expect(renderToString(<RoundResultsView data={individualData("shambles")} />)).toContain("Individual Rankings");
   });
 
-  it("still renders the team headline (FINAL) for team-card", () => {
-    expect(renderToString(<RoundResultsView data={teamCardData("shambles")} />)).toContain("FINAL");
+  it("still renders the team headline (FINAL) for shambles", () => {
+    expect(renderToString(<RoundResultsView data={individualData("shambles")} />)).toContain("FINAL");
   });
 });

@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { isTeamCardFormat } from "@/lib/format/helpers";
+import { excludedFromIndividualStats } from "@/lib/format/helpers";
 import type { Format } from "@/lib/scoring/types";
 
 export type PlayerStatsFilter = {
@@ -87,14 +87,15 @@ export async function fetchPlayerStats(
         totalStrokes,
         scoreCount: scores.length,
         courseHandicap: rp.course_handicap,
-        isTeamCard: isTeamCardFormat(roundsRel?.format ?? null),
+        excludedFromStats: excludedFromIndividualStats(roundsRel?.format ?? null),
       };
     })
-    // Wave 1B: exclude team-card rounds (Shambles) from per-player scoring
-    // stats — the scores aren't individual. They also have no `scores` rows so
-    // scoreCount already excludes them, but the explicit format filter makes
-    // this load-bearing contract intentional + robust.
-    .filter((r) => r.scoreCount > 0 && r.playedOn !== "" && !r.isTeamCard);
+    // Wave 1B follow-up: exclude rounds that don't feed per-player season stats.
+    // Team-card formats have no individual `scores` rows; Shambles DOES carry
+    // per-player scores (it's individual best-ball net) but they aren't
+    // authoritative (picked-up balls, relaxed close), so the format filter — NOT
+    // the scoreCount guard — is what now keeps Shambles out of season averages.
+    .filter((r) => r.scoreCount > 0 && r.playedOn !== "" && !r.excludedFromStats);
 
   if (rounds.length === 0) return EMPTY_STATS;
 

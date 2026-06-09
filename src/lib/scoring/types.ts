@@ -4,10 +4,12 @@ export type Format =
   | "best_ball"
   | "stableford_standard"
   | "gobs_stableford"
-  // Wave 1B: team-card format. The TEAM is the scoring unit — one score per
-  // hole (or two summed balls for count-2), stored in `team_scores`, NOT in
-  // the per-player `scores` table. Never routes through the per-player engine
-  // (computeHoleResult). Classified via isTeamCardFormat() in lib/format/helpers.
+  // Wave 1B follow-up: individual best-ball NET format. After the team drive
+  // everyone plays their own ball, so per-player `scores` exist; the team takes
+  // the best team_ball_count (1 or 2) NET balls per hole via computeBestNHole.
+  // Relaxed close (best of the scores PRESENT; finalizes via
+  // finalize_round_relaxed) and excluded from individual season stats — see
+  // allowsIncompleteClose() / excludedFromIndividualStats() in lib/format/helpers.
   | "shambles";
 
 export type FormatConfig = {

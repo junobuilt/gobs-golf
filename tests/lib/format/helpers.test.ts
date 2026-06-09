@@ -7,6 +7,8 @@ import {
   getOverrideHoles,
   getHandicapAllowance,
   isTeamCardFormat,
+  excludedFromIndividualStats,
+  allowsIncompleteClose,
   getTeamBallCount,
 } from "@/lib/format/helpers";
 import { FORMAT_ORDER } from "@/lib/format/copy";
@@ -48,9 +50,10 @@ describe("defaultConfigFor", () => {
     expect(defaultConfigFor("3_ball").best_n).toBe(3);
   });
 
-  it("returns net basis for every individual (non-team-card) format", () => {
-    // Team-card formats (Shambles) default to gross — see the dedicated block.
-    for (const f of FORMAT_ORDER.filter((x) => !isTeamCardFormat(x))) {
+  it("returns net basis for every format", () => {
+    // Wave 1B follow-up: Shambles is now net best-ball (no longer team-card /
+    // gross), so every selectable format defaults to net.
+    for (const f of FORMAT_ORDER) {
       expect(defaultConfigFor(f).basis).toBe("net");
     }
   });
@@ -83,8 +86,9 @@ describe("defaultConfigFor", () => {
     expect(b.best_n).toBe(2);
   });
 
-  it("seeds scoring_basis to 'net' for every individual (non-team-card) format", () => {
-    for (const f of FORMAT_ORDER.filter((x) => !isTeamCardFormat(x))) {
+  it("seeds scoring_basis to 'net' for every format", () => {
+    // Wave 1B follow-up: Shambles is net best-ball now, so all formats seed net.
+    for (const f of FORMAT_ORDER) {
       expect(defaultConfigFor(f).scoring_basis).toBe("net");
     }
   });
@@ -156,23 +160,57 @@ describe("getHandicapAllowance (Wave 1A)", () => {
   });
 });
 
-describe("isTeamCardFormat (Wave 1B)", () => {
-  it("returns true for shambles", () => {
-    expect(isTeamCardFormat("shambles")).toBe(true);
+describe("isTeamCardFormat (Wave 1B follow-up — Shambles removed)", () => {
+  it("returns false for shambles (now an individual best-ball format)", () => {
+    expect(isTeamCardFormat("shambles")).toBe(false);
   });
 
-  it("classifies every FORMAT_ORDER entry (shambles team-card, others not)", () => {
-    // shambles is now selectable (in FORMAT_ORDER); it must classify as
-    // team-card, and every other listed format must not.
+  it("returns false for every currently-selectable format", () => {
+    // The team-card spine stays for future Scramble/Alt-Shot, but no format
+    // routes to it today — the set is empty.
     expect(FORMAT_ORDER).toContain("shambles");
     for (const f of FORMAT_ORDER) {
-      expect(isTeamCardFormat(f)).toBe(f === "shambles");
+      expect(isTeamCardFormat(f)).toBe(false);
     }
   });
 
   it("returns false for null/undefined", () => {
     expect(isTeamCardFormat(null)).toBe(false);
     expect(isTeamCardFormat(undefined)).toBe(false);
+  });
+});
+
+describe("excludedFromIndividualStats (Wave 1B follow-up)", () => {
+  it("excludes shambles (scores exist but aren't authoritative)", () => {
+    expect(excludedFromIndividualStats("shambles")).toBe(true);
+  });
+
+  it("includes every individual stroke/Stableford format", () => {
+    for (const f of FORMAT_ORDER.filter((x) => x !== "shambles")) {
+      expect(excludedFromIndividualStats(f)).toBe(false);
+    }
+  });
+
+  it("returns false for null/undefined", () => {
+    expect(excludedFromIndividualStats(null)).toBe(false);
+    expect(excludedFromIndividualStats(undefined)).toBe(false);
+  });
+});
+
+describe("allowsIncompleteClose (Wave 1B follow-up)", () => {
+  it("is true for shambles (relaxed close — players pick up)", () => {
+    expect(allowsIncompleteClose("shambles")).toBe(true);
+  });
+
+  it("is false for every blind-draw (full-completion) format", () => {
+    for (const f of FORMAT_ORDER.filter((x) => x !== "shambles")) {
+      expect(allowsIncompleteClose(f)).toBe(false);
+    }
+  });
+
+  it("returns false for null/undefined", () => {
+    expect(allowsIncompleteClose(null)).toBe(false);
+    expect(allowsIncompleteClose(undefined)).toBe(false);
   });
 });
 
@@ -204,12 +242,13 @@ describe("getTeamBallCount (Wave 1B)", () => {
   });
 });
 
-describe("defaultConfigFor (Wave 1B — shambles)", () => {
+describe("defaultConfigFor (Wave 1B follow-up — shambles)", () => {
   it("seeds shambles with team_ball_count = 1", () => {
     expect(defaultConfigFor("shambles").team_ball_count).toBe(1);
   });
 
-  it("seeds shambles as gross (no per-player handicap)", () => {
-    expect(defaultConfigFor("shambles").scoring_basis).toBe("gross");
+  it("seeds shambles as net best-ball (locked net like Best Ball)", () => {
+    expect(defaultConfigFor("shambles").scoring_basis).toBe("net");
+    expect(defaultConfigFor("shambles").basis).toBe("net");
   });
 });

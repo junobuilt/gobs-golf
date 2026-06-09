@@ -8,8 +8,8 @@ describe("scorecardHref (Wave 1B routing)", () => {
     expect(scorecardHref(100, 1, "gobs_stableford")).toBe("/round/100/scorecard?team=1");
   });
 
-  it("routes team-card formats (shambles) to the team-card surface", () => {
-    expect(scorecardHref(100, 3, "shambles")).toBe("/round/100/team-card?team=3");
+  it("routes shambles to the individual scorecard (Wave 1B follow-up: now best-ball net)", () => {
+    expect(scorecardHref(100, 3, "shambles")).toBe("/round/100/scorecard?team=3");
   });
 
   it("treats null/undefined format as individual", () => {
@@ -22,7 +22,7 @@ describe("scorecardHref (Wave 1B routing)", () => {
       "/round/7/scorecard?team=1&admin=1&edit=1",
     );
     expect(scorecardHref(7, 1, "shambles", { admin: true, edit: true })).toBe(
-      "/round/7/team-card?team=1&admin=1&edit=1",
+      "/round/7/scorecard?team=1&admin=1&edit=1",
     );
   });
 });

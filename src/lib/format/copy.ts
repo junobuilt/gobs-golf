@@ -36,7 +36,7 @@ export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> 
   },
   "shambles": {
     title: "Shambles",
-    oneLiner: "Team enters one score per hole (or two summed balls). Gross only. Lowest team total wins.",
+    oneLiner: "Everyone plays their own ball after the team drive; take the best 1 (or 2) net per hole. Net only. Lowest team total wins.",
   },
 };
 
@@ -105,13 +105,13 @@ export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
     point_values: { ...GOBS_STABLEFORD_DEFAULT_POINT_VALUES },
     override_holes: [],
   },
-  // Wave 1B team-card format. Gross only (no per-player handicap to apply) —
-  // basis/scoring_basis are "gross" to reflect that, though the team-card
-  // surface sums raw strokes directly and never consults the per-player engine
-  // or getScoringBasis. team_ball_count defaults to 1 (admin may set 2).
+  // Wave 1B follow-up: Shambles is an individual best-ball NET format. Net only
+  // (locked in the picker like Best Ball) — the per-player engine allocates
+  // strokes and takes the best team_ball_count (1 or 2) NET balls per hole.
+  // team_ball_count defaults to 1 (admin may set 2 via the picker).
   "shambles": {
-    basis: "gross",
-    scoring_basis: "gross",
+    basis: "net",
+    scoring_basis: "net",
     team_ball_count: 1,
     override_holes: [],
   },

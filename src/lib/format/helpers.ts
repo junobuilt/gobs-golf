@@ -10,19 +10,55 @@ export type RoundForLockGate = {
   format_locked_at: string | null;
 } | null;
 
-// Wave 1B — single source of truth for "is this a team-card format?" Every
-// routing + read site (scorecard routing, results layer, homepage status,
-// season-stat exclusion) consults this helper rather than comparing the format
-// string inline. Team-card formats store one team-level score per hole in
-// `team_scores` (no per-player `scores` rows) and finalize WITHOUT blind draw.
-// The other three team-card formats (Texas Scramble / 1 Score Only / Alternate
-// Shot) ride this spine later by adding their string to this set (+ the
-// rounds_format_check CHECK constraint) — no other code change.
-const TEAM_CARD_FORMATS = new Set<Format>(["shambles"]);
+// Wave 1B — single source of truth for "is this a TEAM-CARD format?" — i.e. a
+// format scored at the team level (one score per hole in `team_scores`, no
+// per-player `scores` rows), routed to `/round/[id]/team-card`, finalizing
+// WITHOUT blind draw. Every routing + display site (scorecard routing, results
+// layer, RoundResultsView rankings gate, RoundSetup allowance gate) consults
+// this helper rather than comparing the format string inline.
+//
+// Wave 1B follow-up: Shambles was REMOVED from this set. Shambles is a best-ball
+// NET format scored on the individual scorecard (per-player `scores`), so it is
+// NOT team-card — it must route to `/scorecard`, show per-player rankings, and
+// allow the handicap allowance. The set is intentionally empty for now; the
+// team-card spine stays dormant until Texas Scramble / 1 Score Only / Alternate
+// Shot ride it later (add their string here + to the rounds_format_check CHECK
+// constraint — no other code change). NOTE: Shambles' STATS/GHIN exclusion did
+// NOT move with it — that contract now lives in excludedFromIndividualStats()
+// below, and its relaxed finalize in allowsIncompleteClose().
+const TEAM_CARD_FORMATS = new Set<Format>([]);
 
 export function isTeamCardFormat(format: Format | null | undefined): boolean {
   if (!format) return false;
   return TEAM_CARD_FORMATS.has(format);
+}
+
+// Wave 1B follow-up — "should this round be kept OUT of per-player season stats,
+// GHIN-adjusted scores, and profile per-round history?" Returns true for every
+// team-card format (no individual scores exist) AND for Shambles (individual
+// scores exist but aren't authoritative — picked-up balls, relaxed close, so
+// they must not move season averages). This is deliberately split from
+// isTeamCardFormat(): reclassifying Shambles off the team-card spine must NOT
+// re-leak it into season stats. Read sites: playerStats.ts, season/page.tsx,
+// player/[id]/page.tsx. (Shambles STAYS in played-with — the partnership is real.)
+export function excludedFromIndividualStats(
+  format: Format | null | undefined,
+): boolean {
+  if (!format) return false;
+  return isTeamCardFormat(format) || format === "shambles";
+}
+
+// Wave 1B follow-up — "does this format finalize even with score gaps?" True for
+// team-card formats AND Shambles. Shambles allows a relaxed close (players pick
+// up; the team takes the best N net among the scores PRESENT on each hole), so
+// it finalizes via finalize_round_relaxed (>=1 score per hole per team floor, no
+// blind draw) instead of finalize_round_with_blind_draws. Drives the scorecard's
+// Submit-enable gate and finalize-RPC selection.
+export function allowsIncompleteClose(
+  format: Format | null | undefined,
+): boolean {
+  if (!format) return false;
+  return isTeamCardFormat(format) || format === "shambles";
 }
 
 // Wave 1B — reads the per-round team-card ball count (1 or 2). Null/undefined

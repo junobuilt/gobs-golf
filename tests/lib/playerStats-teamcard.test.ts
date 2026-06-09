@@ -1,11 +1,15 @@
-// Wave 1B C3a — the load-bearing season/profile exclusion contract: team-card
-// rounds (Shambles) must NOT feed a player's per-player scoring stats.
+// Wave 1B C3a + follow-up — the load-bearing season/profile exclusion contract:
+// a finalized Shambles round must NOT move a player's per-player scoring stats.
 //
-// NEGATIVE CONTROL: the Shambles round here is seeded WITH per-player score
-// rows (18×9). Team-card rounds never actually have those, so the existing
-// scoreCount>0 guard wouldn't exclude this fixture — only the new
-// isTeamCardFormat filter does. So this fixture fails if the format filter is
-// removed, proving the filter (not just the score guard) carries the contract.
+// After the Shambles rebuild this is MORE load-bearing, not less: Shambles is now
+// an individual best-ball format that genuinely DOES write per-player `scores`
+// rows, so the scoreCount>0 guard no longer drops it — the format filter
+// (excludedFromIndividualStats, formerly isTeamCardFormat) is the ONLY thing
+// keeping it out of season averages.
+//
+// NEGATIVE CONTROL: the Shambles round here is seeded WITH per-player score rows
+// (18×9). The fixture fails if the format filter is removed, proving the filter
+// (not the score guard) carries the contract — exactly the leak we're preventing.
 
 import { describe, it, expect, vi } from "vitest";
 

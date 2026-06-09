@@ -16,7 +16,7 @@ import {
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
-import { getScoringBasis, getOverrideHoles, getHandicapAllowance } from "@/lib/format/helpers";
+import { getScoringBasis, getOverrideHoles, getHandicapAllowance, allowsIncompleteClose } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
@@ -746,8 +746,17 @@ export default function ScorecardPage() {
   // dropped player must have 18 holes scored; every dropped player must have
   // scores through their dropped_after_hole. Predicate flipping true triggers
   // the auto-finalize effect.
+  //
+  // Wave 1B follow-up: relaxed-close formats (Shambles) mirror
+  // finalize_round_relaxed instead — the team needs >=1 present score on every
+  // hole 1..18; individual players may have gaps (they picked up). When a team
+  // is filtered, `roundPlayers` holds only that team's roster (see load query),
+  // so this is exactly the per-team floor the RPC enforces.
   const isRoundLocallyComplete = (): boolean => {
     if (roundPlayers.length === 0) return false;
+    if (allowsIncompleteClose(roundFormat)) {
+      return firstUnscoredTeamHole() == null;
+    }
     return roundPlayers.every(rp => {
       const required = rp.dropped_after_hole ?? 18;
       const rpScores = scores[rp.id] ?? {};
@@ -756,6 +765,18 @@ export default function ScorecardPage() {
       }
       return true;
     });
+  };
+
+  // Wave 1B follow-up: first hole (1..18) on the filtered team with NO score
+  // from any roster player, or null if every hole has at least one. Drives the
+  // relaxed-close gate above and the "Team N has no score on hole H" block
+  // caption. Only meaningful for relaxed-close formats (Shambles).
+  const firstUnscoredTeamHole = (): number | null => {
+    for (let h = 1; h <= 18; h++) {
+      const anyScored = roundPlayers.some(rp => (scores[rp.id] ?? {})[h] != null);
+      if (!anyScored) return h;
+    }
+    return null;
   };
 
   // D.1 S6 — load all dropout fills for this round and pair each with its
@@ -1046,8 +1067,15 @@ export default function ScorecardPage() {
     setAllSubmittedRpcInFlight(true);
     try {
       try { await getWriteQueue().drain(); } catch { /* offline; try anyway */ }
+      // Wave 1B follow-up: relaxed-close formats (Shambles) finalize via the
+      // gaps-tolerant RPC (>=1 score per hole per team, no blind draw). Every
+      // other format keeps the blind-draw RPC. The status handling below —
+      // including the client-side payout persistence — is SHARED across both
+      // paths; only the blind-draw refreshes are skipped for the relaxed path
+      // (no fills are ever written there).
+      const relaxed = allowsIncompleteClose(roundFormat);
       const { data, error } = await supabase.rpc(
-        "finalize_round_with_blind_draws",
+        relaxed ? "finalize_round_relaxed" : "finalize_round_with_blind_draws",
         { p_round_id: Number(roundId) },
       );
       if (error) {
@@ -1059,15 +1087,19 @@ export default function ScorecardPage() {
         setIsRoundComplete(true);
         setFinalizedToastVisible(true);
         setTimeout(() => setFinalizedToastVisible(false), 4000);
-        void refreshBlindDrawFills();
-        void refreshBlindDrawInputs();
+        if (!relaxed) {
+          void refreshBlindDrawFills();
+          void refreshBlindDrawInputs();
+        }
         // G2: persist payouts + fund movements. Non-fatal — the round is
         // already finalized; re-running heals a failure (RPC is idempotent).
         void persistPayoutsAfterFinalize(Number(roundId));
       } else if (status === "already_complete") {
         setIsRoundComplete(true);
-        void refreshBlindDrawFills();
-        void refreshBlindDrawInputs();
+        if (!relaxed) {
+          void refreshBlindDrawFills();
+          void refreshBlindDrawInputs();
+        }
         // G2: idempotent recovery if a prior persist never completed.
         void persistPayoutsAfterFinalize(Number(roundId));
       } else if (status === "pool_too_small") {
@@ -2131,7 +2163,17 @@ export default function ScorecardPage() {
               margin: "8px 0 0", textAlign: "center",
               fontSize: "0.72rem", color: "#94a3b8",
             }}>
-              Available once every player on this team has scores entered.
+              {/* Wave 1B follow-up: relaxed-close formats (Shambles) only need
+                  one score per hole on this team — name the first blocking hole
+                  rather than asking for every player. */}
+              {allowsIncompleteClose(roundFormat)
+                ? (() => {
+                    const h = firstUnscoredTeamHole();
+                    return h != null && myTeamNum != null
+                      ? `Team ${myTeamNum} has no score on hole ${h}.`
+                      : "Available once this team has a score on every hole.";
+                  })()
+                : "Available once every player on this team has scores entered."}
             </p>
           )}
         </div>

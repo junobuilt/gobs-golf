@@ -174,6 +174,29 @@ describe("computeAndPersistRoundPayouts", () => {
     expect(p.p_payload.funds).toContainEqual({ fund: "bfb", amount: 16, reason: "buyin_bfb" });
   });
 
+  it("Shambles is a paid best-N format: lowest net total wins, payouts + funds persisted", async () => {
+    // Wave 1B follow-up GATE — a finalized Shambles round must reach payout
+    // persistence (round_payouts + fund_transactions, both written by the single
+    // persist_round_payouts payload below), not merely flip is_complete. Proves
+    // the engine ranks Shambles as best_n. Negative control vs Stableford:
+    // best_n crowns the LOWEST total (team 1); Stableford would crown the highest.
+    okResult([team(1, -8, 2), team(2, -3, 2), team(3, 1, 2), team(4, 5, 2)], "shambles");
+
+    const out = await computeAndPersistRoundPayouts(120);
+    expect(out).toMatchObject({ status: "persisted", placesPaid: 3, headcount: 8, balance: 56, teamSize: 2 });
+
+    const p = lastPayload();
+    expect(p.p_round_id).toBe(120);
+    expect(p.p_payload.payouts.length).toBeGreaterThan(0);
+    expect(payoutByTeam(p, 1)).toMatchObject({ place: 1 }); // lowest net wins
+    expect(payoutByTeam(p, 4)).toBeUndefined();             // 4th of 4 → out of the money
+    // Funds → fund_transactions rows, always credited at finalize:
+    expect(p.p_payload.funds).toEqual([
+      { fund: "hio", amount: 8, reason: "buyin_hio" },
+      { fund: "bfb", amount: 16, reason: "buyin_bfb" },
+    ]);
+  });
+
   it("unsupported team size → skipped, no rpc", async () => {
     okResult([team(1, -5, 5), team(2, 0, 5)], "2_ball");
     const out = await computeAndPersistRoundPayouts(1);

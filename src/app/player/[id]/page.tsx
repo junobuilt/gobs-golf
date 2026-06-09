@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
-import { isTeamCardFormat } from "@/lib/format/helpers";
+import { excludedFromIndividualStats } from "@/lib/format/helpers";
 import { getActiveSeason, type Season } from "@/lib/seasons";
 import {
   loadPlayedWith as loadPlayedWithBuckets,
@@ -116,15 +116,16 @@ export default function PlayerProfilePage() {
           }
 
           const results: RoundResult[] = roundPlayers
-            // Wave 1B: exclude team-card rounds (Shambles) from the per-player
-            // round history + GHIN-adjusted totals (scores aren't individual).
-            // They carry no `scores` rows so the length guard already drops
-            // them; the format check makes the contract explicit.
+            // Wave 1B follow-up: exclude rounds that don't feed per-player
+            // history + GHIN-adjusted totals — team-card formats (no individual
+            // scores) AND Shambles (its per-player scores exist but aren't
+            // authoritative: picked-up balls, relaxed close). For Shambles the
+            // format filter — not the length guard — is the load-bearing one.
             .filter(
               (rp: any) =>
                 rp.scores &&
                 rp.scores.length > 0 &&
-                !isTeamCardFormat(rp.rounds?.format ?? null),
+                !excludedFromIndividualStats(rp.rounds?.format ?? null),
             )
             .map((rp: any) => {
               const total_strokes = rp.scores.reduce(

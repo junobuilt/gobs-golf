@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { computePlayerRoundTotal } from "@/lib/scoring";
-import { isTeamCardFormat } from "@/lib/format/helpers";
+import { excludedFromIndividualStats } from "@/lib/format/helpers";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface PlayerStats {
@@ -66,12 +66,13 @@ export default function LeaderboardPage() {
         return;
       }
 
-      // Wave 1B: exclude team-card rounds (Shambles) from per-player season
-      // stats — the scores aren't individual. (They also carry no `scores`
-      // rows, so the <9-holes guard below already drops them; this makes the
-      // exclusion explicit for the load-bearing contract.)
+      // Wave 1B follow-up: exclude rounds that don't feed per-player season
+      // stats — team-card formats (no individual scores) AND Shambles (its
+      // per-player scores exist but aren't authoritative: picked-up balls,
+      // relaxed close). The format filter is now the load-bearing exclusion for
+      // Shambles since it DOES carry `scores` rows.
       const roundIds = rounds
-        .filter((r: any) => !isTeamCardFormat(r.format ?? null))
+        .filter((r: any) => !excludedFromIndividualStats(r.format ?? null))
         .map(r => r.id);
 
       if (roundIds.length === 0) {
