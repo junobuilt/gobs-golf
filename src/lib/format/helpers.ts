@@ -1,4 +1,5 @@
 import type { Format, FormatConfig } from "@/lib/scoring/types";
+import { getPlayingStrokes } from "@/lib/scoring/handicap";
 import { DEFAULT_FORMAT_CONFIG } from "./copy";
 
 export type RoundForFormatGate = {
@@ -117,6 +118,24 @@ export function getHandicapAllowance(
   if (a < 10) return 10;
   if (a > 100) return 100;
   return a;
+}
+
+// Wave 1A follow-up (2026-06-09) — THE single function returning a player's
+// allowance-adjusted PLAYING course handicap for a round. Wraps getPlayingStrokes
+// (the one place the allowance % scales a CH) with this round's allowance read.
+// Every site that displays a CH number, draws stroke dots, or feeds the net
+// engine reads THIS value, so the number shown can never drift from the number
+// scored again (the 2026-06-09 fix collapsed two sources into this one).
+//
+// Operates on the stored (rounded) course_handicap — the exact input the engine
+// already scores on. Deliberately NOT the unrounded CH: applying the allowance
+// to the unrounded value would change competition net for some players (a
+// scoring-engine change, out of scope). Null CH stays null; 100% is the identity.
+export function getPlayingCourseHandicap(
+  rawCourseHandicap: number | null,
+  formatConfig: FormatConfig | null | undefined,
+): number | null {
+  return getPlayingStrokes(rawCourseHandicap, getHandicapAllowance(formatConfig));
 }
 
 // Returns the override-hole list (per-round "all scores count on these

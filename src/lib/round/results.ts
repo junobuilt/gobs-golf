@@ -4,9 +4,9 @@
 // React imports. Consumers wrap the call in their own useEffect.
 
 import { supabase } from "@/lib/supabase";
-import { computeRoundResult, getPlayingStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
+import { computeRoundResult, getHandicapStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
-import { getScoringBasis, getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
+import { getScoringBasis, getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
 import {
   rankTeams,
   holesCompleteForTeam,
@@ -45,6 +45,11 @@ export type PlayerRow = {
   // handicap allowance by design. Read-only / display-only — never feeds
   // competition net, ranking, or payouts.
   adjScores: (number | null)[];
+  // 2026-06-09: per-hole handicap stroke allocation (0/1/2…), 18-length, from
+  // the allowance-ADJUSTED playing CH + each hole's stroke index — the SAME
+  // source the net engine scores on. Display-only: feeds PlayerHoleGrid's dot
+  // row on summary/leaderboard. All-zeros for team-card roster rows.
+  strokeAllocation: number[];
   // D.1: NULL = played all 18 (or hasn't dropped). 1..17 = walked off after
   // that hole. Drives the "Left after hole N" badge and the mid-round
   // dropout merge with a blind_draws fill in PlayerHoleGrid.
@@ -298,6 +303,7 @@ export async function loadRoundResults(
           scores: Array.from({ length: 18 }, () => null),
           par: gridPar.slice(),
           adjScores: Array.from({ length: 18 }, () => null),
+          strokeAllocation: Array.from({ length: 18 }, () => 0),
           droppedAfterHole: rp.dropped_after_hole ?? null,
         };
       });
@@ -337,10 +343,10 @@ export async function loadRoundResults(
   }
 
   const useGross = getScoringBasis(formatConfig) === "gross";
-  // Wave 1A: per-round handicap allowance. Scales every player's raw CH before
-  // the engine allocates strokes (competition net). No-op at 100% and under
-  // gross scoring (CH already zeroed below). Display of the CH number stays raw.
-  const allowance = getHandicapAllowance(formatConfig);
+  // Wave 1A: per-round handicap allowance scales every player's raw CH before
+  // the engine allocates strokes (competition net). 2026-06-09: routed through
+  // getPlayingCourseHandicap — the single source the dots + CH display also read.
+  // No-op at 100% and under gross scoring (CH zeroed below).
   const isStableford = isStablefordFormat(format);
 
   // D.1 hotfix follow-up: precompute engine + par lookup per team in a
@@ -360,7 +366,7 @@ export async function loadRoundResults(
     teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
     const playersForEngine = (teamPlayers as any[]).map((rp: any) => ({
       playerId: String(rp.id),
-      courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
+      courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, formatConfig),
       grossScores: scoresByRpId[rp.id] || {},
     }));
     // Blind-draw fills for THIS team. Best-N: the engine injects them into the
@@ -378,7 +384,7 @@ export async function loadRoundResults(
         const drawnRp = (rps as any[]).find(r => r.id === drawnRpId);
         const drawnCH = useGross
           ? 0
-          : getPlayingStrokes(drawnRp?.course_handicap ?? null, allowance);
+          : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, formatConfig);
         return {
           drawnPlayerId: String(drawnRpId ?? drawnPlayerId),
           drawnPlayerCourseHandicap: drawnCH,
@@ -467,6 +473,14 @@ export async function loadRoundResults(
       );
       const adjScores = computeAdjustedHoleScores(scores, par, strokeIndexes, rp.course_handicap);
 
+      // 2026-06-09: per-hole stroke dots from the allowance-adjusted playing CH
+      // (the engine's scoring input) + each hole's stroke index. Holes missing
+      // tee data → 0 dots.
+      const playingCH = getPlayingCourseHandicap(rp.course_handicap, formatConfig);
+      const strokeAllocation: number[] = strokeIndexes.map(si =>
+        si == null ? 0 : getHandicapStrokes(playingCH, si),
+      );
+
       const enginePlayer = result.perPlayer.find(p => p.playerId === String(rp.id));
       const grossTotal = enginePlayer?.grossTotal ?? 0;
       const netTotalStrokes = enginePlayer?.netTotal ?? 0;
@@ -503,6 +517,7 @@ export async function loadRoundResults(
         scores,
         par,
         adjScores,
+        strokeAllocation,
         droppedAfterHole: rp.dropped_after_hole ?? null,
       };
     });

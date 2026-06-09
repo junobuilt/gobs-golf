@@ -538,6 +538,9 @@ function PlayerSection({
             // the post-drop holes are the drawn player's scores (different
             // CH/SI), so player.adjScores wouldn't line up with gridScores.
             adjScores={dropoutFill ? undefined : player.adjScores}
+            // 2026-06-09: handicap stroke dots from the adjusted playing CH.
+            // Skipped on dropout merges for the same CH/SI-mismatch reason.
+            strokeAllocation={dropoutFill ? undefined : player.strokeAllocation}
           />
         </div>
       )}

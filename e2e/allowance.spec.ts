@@ -1,14 +1,16 @@
-// E2E (display-layer) — Wave 1A Handicap Allowance on the individual scorecard.
-// Locked behavior: the per-round allowance scales STROKES + competition NET, but
-// the Course Handicap LABEL stays raw, and the GHIN-adjusted score is ALWAYS
-// computed at 100% (it ignores the allowance). These specs assert the RENDERED
-// values, not the engine.
+// E2E (display-layer) — Handicap Allowance on the individual scorecard.
+// Behavior (2026-06-09 — reverses Wave 1A's 1A.C2 "CH label stays raw"): the
+// per-round allowance scales STROKES + competition NET, AND the displayed
+// Course Handicap NUMBER now shows that scaled playing value (tinted orange to
+// match the "Course Handicap at N%" caption). The GHIN-adjusted score is still
+// ALWAYS computed at 100% (it ignores the allowance). These specs assert the
+// RENDERED values, not the engine.
 //
 // Fixture: one player (Adam) with raw course handicap 20, allowance 80% →
-// playing strokes round(16) = 16. On hole 1 (par 4, SI 1): scaled strokes = 1
-// (raw would be 2); gross 10 → scaled net 9; GHIN cap at 100% = par 4 + 2 +
-// 2 = 8 (a scaled cap would be 7). One player keeps the dot count + the expand
-// control unambiguous.
+// playing strokes round(20 × 0.8) = round(16) = 16 (hand-derived golden). On
+// hole 1 (par 4, SI 1): scaled strokes = 1 (raw would be 2); gross 10 → scaled
+// net 9; GHIN cap at 100% = par 4 + 2 + 2 = 8 (a scaled cap would be 7). One
+// player keeps the dot count + the expand control unambiguous.
 
 import { test, expect, seed, seedNetRoundWithHoles } from "./support/fixtures";
 
@@ -16,7 +18,7 @@ import { test, expect, seed, seedNetRoundWithHoles } from "./support/fixtures";
 const strokeDots = (page: import("@playwright/test").Page) =>
   page.locator('span[style*="width: 5px"][style*="rgb(30, 64, 175)"]');
 
-test("scorecard scales strokes + net by the allowance but keeps the CH label raw", async ({ page, db }) => {
+test("scorecard scales strokes + net AND shows the scaled Course Handicap number", async ({ page, db }) => {
   seed(db, seedNetRoundWithHoles({ roundId: 700, allowance: 80 }));
   await page.goto("/round/700/scorecard?team=1");
 
@@ -27,12 +29,15 @@ test("scorecard scales strokes + net by the allowance but keeps the CH label raw
   // 1. Reduced stroke dots — hole 1 shows the SCALED 1 stroke, not the raw 2.
   await expect(strokeDots(page)).toHaveCount(1);
 
-  // 2. The Course Handicap LABEL stays the TRUE/raw 20 (not the reduced 16).
-  await expect(page.getByText("Course Handicap: 20")).toBeVisible();
-  await expect(page.getByText("Course Handicap: 16")).toHaveCount(0);
+  // 2. Golden displayed-number: the Course Handicap reads the SCALED playing
+  // value 16 (hand-derived: round(20 × 0.8)), NOT the raw 20. The literal 16
+  // is typed by hand here — not read from the app's handicap function — so a
+  // bug in that function can't make this assertion pass with the wrong number.
+  await expect(page.getByText("Course Handicap: 16")).toBeVisible();
+  await expect(page.getByText("Course Handicap: 20")).toHaveCount(0);
 
-  // 3. The round-level allowance caption renders.
-  await expect(page.getByText("Handicaps at 80%")).toBeVisible();
+  // 3. The round-level allowance caption renders (relabeled "Course Handicap").
+  await expect(page.getByText("Course Handicap at 80%")).toBeVisible();
 
   // 4. Net reflects the SCALED strokes: 10 − 1 = 9 (raw would be 10 − 2 = 8).
   await expect(page.getByText("Net: 9")).toBeVisible();

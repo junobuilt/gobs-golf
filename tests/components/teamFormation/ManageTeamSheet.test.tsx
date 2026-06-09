@@ -9,7 +9,7 @@ import type { Player } from "@/app/admin/page";
 // ── Mock useIsMobile so tests run in a consistent "mobile=false" environment ──
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 
-// ── Page-level test setup (score-exists hides Manage Team button) ─────────────
+// ── Page-level test setup (Manage Team visibility through the round) ──────────
 const fakeRef = vi.hoisted(() => ({ current: null as any }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -162,7 +162,7 @@ describe("ManageTeamSheet", () => {
   });
 });
 
-// ── Page-level: score-exists hides Manage Team button ────────────────────────
+// ── Page-level: Manage Team visibility (stays through the live round) ─────────
 
 describe("Scorecard page — Manage Team visibility", () => {
   // Lazy-import after mocks so the page picks up fakeRef.
@@ -215,7 +215,10 @@ describe("Scorecard page — Manage Team visibility", () => {
     expect(screen.getByRole("button", { name: "Manage Team" })).toBeInTheDocument();
   });
 
-  it("Manage Team button is absent once a score exists for the team", async () => {
+  it("Manage Team button STAYS visible once a score exists for the team (A2.5 gate removed 2026-06-09)", async () => {
+    // Reverses the old hide-on-first-score behavior: Manage Team now stays
+    // available through the whole live round (mid-round pickups / late-noticed
+    // wrong tee). It only hides when the round is finalized.
     Object.defineProperty(window, "location", {
       value: new URL("http://localhost/round/1/scorecard?team=1"),
       writable: true,
@@ -226,7 +229,7 @@ describe("Scorecard page — Manage Team visibility", () => {
     });
     render(React.createElement(ScorecardPage));
     await screen.findByText("Hole 1");
-    expect(screen.queryByRole("button", { name: "Manage Team" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage Team" })).toBeInTheDocument();
   });
 
   it("Manage Team button is absent on whole-round view (no ?team= filter)", async () => {

@@ -28,6 +28,12 @@ export interface PlayerHoleGridProps {
   // Wave 1A — 18-length adjusted (NDB-capped) scores. Presence enables the
   // Adj summary column + Adj. Tot.
   adjScores?: (number | null)[];
+  // 2026-06-09 — 18-length per-hole handicap stroke allocation (0/1/2…),
+  // derived by the caller from the allowance-ADJUSTED playing handicap +
+  // each hole's stroke index (never the raw CH). Presence renders a compact
+  // dot row above each hole, mirroring the current-hole entry surface. Omit
+  // to render no dots (team-card grids, blind-draw fills, dropout merges).
+  strokeAllocation?: number[];
 }
 
 const COLOR_TERTIARY = "#94a3b8";
@@ -36,6 +42,10 @@ const COLOR_NAVY = "#042C53";
 const COLOR_HIGHLIGHT = "#dbeafe";
 const COLOR_DIVIDER = "#e2e8f0";
 const COLOR_ADJ = "#c2410c"; // Wave 1A orange — GHIN-adjusted accent.
+const COLOR_DOT = "#1e40af"; // 2026-06-09 — handicap stroke dot (matches the
+// current-hole entry surface). 4px keeps the grid compact and distinct from the
+// entry surface's 5px dots (e2e locators key on the 5px size).
+const DOT_ROW_HEIGHT = 7;
 
 const GRID_COLS = "repeat(9, minmax(0, 1fr)) minmax(0, 1.15fr)";
 const GRID_COLS_ADJ = "repeat(9, minmax(0, 1fr)) minmax(0, 1.15fr) minmax(0, 1.15fr)";
@@ -105,6 +115,7 @@ function NineGrid({
   startIdx,
   totalLabel,
   adjScores,
+  strokeAllocation,
 }: {
   scores: (number | null)[];
   par: number[];
@@ -112,6 +123,7 @@ function NineGrid({
   startIdx: number;
   totalLabel: "F9" | "B9";
   adjScores?: (number | null)[];
+  strokeAllocation?: number[];
 }) {
   const indices = Array.from({ length: 9 }, (_, i) => startIdx + i);
   const parSlice = indices.map(i => par[i]);
@@ -121,6 +133,11 @@ function NineGrid({
   const showAdj = adjScores != null;
   const adjSubtotal = showAdj ? sumPlayed(indices.map(i => adjScores![i])) : null;
   const adjLabel = totalLabel === "F9" ? "Adj F9" : "Adj B9";
+  // 2026-06-09 — render the dot row only when the caller supplied an allocation
+  // AND this nine actually has a stroke somewhere (keeps a zero-stroke nine from
+  // reserving empty vertical space).
+  const showDots =
+    strokeAllocation != null && indices.some(i => (strokeAllocation[i] ?? 0) > 0);
 
   return (
     <div
@@ -133,6 +150,44 @@ function NineGrid({
         lineHeight: 1.2,
       }}
     >
+      {/* Row 0 — handicap stroke dots, one per stroke the player receives on
+          that hole (two where they get a second stroke). Derived from the
+          allowance-adjusted playing handicap by the caller. Rendered above the
+          hole numbers, mirroring the current-hole entry surface. */}
+      {showDots && (
+        <>
+          {indices.map(i => {
+            const n = strokeAllocation![i] ?? 0;
+            return (
+              <div
+                key={`d-${i}`}
+                style={{
+                  height: DOT_ROW_HEIGHT,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "2px",
+                }}
+              >
+                {Array.from({ length: n }).map((_, k) => (
+                  <span
+                    key={k}
+                    style={{
+                      width: "4px",
+                      height: "4px",
+                      borderRadius: "50%",
+                      background: COLOR_DOT,
+                    }}
+                  />
+                ))}
+              </div>
+            );
+          })}
+          <div style={{ height: DOT_ROW_HEIGHT }} />
+          {showAdj && <div style={{ height: DOT_ROW_HEIGHT }} />}
+        </>
+      )}
+
       {/* Row 1 — hole numbers (navy primary, weight 500). Current-hole
           background highlight is the only signal of which hole is live. */}
       {indices.map(i => {
@@ -268,6 +323,7 @@ export default function PlayerHoleGrid({
   currentHoleIndex,
   showRunningTotal = true,
   adjScores,
+  strokeAllocation,
 }: PlayerHoleGridProps) {
   const total = sumPlayed(scores);
   const showAdj = adjScores != null;
@@ -282,6 +338,7 @@ export default function PlayerHoleGrid({
         startIdx={0}
         totalLabel="F9"
         adjScores={adjScores}
+        strokeAllocation={strokeAllocation}
       />
       <div
         style={{
@@ -297,6 +354,7 @@ export default function PlayerHoleGrid({
         startIdx={9}
         totalLabel="B9"
         adjScores={adjScores}
+        strokeAllocation={strokeAllocation}
       />
       {showAdj ? (
         // Wave 1A: Tot / Adj. Tot nested under the two B9 summary columns

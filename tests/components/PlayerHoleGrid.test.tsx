@@ -219,4 +219,49 @@ describe("PlayerHoleGrid", () => {
     );
     expect(html).toMatch(/>9</);
   });
+
+  // 2026-06-09 — handicap stroke dots. Each dot is a 4px navy (#1e40af) span;
+  // counting that needle counts total dots rendered.
+  const DOT = "background:#1e40af";
+
+  it("renders no stroke dots when strokeAllocation is omitted (back-compat)", () => {
+    const html = renderToString(
+      <PlayerHoleGrid scores={ALL_NULL} par={PAR_18} />
+    );
+    expect(countOccurrences(html, DOT)).toBe(0);
+  });
+
+  it("renders one dot per stroke — total dots equals the allocation sum", () => {
+    // 80% allocation for the live round-174 case: SI-1 hole gets 2, all others
+    // 1 → 19 dots. The 19 is hand-derived (18 + 1); the array encodes it.
+    const alloc = Array.from({ length: 18 }, () => 1);
+    alloc[0] = 2; // one hole gets a second stroke
+    const html = renderToString(
+      <PlayerHoleGrid scores={ALL_NULL} par={PAR_18} strokeAllocation={alloc} />
+    );
+    expect(countOccurrences(html, DOT)).toBe(19);
+  });
+
+  it("negative control: the 100% allocation (24 dots) is DISTINCT from the 80% one (19)", () => {
+    // 100% for the same case: SI 1..6 get a second stroke → 6 doubles → 24 dots.
+    const alloc100 = Array.from({ length: 18 }, () => 1);
+    for (let i = 0; i < 6; i++) alloc100[i] = 2;
+    const html100 = renderToString(
+      <PlayerHoleGrid scores={ALL_NULL} par={PAR_18} strokeAllocation={alloc100} />
+    );
+    expect(countOccurrences(html100, DOT)).toBe(24);
+    // Distinct from the 80% pattern (19) — a test that couldn't tell them apart
+    // would fail here.
+    expect(countOccurrences(html100, DOT)).not.toBe(19);
+  });
+
+  it("renders two dots on a hole that gets a second stroke", () => {
+    // Single hole with 2 strokes, rest 0 → exactly 2 dots total.
+    const alloc = Array.from({ length: 18 }, () => 0);
+    alloc[3] = 2;
+    const html = renderToString(
+      <PlayerHoleGrid scores={ALL_NULL} par={PAR_18} strokeAllocation={alloc} />
+    );
+    expect(countOccurrences(html, DOT)).toBe(2);
+  });
 });

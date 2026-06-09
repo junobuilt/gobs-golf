@@ -29,6 +29,7 @@ function player(
     scores: Array.from({ length: 18 }, () => null),
     par: Array.from({ length: 18 }, () => 4),
     adjScores: Array.from({ length: 18 }, () => null),
+    strokeAllocation: Array.from({ length: 18 }, () => 0),
     droppedAfterHole,
   };
 }

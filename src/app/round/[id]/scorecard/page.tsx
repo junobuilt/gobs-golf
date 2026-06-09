@@ -10,13 +10,12 @@ import {
   computeHoleResult,
   computeRoundResult,
   getHandicapStrokes,
-  getPlayingStrokes,
   computeAdjustedHoleScores,
 } from "@/lib/scoring";
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
-import { getScoringBasis, getOverrideHoles, getHandicapAllowance, allowsIncompleteClose } from "@/lib/format/helpers";
+import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCourseHandicap, allowsIncompleteClose } from "@/lib/format/helpers";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
@@ -332,20 +331,6 @@ export default function ScorecardPage() {
   const drainWrites = useCallback(async () => {
     await Promise.all([...writeQueueRef.current.values()]);
   }, []);
-
-  // Visibility: Manage Team shows pre-scoring only; hides once any score exists for this team
-  const teamRoundPlayerIds = useMemo(
-    () => {
-      if (!teamFilter) return [] as number[];
-      const team = parseInt(teamFilter, 10);
-      return roundPlayers.filter((rp) => rp.team_number === team).map((rp) => rp.id);
-    },
-    [roundPlayers, teamFilter],
-  );
-  const teamHasAnyScore = useMemo(
-    () => teamRoundPlayerIds.some((id) => Object.keys(scores[id] ?? {}).length > 0),
-    [scores, teamRoundPlayerIds],
-  );
 
   // D.1 hotfix: trigger the finalize RPC any time submittedTeams (or the
   // roster) changes such that every team has submitted. Multiple firing
@@ -887,9 +872,6 @@ export default function ScorecardPage() {
       .maybeSingle();
     const cfg = (roundRow?.format_config ?? null) as FormatConfig | null;
     const useGross = getScoringBasis(cfg) === "gross";
-    // Wave 1A: reduce the drawn player's CH by this round's allowance too, so
-    // the fill's competition net matches the rest of the team (no-op at 100%).
-    const allowance = getHandicapAllowance(cfg);
 
     // The drawn player is on another team — look up their round_players row
     // (id, tee, CH), scores, and tee holes directly (not in `roundPlayers`,
@@ -951,7 +933,8 @@ export default function ScorecardPage() {
       const drawnRpId = drawn?.id;
       return {
         drawnPlayerId: String(drawnRpId ?? b.drawn_player_id),
-        drawnPlayerCourseHandicap: useGross ? 0 : getPlayingStrokes(drawn?.ch ?? null, allowance),
+        // 2026-06-09: drawn player's CH scaled via the same single-source accessor.
+        drawnPlayerCourseHandicap: useGross ? 0 : getPlayingCourseHandicap(drawn?.ch ?? null, cfg),
         drawnPlayerScores: drawnRpId != null ? (drawnScoresByRp[drawnRpId] ?? {}) : {},
         drawnPlayerHoles: drawn ? (drawnHolesByTee[drawn.tee_id] ?? []) : [],
         holeRangeStart: b.hole_range_start as number,
@@ -1133,8 +1116,8 @@ export default function ScorecardPage() {
     // format including Stableford (which has no internal `basis` branch).
     const useGross = getScoringBasis(roundFormatConfig) === "gross";
     // Wave 1A: scale CH by the per-round allowance before the engine allocates
-    // strokes (no-op at 100%). Display of the CH number stays raw.
-    const allowance = getHandicapAllowance(roundFormatConfig);
+    // strokes (no-op at 100%). 2026-06-09: routed through getPlayingCourseHandicap
+    // — the single source the dots + CH number now also read.
     return computeHoleResult({
       format: roundFormat,
       formatConfig: { ...roundFormatConfig, basis: mode },
@@ -1142,7 +1125,7 @@ export default function ScorecardPage() {
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
         grossScore: scores[rp.id]?.[holeNumber] ?? null,
-        courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
+        courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig),
       })),
     });
   };
@@ -1176,14 +1159,13 @@ export default function ScorecardPage() {
       strokeIndex: h.stroke_index,
     }));
     const useGross = getScoringBasis(roundFormatConfig) === "gross";
-    const allowance = getHandicapAllowance(roundFormatConfig);
     return computeRoundResult({
       format: roundFormat!,
       formatConfig: { ...roundFormatConfig!, basis: mode },
       holes,
       players: roundPlayers.map(rp => ({
         playerId: String(rp.id),
-        courseHandicap: useGross ? 0 : getPlayingStrokes(rp.course_handicap, allowance),
+        courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig),
         grossScores: scores[rp.id] || {},
       })),
       // Best-N: include the displayed team's blind-draw fill(s) in the per-hole
@@ -1418,6 +1400,11 @@ export default function ScorecardPage() {
           // the column the math layer uses; the display must agree.
           const noHC = rp.handicap_index_snapshot == null;
           const applyDisabled = !tempHandicaps[rp.id] || tempHandicaps[rp.id].trim() === "";
+          // 2026-06-09: the tee-setup card's CH number reads the same scaled
+          // playing CH as every other surface (orange when an allowance < 100
+          // is in effect; raw + navy at 100%).
+          const setupPlayingCH = getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig);
+          const setupScaled = getHandicapAllowance(roundFormatConfig) < 100;
           return (
             <div key={rp.id} style={{
               background: "white", padding: "20px", borderRadius: "24px",
@@ -1433,8 +1420,8 @@ export default function ScorecardPage() {
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>Course Handicap</span>
-                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: "#0c3057" }}>
-                    {rp.course_handicap !== null ? rp.course_handicap : "?"}
+                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: setupScaled ? "#c2410c" : "#0c3057" }}>
+                    {setupPlayingCH !== null ? setupPlayingCH : "?"}
                   </span>
                 </div>
               </div>
@@ -1574,7 +1561,11 @@ export default function ScorecardPage() {
   //                    submitted. Enables the Submit Final Scores button.
   const myTeamNum = teamFilter ? parseInt(teamFilter, 10) : null;
   const myTeamSubmitted = myTeamNum != null && submittedTeams.includes(myTeamNum);
-  const showManageTeam = !teamHasAnyScore && !isRoundComplete;
+  // 2026-06-09: Manage Team stays visible through the whole round (the old
+  // A2.5 hide-on-first-score gate was removed — vanishing mid-round was
+  // confusing, and Shambles has mid-round pickups / late-noticed wrong tees).
+  // Still hidden once the round is finalized. Does NOT add change-tee (I14).
+  const showManageTeam = !isRoundComplete;
   // Admin edit mode bypasses the read-only gate on finalized rounds only.
   // A stray ?edit=1 on a live round is a no-op — the per-team submit gate
   // still applies. Same for non-admin views.
@@ -1624,14 +1615,14 @@ export default function ScorecardPage() {
         </div>
         {/* Wave 1A: round-level handicap-allowance caption. Sits directly under
             the FORMAT chip per 1A mockup; hidden at 100% (the default). Orange
-            #c2410c matches the GHIN-adjusted accent — "this round's net is
-            scaled." The CH number on each player row stays raw. */}
+            #c2410c is the shared allowance accent — each player row's scaled CH
+            number is tinted the same orange so the two read as one signal. */}
         {getHandicapAllowance(roundFormatConfig) !== 100 && (
           <div style={{
             fontSize: "0.75rem", fontWeight: 700, color: "#c2410c",
             letterSpacing: "0.02em", marginBottom: "8px",
           }}>
-            Handicaps at {getHandicapAllowance(roundFormatConfig)}%
+            Course Handicap at {getHandicapAllowance(roundFormatConfig)}%
           </div>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
@@ -1784,13 +1775,22 @@ export default function ScorecardPage() {
         const net = getNetScore(rp, currentHole);
         const holeInfo = holesByTee[rp.tee_id || 0]?.find(h => h.hole_number === currentHole);
         // Wave 1A: dots reflect the allowance-reduced playing strokes (no-op at
-        // 100%). The CH *number* label on the meta row below stays raw.
+        // 100%). 2026-06-09: dots + the CH number on the meta row below now read
+        // the SAME getPlayingCourseHandicap value — single source, no drift.
+        const playingCH = getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig);
+        // 2026-06-09: when an allowance < 100 is in effect the CH number is the
+        // SCALED playing value, tinted the same orange as the "Course Handicap
+        // at N%" caption so players link the two. At 100% it stays raw + navy.
+        const allowanceScaled = getHandicapAllowance(roundFormatConfig) < 100;
         const hcpStrokes = holeInfo
-          ? getHandicapStrokes(
-              getPlayingStrokes(rp.course_handicap, getHandicapAllowance(roundFormatConfig)),
-              holeInfo.stroke_index,
-            )
+          ? getHandicapStrokes(playingCH, holeInfo.stroke_index)
           : 0;
+        // 18-length stroke allocation for the expanded grid's dot row, from the
+        // same adjusted playing CH + each hole's stroke index.
+        const strokeAllocation18 = Array.from({ length: 18 }, (_, i) => {
+          const si = holesByTee[rp.tee_id || 0]?.find(h => h.hole_number === i + 1)?.stroke_index;
+          return si == null ? 0 : getHandicapStrokes(playingCH, si);
+        });
 
         const ballNumber = ballNumberByRp.get(rp.id) ?? 0; // 0 = not counting
         const isCounting = ballNumber > 0;
@@ -1915,7 +1915,9 @@ export default function ScorecardPage() {
                   )}
                 </div>
                 <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                  <span>Course Handicap: {rp.course_handicap ?? "?"}</span>
+                  <span style={allowanceScaled ? { color: "#c2410c", fontWeight: 800 } : undefined}>
+                    Course Handicap: {playingCH ?? "?"}
+                  </span>
                   <span>·</span>
                   {/* H.2.5.7: per-round HI display reads the snapshot, not
                       players.handicap_index. Keeps finalized rounds visually
@@ -2082,6 +2084,11 @@ export default function ScorecardPage() {
                   par={par18}
                   currentHoleIndex={currentHole - 1}
                   adjScores={adjScores18}
+                  // Dots from the adjusted playing CH. Skipped on dropout-merged
+                  // grids — post-drop holes are the drawn player's scores under
+                  // THEIR CH/SI, so this row's allocation wouldn't line up (same
+                  // exclusion as adjScores18 above).
+                  strokeAllocation={fillForRp ? undefined : strokeAllocation18}
                 />
               </div>
             )}

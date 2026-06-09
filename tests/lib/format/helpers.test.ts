@@ -6,11 +6,13 @@ import {
   getScoringBasis,
   getOverrideHoles,
   getHandicapAllowance,
+  getPlayingCourseHandicap,
   isTeamCardFormat,
   excludedFromIndividualStats,
   allowsIncompleteClose,
   getTeamBallCount,
 } from "@/lib/format/helpers";
+import { getHandicapStrokes } from "@/lib/scoring/handicap";
 import { FORMAT_ORDER } from "@/lib/format/copy";
 
 describe("roundNeedsFormat", () => {
@@ -250,5 +252,60 @@ describe("defaultConfigFor (Wave 1B follow-up — shambles)", () => {
   it("seeds shambles as net best-ball (locked net like Best Ball)", () => {
     expect(defaultConfigFor("shambles").scoring_basis).toBe("net");
     expect(defaultConfigFor("shambles").basis).toBe("net");
+  });
+});
+
+// 2026-06-09 — the single allowance-adjusted playing-CH accessor + the stroke
+// allocation the dots derive from. Golden values are hand-derived literals (per
+// CLAUDE.md engineering principle #3): the EXPECTED numbers are typed by hand,
+// NOT computed by calling the app's own handicap function, so a bug in that
+// function can't make the assertion pass with a wrong value.
+describe("getPlayingCourseHandicap", () => {
+  it("scales the live round-174 case: raw CH 24 at 80% → 19 (round(19.2))", () => {
+    expect(getPlayingCourseHandicap(24, { basis: "net", handicap_allowance: 80 })).toBe(19);
+  });
+
+  it("scales the fixture case: raw CH 20 at 80% → 16 (round(16.0))", () => {
+    expect(getPlayingCourseHandicap(20, { basis: "net", handicap_allowance: 80 })).toBe(16);
+  });
+
+  it("is the identity at 100% (raw CH passes through)", () => {
+    expect(getPlayingCourseHandicap(24, { basis: "net", handicap_allowance: 100 })).toBe(24);
+  });
+
+  it("treats a missing allowance as 100% (back-compat)", () => {
+    expect(getPlayingCourseHandicap(24, null)).toBe(24);
+    expect(getPlayingCourseHandicap(24, undefined)).toBe(24);
+    expect(getPlayingCourseHandicap(24, { basis: "net" })).toBe(24);
+  });
+
+  it("keeps a null course handicap null", () => {
+    expect(getPlayingCourseHandicap(null, { basis: "net", handicap_allowance: 80 })).toBeNull();
+  });
+});
+
+describe("stroke-dot allocation distinguishes 80% from 100% (negative control)", () => {
+  // For each stroke index 1..18, how many strokes the player receives at a
+  // given playing CH. This is exactly what the grid dot row counts.
+  const allocationBySI = (playingCH: number): number[] =>
+    Array.from({ length: 18 }, (_, i) => getHandicapStrokes(playingCH, i + 1));
+
+  it("at 80% (playing CH 19 = 18 + 1) exactly ONE stroke index gets a 2nd stroke — SI 1", () => {
+    const playingCH = getPlayingCourseHandicap(24, { basis: "net", handicap_allowance: 80 });
+    expect(playingCH).toBe(19); // golden literal
+    const alloc = allocationBySI(playingCH!);
+    const doubles = alloc.filter(n => n === 2).length;
+    expect(doubles).toBe(1); // hand-derived: 19 = 18 + 1
+    expect(alloc[0]).toBe(2); // SI 1 (= hole 4 on tee 4) double-dotted
+    expect(alloc[1]).toBe(1); // SI 2 single
+  });
+
+  it("at 100% (raw CH 24 = 18 + 6) exactly SIX get a 2nd stroke — a DIFFERENT pattern", () => {
+    const alloc = allocationBySI(24);
+    const doubles = alloc.filter(n => n === 2).length;
+    expect(doubles).toBe(6); // hand-derived: 24 = 18 + 6
+    // The two patterns are genuinely distinct (1 vs 6 double-stroke holes), so
+    // a test that "passes" under either would be caught here.
+    expect(doubles).not.toBe(1);
   });
 });

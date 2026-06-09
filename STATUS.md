@@ -2,8 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Doc reconciliation — ROADMAP + CLAUDE + STATUS + schema.sql)
-**Session purpose:** **DOC-ONLY** pass to reconcile the project docs with shipped reality and fold in Dad's 2026-06-09 decisions. No `src/`, tests, or migrations touched. Brought ROADMAP's phase tables current (the entire **formats track** — Wave 1A handicap allowance / GHIN adjusted score / 3 scorecard bugs, and Wave 1B team-card spine + the **Shambles rebuild as individual net best-ball**, migrations 018/020 — had no rows); marked the G2 payout **S5 pills UNBLOCKED-not-started** and **S3 no-engine-backfill**; added 4 new asks (History nav tab, player-profile round-detail routing bug, admin day→leaderboard, edit-a-set-card swap-player/change-tee); folded Dad's locked answers (Scramble / Alternate Shot / tee times / Tournament-Ryder-Cup / S3) into Decisions Locked; closed Open Questions Q1–Q7, left Q9–Q12 open, added Q13 (tournament %-vs-relative conflict that blocks the Tournament build); retracted stale Decision #575. **CLAUDE.md:** added the Bash-not-PowerShell here-string note; removed the dropped `played_with_matrix` schema entry. **schema.sql:** committed the 019+020 fold (`override_round_payout`/`revert_round_payout`/`override_reason`/`finalize_round_relaxed`) from the `db:backup` run. One commit; only doc files staged.
+**Last updated:** 2026-06-09 (Scorecard CH-allowance display fix + grid dots + Manage Team visibility)
+**Session purpose:** Fix the live round-174 (Shambles, 80%) scorecard so the displayed **Course Handicap number** reads the allowance-scaled playing value (Bill T: 24→**19**) instead of the raw 100% CH — reversing the shipped-and-tested Wave 1A **1A.C2** "CH label stays raw" decision (Dad found it confusing). Collapsed display + stroke dots + net engine onto ONE accessor (`getPlayingCourseHandicap`); added per-hole stroke **dots on the expanded `PlayerHoleGrid`** (scorecard + summary/leaderboard); relabeled the caption "Handicaps at N%" → "Course Handicap at N%"; tinted every scaled CH number the caption's orange; removed the **A2.5** Manage-Team hide-on-first-score gate (now hides only when finalized). Golden-value tests added (hand-derived literals + 80%-vs-100% negative controls).
+
+---
+
+## 2026-06-09 (Scorecard CH-allowance display fix + grid dots + Manage Team visibility)
+
+### Where we left off
+
+**The scorecard now shows the allowance-scaled Course Handicap everywhere, with stroke dots on the expanded grid, and Manage Team stays available all round.** Plan-first; the key finding (surfaced + approved before editing) was that the "bug" was a **deliberate, tested Wave 1A decision (1A.C2)** — `e2e/allowance.spec.ts` actively asserted the raw number — so this is an authorized **reversal**, not a slipped-through gap. Verified live on round 174: Bill T reads "Course Handicap: 19" in orange + 19 grid dots.
+
+- **A — single source (`src/lib/format/helpers.ts`).** NEW `getPlayingCourseHandicap(rawCH, formatConfig)` = `getPlayingStrokes(rawCH, getHandicapAllowance(formatConfig))` — the ONE "allowance-adjusted playing CH for this round" accessor. Operates on the stored (rounded) CH the engine already scores on — deliberately NOT the unrounded CH (that would change competition net = a scoring change, out of scope). Null-safe; 100% = identity.
+- **B — display fix (`scorecard/page.tsx`), reverses 1A.C2.** Both CH-number sites — the live per-player meta row AND the tee-setup "confirm tees" card — now read `getPlayingCourseHandicap(...)` and render in caption-orange `#c2410c` when allowance < 100 (raw + navy at 100%). Caption relabeled "Handicaps at N%" → "Course Handicap at N%".
+- **C — single-source routing.** The four inline `getPlayingStrokes(ch, allowance)` call sites (dots + `computeHoleFor` + `buildRoundInput` + `refreshBlindDrawInputs`) and `results.ts`'s two engine sites now all route through `getPlayingCourseHandicap` — no behavior change (same value), but display can never drift from the scored value again.
+- **D — stroke dots on `PlayerHoleGrid`.** NEW optional `strokeAllocation?: number[]` prop renders a compact navy dot row above each hole (4px, distinct from the entry surface's 5px). Scorecard computes it from the adjusted playing CH + each hole's SI; `results.ts` adds `PlayerRow.strokeAllocation` (additive — flagged against the TeamRow/PlayerRow frozen contract; display-only, payout/S5 read totals) so summary/leaderboard grids get dots too. Skipped on dropout-merged grids, team-card grids, and blind-draw fills (no single handicap).
+- **E — Manage Team visibility (A2.5 removed).** `showManageTeam = !teamHasAnyScore && !isRoundComplete` → `!isRoundComplete`. Orphaned `teamHasAnyScore` + `teamRoundPlayerIds` memos removed. No change-tee capability added (that's I14, separate).
+
+**Files:** MODIFIED `src/lib/format/helpers.ts`, `src/app/round/[id]/scorecard/page.tsx`, `src/components/scorecard/PlayerHoleGrid.tsx`, `src/lib/round/results.ts`, `src/components/round/RoundResultsView.tsx`, `ROADMAP.md`, `STATUS.md`, and tests: `tests/lib/format/helpers.test.ts`, `tests/components/PlayerHoleGrid.test.tsx`, `tests/lib/round/blindDrawPairing.test.ts`, `tests/components/round/RoundResultsView.test.tsx`, `tests/components/teamFormation/ManageTeamSheet.test.tsx`, `e2e/allowance.spec.ts`, `e2e/handicapAllowance.spec.ts`, `e2e/buttonVisibility.spec.ts`, `e2e/support/fixtures.ts`.
+
+### Today's commits
+
+- (this session) fix(scorecard): show allowance-scaled Course Handicap + grid stroke dots; keep Manage Team visible all round (reverses 1A.C2)
+
+### DB changes (today)
+
+- **None.** Display/logic only; no migration, no prod write. (Read-only queries against round 174 to confirm golden values.)
+
+### Tests / verification
+
+- **686/686 vitest** (+ new golden literals: `getPlayingCourseHandicap(24,80)===19`, `(20,80)===16`; dot-allocation 80%-vs-100% negative control = 1 vs 6 double-stroke holes; `PlayerHoleGrid` dot-count tests). **22/22 Playwright** (`allowance.spec.ts` inverted to assert the scaled number + relabeled caption; `buttonVisibility.spec.ts` + `ManageTeamSheet.test.tsx` inverted for the removed A2.5 gate). `tsc --noEmit` clean.
+- **Live preview verified** on round 174: caption "Course Handicap at 80%"; Bill T "Course Handicap: 19" in `rgb(194,65,12)`; expanded grid = 19 dots sitting directly above the hole numbers.
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) with Dad before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **The 4 new asks** — F1.7 (player-profile round-detail routing fix) + the F1.6/F1.8 `RoundResultsView` convergence.
+
+### Considered but not changed (confession)
+
+- **USGA unrounded-CH rounding NOT adopted.** The spec noted "apply % to the unrounded CH then round." For Bill T it's identical (19 either way), but switching the helper to unrounded input would change the engine's net for *other* players — a scoring-engine change, explicitly out of scope. Kept the existing rounded-CH source the engine already uses; flagged.
+- **GHIN-orange / allowance-orange overlap.** The scaled CH number reuses `#c2410c`, which is also the GHIN-adjusted (100%, allowance-independent) accent in the expanded grid — conceptually opposite. They never share a line and the caption already uses this exact orange, so it's internally consistent. Splitting hues is a separate design task (raised with Jonathan; orange chosen for now).
+- **`PlayerRow.strokeAllocation` is a (nested) contract addition** — additive + display-only; the payout + S5 tracks read totals, not this field. Flagged per the TeamRow frozen-contract memo.
+- **Dots NOT shown** on team-card team grids, blind-draw pseudo-rows, or dropout-merged grids (no single playing handicap applies / CH+SI wouldn't line up — same exclusion as the GHIN `adjScores` column).
+- **Player profile `/players/[id]` CH** left untouched — out of the scorecard surface scope, and Shambles is excluded from individual stats anyway.
+- **I14 mid-round tee change** not started (queued separately; needs a CH-recompute design pass).
+- **Out of scope (untouched):** the scoring engine math / payout rules, migrations, `golden.csv`, the pre-existing untracked/dirty files (`.claude/launch.json`, `.claude/worktrees/`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `.claude/settings.local.json`) — left unstaged, not mine to touch.
 
 ---
 

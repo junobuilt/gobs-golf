@@ -58,8 +58,8 @@ export function seedTodayRoundWithTeams(): SeedData {
 /**
  * A fully-set-up team scorecard round (format picked, tees assigned) so the
  * scorecard page reaches its main render. `withScore` controls whether Team 1
- * already has a score — which drives the "Manage Team hides after first score"
- * visibility rule (showManageTeam = !teamHasAnyScore && !isRoundComplete).
+ * already has a score (used to prove Manage Team now STAYS visible mid-round —
+ * showManageTeam = !isRoundComplete, A2.5 gate removed 2026-06-09).
  */
 export function seedScorecardRound(opts: { roundId: number; withScore: boolean }): SeedData {
   const today = todayLocal();

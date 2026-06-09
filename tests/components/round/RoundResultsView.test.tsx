@@ -48,6 +48,7 @@ function makeTeam(
         scores: SCORES_18,
         par: PAR_18,
         adjScores: SCORES_18,
+        strokeAllocation: Array.from({ length: 18 }, () => 0),
         droppedAfterHole: null,
       },
     ],
