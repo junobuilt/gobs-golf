@@ -4,7 +4,7 @@
 // React imports. Consumers wrap the call in their own useEffect.
 
 import { supabase } from "@/lib/supabase";
-import { computeRoundResult, getHandicapStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
+import { computeRoundResult, getHandicapStrokes, computeAdjustedHoleScores, computeTeamHandicap } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import { getScoringBasis, getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
 import {
@@ -109,6 +109,14 @@ export type TeamRow = {
   // populated (the roster) but score-less (holesPlayed 0), so payout headcount
   // and the per-player surfaces behave correctly without reading this field.
   teamGrid?: { scores: (number | null)[]; par: number[] };
+  // Phase 1C: present ONLY for NET team-card formats (Texas Scramble /
+  // Alternate Shot). `teamHandicap` is the single deduction off the team gross
+  // (computeTeamHandicap on members' raw CHs); `teamNet` = rawTeamScore −
+  // teamHandicap (the absolute net stroke total). The ranked headline `total`
+  // is the net delta vs par. Additive: existing consumers (incl. the payout
+  // track, which reads `rank` + `players.length`) ignore both fields.
+  teamHandicap?: number;
+  teamNet?: number;
 };
 
 export type LoadedRoundResults = {
@@ -269,7 +277,17 @@ export async function loadRoundResults(
       const rawTeamScore = getTeamTotal(tsMap, teamNum);
       let teamPar = 0;
       for (let i = 0; i < 18; i++) if (gridScores[i] != null) teamPar += gridPar[i];
-      const total = rawTeamScore - teamPar; // signed delta vs par (lower = better)
+      // Phase 1C: NET team-card formats take a SINGLE team-handicap deduction off
+      // the team gross (net = gross − teamHandicap), using members' FULL (100%)
+      // course handicaps — the per-format weighting IS the allowance, so the
+      // Wave 1A allowance helper is deliberately not applied. Per-hole/F9/B9 stay
+      // GROSS (legTotal below is unchanged); only the headline `total` is net.
+      const teamHandicap = computeTeamHandicap(
+        format,
+        (teamPlayers as any[]).map((rp: any) => rp.course_handicap ?? null),
+      ) ?? 0;
+      const teamNet = rawTeamScore - teamHandicap;
+      const total = teamNet - teamPar; // signed NET delta vs par (lower = better)
       const thru = holesScoredForTeam(tsMap, teamNum);
 
       const legTotal = (holes: ReadonlyArray<number>): number | null => {
@@ -321,6 +339,8 @@ export async function loadRoundResults(
         players,
         blindDraws: [],
         teamGrid: { scores: gridScores, par: gridPar },
+        teamHandicap,
+        teamNet,
       };
     });
 

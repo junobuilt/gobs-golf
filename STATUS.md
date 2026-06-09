@@ -2,8 +2,55 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (I14 — mid-round tee change)
-**Session purpose:** Ship **I14** — a per-player **Change tee** control on the live scorecard. Each player row's ⋯ menu opens a dangerous-action modal (current tee + tee picker + recalc warning); confirming reuses `updatePlayerTee` to recompute `course_handicap` in-handler and refresh the displayed CH, stroke dots, per-hole par, and net live (gross preserved). Live rounds only; finalized corrections still go through D2 reopen. Not admin-gated (Jonathan's call). Golden tests (`computeCourseHandicap` 20→25 + `e2e/changeTee.spec.ts`). ROADMAP I14 → shipped; CLAUDE.md principle #5 added (mid-round CH edits recompute in-handler — LT1 self-heal is mount-only).
+**Last updated:** 2026-06-09 (Wave 1C — Texas Scramble + Alternate Shot on the NET team-card spine)
+**Session purpose:** Finalize the dormant team-card spine for NET play and ship **Texas Scramble** + **Alternate Shot** end-to-end. New pure `teamHandicap.ts` (per-format weighting of full member CHs; .5-up); `results.ts` nets the team-card headline (`total = (gross − teamHandicap) − teamPar`, additive `TeamRow.teamHandicap`/`teamNet`); migration 021 `finalize_round_team_card` (every team scores every hole; no blind draw) + format-check extended; team-card surface gained Submit→finalize→payouts + a Gross·HCP·Net / NET-delta headline. Alt-Shot 2-person enforced in BOTH the picker and the Submit guard. Per-hole/F9/B9 stay GROSS (locked rule). Migration dry-run-validated on prod then applied.
+
+---
+
+## 2026-06-09 (Wave 1C — Texas Scramble + Alternate Shot, NET team-card)
+
+### Where we left off
+
+**The two NET team-card formats are live end-to-end on the (previously dormant) Wave 1B spine.** A team plays one ball / one gross score per hole; net is a SINGLE deduction off the 18-hole team gross (`net = gross − teamHandicap`), where the team handicap is a per-format weighting of the members' FULL (100%) course handicaps — the formula IS the allowance, so these never touch the Wave 1A allowance helper. Per-hole / F9 / B9 stay GROSS; the headline is the NET delta vs par. Never played with unbalanced teams → no blind draw / short-team handling.
+
+- **A — team handicap (NEW `src/lib/scoring/teamHandicap.ts`).** `computeTeamHandicap(format, memberCHs)` — Scramble: members sorted CH ascending, weighted 2p `[.35,.15]` / 3p `[.2,.15,.1]` / 4p `[.2,.15,.1,.05]`; Alt-Shot: `(CH1+CH2)/2`, exactly 2. Final value rounds to a whole number, **.5 UP** (`Math.round`). Unsupported member count → `null` (callers treat as blocked, never silent 0). Reads RAW `course_handicap` (no allowance). Exported via `@/lib/scoring`.
+- **B — net in `results.ts` team-card branch.** `total = (rawTeamScore − (teamHandicap ?? 0)) − teamPar` (NET delta vs par; `rankTeams` already ascending → lowest net wins). `f9Total`/`b9Total`/`teamGrid` untouched (GROSS). Additive `TeamRow.teamHandicap`/`teamNet` (flagged vs the TeamRow frozen-contract memo — payout reads `rank`+`players.length`, unchanged).
+- **C — finalize (migration `021_phase_1c_team_card_finalize.sql`).** `finalize_round_team_card(round_id)` mirrors RPC 020's shape (FOR UPDATE lock, already_complete guard) but its floor reads **`team_scores`**: every assigned team has a row on every hole 1–18 → else `not_yet`; no blind-draw loop. `rounds_format_check` extended for `texas_scramble`/`alternate_shot`. Invoker-rights like `finalize_round_relaxed` (rounds RLS is allow-all).
+- **D — team-card surface (`/round/[id]/team-card/page.tsx`).** Ported the `submitted_teams` + all-teams-submitted finalize gate from the individual scorecard (RPC swapped to `finalize_round_team_card`, shared `persistPayoutsAfterFinalize`). Loads member `course_handicap` + all team numbers. Caption now `Net — team handicap N`; summary shows **Net (delta) / Thru / Gross** + a `Gross · HCP · Net` caption. Submit Final Scores button (gated on all 18 holes + exactly-2 for Alt-Shot). Alt-Shot non-2 team → warning banner + blocked Submit.
+- **E — picker (`FormatPicker.tsx`).** Both formats net-locked (`isNetLocked`); override-holes dimmed + no-op caption; loads team sizes → Alternate Shot un-selectable (and Save blocked) unless every team is exactly 2.
+- **F — display (`RoundResultsView.tsx`).** Team-card net headline renders the NET delta (E/+N/−N) via the existing `formatTeamTotal`; new `Gross · HCP · Net` sub-caption from `TeamRow.teamHandicap`/`teamNet`. Team grid stays gross. Individual Rankings still hidden for team-card.
+- **Plumbing:** `Format` union + `FORMAT_ORDER`/`FORMAT_LABELS`/`DEFAULT_FORMAT_CONFIG` + `TEAM_CARD_FORMATS` extended; `computeHoleResult` gains throwing cases for both (team-card never hits the per-player engine). `allowsIncompleteClose` NARROWED to `shambles` only (Scramble/Alt-Shot are full-completion, not relaxed close).
+
+**Files:** NEW `src/lib/scoring/teamHandicap.ts`, `supabase/migrations/021_phase_1c_team_card_finalize.sql`, `tests/lib/scoring/teamHandicap.test.ts`, `tests/lib/round/results-teamcard-net.test.ts`. MODIFIED `src/lib/scoring/{types,index,engine}.ts`, `src/lib/format/{helpers,copy}.ts`, `src/lib/round/results.ts`, `src/app/round/[id]/team-card/page.tsx`, `src/components/format/FormatPicker.tsx`, `src/components/round/RoundResultsView.tsx`, and tests: `tests/lib/format/helpers.test.ts`, `tests/components/round/RoundResultsView.test.tsx`, `e2e/teamCard.spec.ts`, `e2e/support/{fixtures,supabaseMock}.ts`, ROADMAP/STATUS.
+
+### Today's commits
+
+- (this session) feat(scoring): Wave 1C — Texas Scramble + Alternate Shot on the NET team-card spine (migration 021)
+
+### DB changes (today)
+
+- **Migration 021 applied to prod** via MCP `apply_migration`, after a transaction-rollback dry-run on prod (created the function + extended the constraint, asserted `already_complete` on round 171 / `not_yet` on round 174 / constraint contains both new formats, then ROLLBACK — verified constraint reverted + function absent). Purely additive: one new `finalize_round_team_card` function + an extended CHECK constraint; no table/column/data change. **Post-apply verified:** constraint lists 8 formats, function present, `already_complete` on round 171 (0 rows mutated), 21 complete rounds unchanged. `schema.sql` will pick up the new function/constraint on the next `npm run db:backup`.
+
+### Tests / verification
+
+- **706/706 vitest** (+16: 10 team-handicap goldens incl. .5-up + CH-ascending negative controls + Alt-Shot-rejects-3; 3 net `results.ts` goldens incl. gross-order ≠ net-order ranking control + F9/B9-stay-gross; 3 RoundResultsView net headline/caption + Individual-Rankings-hidden). **28/28 Playwright** (+6 in `e2e/teamCard.spec.ts`: Scramble routing, NET headline + Gross·HCP·Net caption, submit→`finalize_round_team_card`→Round complete, Alt-Shot 2-person Submit block) — full suite green, zero prod hits. `tsc --noEmit` clean.
+- Updated 3 stale `helpers.test.ts` assumptions (team-card formats are now `isTeamCardFormat` true, `excludedFromIndividualStats` true, and NOT `allowsIncompleteClose`).
+
+### Tomorrow's priority
+
+1. **Live click-test** a real Scramble round (create → pick format → score → submit → finalize → leaderboard/payouts) once an `ADMIN_PIN` is available; same for an Alt-Shot 2-person round.
+2. **`npm run db:backup`** to fold migration 021 (+ the still-pending 019/020 objects) into `supabase/schema.sql`.
+3. **Reconcile Q13** (tournament handicap %-vs-relative) before the Tournament/Ryder Cup build; **G2 S5** payout pills.
+
+### Considered but not changed (confession)
+
+- **Null member CH** coalesced to 0 in `computeTeamHandicap` (a 0 takes the lowest/highest-weighted slot). These formats assume every player carries a CH and are never played short — flagged, not a silent miscalc (unsupported member COUNT returns null, which blocks).
+- **`TeamRow.teamHandicap`/`teamNet`** are additive contract fields — flagged against the frozen-contract memo; the payout + S5 tracks read `rank`+`players.length`, both preserved (a team-card round ranks by net delta, which is the correct money order).
+- **Headline = NET delta vs par** (not the absolute net stroke total) — chosen for consistency with every other format's headline; the absolute Gross/HCP/Net live in the sub-caption. (User-confirmed at plan time.)
+- **Alt-Shot guard in BOTH picker + Submit** (user-confirmed) — the picker can be bypassed if teams are edited after the format locks, so the Submit guard is the load-bearing one; the picker guard is the early signal.
+- **No live-preview screenshot** — the surfaces are covered by the display-layer Playwright specs that drive a real Next dev server and assert the rendered DOM (the project's TD29 verification path); a real Scramble round doesn't exist in prod yet to preview. Flagged for the next ADMIN_PIN session.
+- **Engine `computeRoundResult`/`defaultBestN`** left untouched for the new formats beyond the throwing `computeHoleResult` cases — team-card never reaches them (results.ts branches first); the throw is the intended guard.
+- **Out of scope (untouched):** the per-player engine math / payout rules, blind draw, handicap allowance, I16 worst-counts, `golden.csv`; the parked housekeeping docs (`spec-payout-transparency-view.md`, `bug-winnings-calculator-zero-input.md`) are **not present** → skipped silently per spec; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 

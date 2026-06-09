@@ -14,6 +14,7 @@ import {
 } from "@/lib/format/helpers";
 import { getHandicapStrokes } from "@/lib/scoring/handicap";
 import { FORMAT_ORDER } from "@/lib/format/copy";
+import type { Format } from "@/lib/scoring/types";
 
 describe("roundNeedsFormat", () => {
   it("returns false when round is null", () => {
@@ -162,17 +163,15 @@ describe("getHandicapAllowance (Wave 1A)", () => {
   });
 });
 
-describe("isTeamCardFormat (Wave 1B follow-up — Shambles removed)", () => {
-  it("returns false for shambles (now an individual best-ball format)", () => {
+describe("isTeamCardFormat (Phase 1C — Scramble + Alt-Shot live)", () => {
+  it("returns false for shambles (an individual best-ball format)", () => {
     expect(isTeamCardFormat("shambles")).toBe(false);
   });
 
-  it("returns false for every currently-selectable format", () => {
-    // The team-card spine stays for future Scramble/Alt-Shot, but no format
-    // routes to it today — the set is empty.
-    expect(FORMAT_ORDER).toContain("shambles");
+  it("returns true ONLY for the NET team-card formats", () => {
+    const teamCard = new Set<Format>(["texas_scramble", "alternate_shot"]);
     for (const f of FORMAT_ORDER) {
-      expect(isTeamCardFormat(f)).toBe(false);
+      expect(isTeamCardFormat(f)).toBe(teamCard.has(f));
     }
   });
 
@@ -187,8 +186,14 @@ describe("excludedFromIndividualStats (Wave 1B follow-up)", () => {
     expect(excludedFromIndividualStats("shambles")).toBe(true);
   });
 
+  it("excludes the team-card formats (no per-player scores)", () => {
+    expect(excludedFromIndividualStats("texas_scramble")).toBe(true);
+    expect(excludedFromIndividualStats("alternate_shot")).toBe(true);
+  });
+
   it("includes every individual stroke/Stableford format", () => {
-    for (const f of FORMAT_ORDER.filter((x) => x !== "shambles")) {
+    const excluded = new Set<Format>(["shambles", "texas_scramble", "alternate_shot"]);
+    for (const f of FORMAT_ORDER.filter((x) => !excluded.has(x))) {
       expect(excludedFromIndividualStats(f)).toBe(false);
     }
   });
@@ -204,7 +209,9 @@ describe("allowsIncompleteClose (Wave 1B follow-up)", () => {
     expect(allowsIncompleteClose("shambles")).toBe(true);
   });
 
-  it("is false for every blind-draw (full-completion) format", () => {
+  it("is false for every full-completion format (incl. the team-card formats)", () => {
+    // Texas Scramble / Alternate Shot are team-card but NOT relaxed-close —
+    // every team scores every hole, finalized via finalize_round_team_card.
     for (const f of FORMAT_ORDER.filter((x) => x !== "shambles")) {
       expect(allowsIncompleteClose(f)).toBe(false);
     }

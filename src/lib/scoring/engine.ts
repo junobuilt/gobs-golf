@@ -260,6 +260,13 @@ export function computeHoleResult(input: HoleInput): HoleResult {
     // close; count-2 degrades to best-available). See computeBestNHole.
     case "shambles":
       return computeBestNHole(input);
+    // Phase 1C: NET team-card formats are scored at the TEAM level in
+    // results.ts (one team ball per hole from `team_scores`), never through the
+    // per-player engine. Reaching here means a caller misrouted a team-card
+    // round — fail loudly rather than silently mis-score it.
+    case "texas_scramble":
+    case "alternate_shot":
+      throw new Error(`computeHoleResult: ${input.format} is a team-card format (scored in results.ts, not the per-player engine)`);
   }
 }
 

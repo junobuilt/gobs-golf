@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { isTeamCardFormat, getTeamBallCount } from "@/lib/format/helpers";
+import { computeTeamHandicap } from "@/lib/scoring/teamHandicap";
 import {
   buildTeamScoreMap,
   getTeamHoleTotal,
@@ -13,6 +14,8 @@ import {
   type TeamScoreRow,
 } from "@/lib/round/teamScores";
 import { loadTeamScores, upsertTeamScore } from "@/lib/round/teamScoresIo";
+import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
+import DangerModal from "@/app/admin/components/DangerModal";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
@@ -28,6 +31,16 @@ type HoleInfo = { hole_number: number; par: number; yardage: number | null; stro
 
 const NAVY = "#0c3057";
 
+// G2: persist payouts after a team-card round finalizes. Non-fatal — the round
+// is already complete; re-running heals a failure (the RPC is idempotent).
+async function persistPayoutsAfterFinalize(roundId: number): Promise<void> {
+  try {
+    await computeAndPersistRoundPayouts(roundId);
+  } catch (e) {
+    console.warn("[G2] payout persistence failed (round finalized; recoverable)", e);
+  }
+}
+
 export default function TeamCardPage() {
   const params = useParams();
   const roundId = params.id as string;
@@ -39,14 +52,30 @@ export default function TeamCardPage() {
   const [roundFormatLockedAt, setRoundFormatLockedAt] = useState<string | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [rosterDisplay, setRosterDisplay] = useState<string>("");
+  // This team's members' raw (full) course handicaps, for the team-handicap
+  // deduction. Phase 1C — NET team-card formats.
+  const [teamCourseHandicaps, setTeamCourseHandicaps] = useState<(number | null)[]>([]);
   const [holes, setHoles] = useState<HoleInfo[]>([]);
   // hole_number -> ball_index -> strokes
   const [balls, setBalls] = useState<Record<number, Record<number, number>>>({});
   const [currentHole, setCurrentHole] = useState(1);
   const [expanded, setExpanded] = useState(false);
 
+  // Phase 1C — per-team submission gate (ported from the individual scorecard).
+  // Each team taps Submit Final Scores; finalize_round_team_card fires once every
+  // team in the round appears in `submittedTeams`.
+  const [submittedTeams, setSubmittedTeams] = useState<number[]>([]);
+  const [allTeamNumbers, setAllTeamNumbers] = useState<number[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitModal, setSubmitModal] = useState(false);
+  const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
+
   const teamNumber = teamFilter ? parseInt(teamFilter, 10) : null;
   const ballCount = getTeamBallCount(roundFormatConfig);
+  const teamSize = teamCourseHandicaps.length;
+  const teamHandicap = roundFormat
+    ? computeTeamHandicap(roundFormat, teamCourseHandicaps)
+    : null;
 
   useEffect(() => {
     const load = async () => {
@@ -65,17 +94,30 @@ export default function TeamCardPage() {
       setRoundFormatConfig(cfg);
       setRoundFormatLockedAt((roundRow?.format_locked_at ?? null) as string | null);
       setIsRoundComplete(!!roundRow?.is_complete);
+      setSubmittedTeams(Array.isArray(cfg?.submitted_teams) ? cfg!.submitted_teams! : []);
+
+      // All assigned team numbers in this round — the finalize gate needs every
+      // team to have submitted, not just this one.
+      const { data: allRp } = await supabase
+        .from("round_players")
+        .select("team_number")
+        .eq("round_id", roundId)
+        .gt("team_number", 0);
+      const teamSet = new Set<number>(
+        (allRp ?? []).map((r: any) => r.team_number as number),
+      );
+      setAllTeamNumbers(Array.from(teamSet).sort((a, b) => a - b));
 
       if (team && isTeamCardFormat(fmt)) {
         const teamNum = parseInt(team, 10);
 
         const { data: rp } = await supabase
           .from("round_players")
-          .select("tee_id, players ( full_name, display_name )")
+          .select("tee_id, course_handicap, players ( full_name, display_name )")
           .eq("round_id", roundId)
           .eq("team_number", teamNum)
           .order("id");
-        const roster = (rp ?? []) as Array<{ tee_id: number | null; players: any }>;
+        const roster = (rp ?? []) as Array<{ tee_id: number | null; course_handicap: number | null; players: any }>;
         setRosterDisplay(
           roster
             .map((r) => {
@@ -85,6 +127,7 @@ export default function TeamCardPage() {
             .filter(Boolean)
             .join(", "),
         );
+        setTeamCourseHandicaps(roster.map((r) => r.course_handicap ?? null));
 
         // Representative tee for par/yardage. Par is consistent across tees
         // (only yardage / stroke index differ), so any roster member's tee
@@ -113,6 +156,86 @@ export default function TeamCardPage() {
     };
     void load();
   }, [roundId]);
+
+  // Phase 1C: fire finalize once every team has submitted (ported from the
+  // individual scorecard). Re-runs whenever submittedTeams changes (my own
+  // submit, or another team's submit picked up by refreshSubmittedTeams).
+  useEffect(() => {
+    if (isRoundComplete) return;
+    if (allTeamNumbers.length === 0) return;
+    if (!allTeamNumbers.every((t) => submittedTeams.includes(t))) return;
+    void tryFinalizeIfAllSubmitted();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submittedTeams, allTeamNumbers, isRoundComplete]);
+
+  // Append my team to format_config.submitted_teams (read-modify-write; the
+  // league plays in person so submissions are essentially serial).
+  const submitTeam = async (teamNum: number) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const { data: row } = await supabase
+        .from("rounds")
+        .select("format_config")
+        .eq("id", roundId)
+        .maybeSingle();
+      const currentCfg = (row?.format_config ?? roundFormatConfig ?? {}) as FormatConfig & Record<string, unknown>;
+      const existing: number[] = Array.isArray(currentCfg.submitted_teams)
+        ? (currentCfg.submitted_teams as number[])
+        : [];
+      if (existing.includes(teamNum)) {
+        setSubmittedTeams(existing);
+        return;
+      }
+      const nextSubmitted = [...existing, teamNum].sort((a, b) => a - b);
+      const nextCfg = { ...currentCfg, submitted_teams: nextSubmitted };
+      const { error } = await supabase
+        .from("rounds")
+        .update({ format_config: nextCfg })
+        .eq("id", roundId);
+      if (error) {
+        console.warn("[1C] submit team update failed", error);
+        return;
+      }
+      setRoundFormatConfig(nextCfg as FormatConfig);
+      setSubmittedTeams(nextSubmitted);
+    } finally {
+      setSubmitting(false);
+      setSubmitModal(false);
+    }
+  };
+
+  // Finalize when every team has submitted. RPC is concurrency-safe (SELECT ...
+  // FOR UPDATE on rounds); payout persistence stays client-side, identical to
+  // the individual scorecard's finalize path.
+  const tryFinalizeIfAllSubmitted = async () => {
+    if (allSubmittedRpcInFlight) return;
+    if (isRoundComplete) return;
+    if (allTeamNumbers.length === 0) return;
+    if (!allTeamNumbers.every((t) => submittedTeams.includes(t))) return;
+    setAllSubmittedRpcInFlight(true);
+    try {
+      const { data, error } = await supabase.rpc("finalize_round_team_card", {
+        p_round_id: Number(roundId),
+      });
+      if (error) {
+        console.warn("[1C] finalize RPC error", error);
+        return;
+      }
+      const status = (data ?? "") as string;
+      if (status === "finalized" || status === "already_complete") {
+        setIsRoundComplete(true);
+        // G2: persist payouts + fund movements. Non-fatal + idempotent.
+        void persistPayoutsAfterFinalize(Number(roundId));
+      } else if (status === "not_yet") {
+        // Another team's score may still be propagating; refreshSubmittedTeams
+        // will re-trigger this effect when it lands.
+        console.warn("[1C] all submitted but RPC said not_yet");
+      }
+    } finally {
+      setAllSubmittedRpcInFlight(false);
+    }
+  };
 
   const ensureFormatLocked = async () => {
     if (roundFormatLockedAt !== null) return;
@@ -188,8 +311,21 @@ export default function TeamCardPage() {
   const parScored = holes
     .filter((h) => getTeamHoleTotal(scoreMap, teamNumber!, h.hole_number) != null)
     .reduce((s, h) => s + h.par, 0);
-  const delta = grossTotal - parScored;
-  const deltaLabel = thru === 0 ? "—" : delta === 0 ? "E" : delta > 0 ? `+${delta}` : `−${-delta}`;
+  // Phase 1C: NET headline = net delta vs par, where net = gross − teamHandicap
+  // (a single deduction off the team gross). Per-hole / grid stay GROSS.
+  const teamNet = grossTotal - (teamHandicap ?? 0);
+  const netDelta = teamNet - parScored;
+  const deltaLabel = thru === 0 ? "—" : netDelta === 0 ? "E" : netDelta > 0 ? `+${netDelta}` : `−${-netDelta}`;
+
+  // Submission state for THIS team.
+  const myTeamSubmitted = teamNumber != null && submittedTeams.includes(teamNumber);
+  // Alternate Shot is 2-person only — block submit (and warn) when this team
+  // isn't exactly 2. (The FormatPicker also guards selection; this is the
+  // belt-and-suspenders finalize-side check.)
+  const altShotBadSize = roundFormat === "alternate_shot" && teamSize !== 2;
+  // Every hole must have a team score before this team can submit.
+  const allHolesScored = thru === 18;
+  const canSubmit = allHolesScored && !altShotBadSize;
 
   // 18-length arrays for the read-only hole-by-hole grid.
   const gridScores: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
@@ -223,10 +359,11 @@ export default function TeamCardPage() {
         <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#64748b", marginBottom: "4px" }}>
           {ballCount === 2 ? "2 balls per hole" : "1 ball per hole"}
         </div>
-        {/* Team-card is gross only — no per-player handicap to apply. Replaces
-            the individual card's "Handicaps at N%" allowance caption. */}
+        {/* Phase 1C: NET team-card. The whole-team handicap is a single
+            deduction off the team gross (the per-format weighting IS the
+            allowance). Replaces the individual card's "Handicaps at N%" caption. */}
         <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#c2410c", letterSpacing: "0.02em", marginBottom: "8px" }}>
-          Gross only — no handicap
+          Net — team handicap {teamHandicap ?? "—"}
         </div>
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
         <p style={{ opacity: 0.5, fontSize: "0.75rem", fontWeight: "bold" }}>
@@ -249,7 +386,8 @@ export default function TeamCardPage() {
         padding: "12px", background: "#fff", border: "0.5px solid #e4e4e4", borderRadius: "10px",
       }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "0.65rem", fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>Team</div>
+          {/* Headline = NET delta vs par. */}
+          <div style={{ fontSize: "0.65rem", fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>Net</div>
           <div data-testid="summary-delta" style={{ fontSize: "1.5rem", fontWeight: 900, color: NAVY }}>{deltaLabel}</div>
         </div>
         <div style={{ textAlign: "center" }}>
@@ -261,6 +399,19 @@ export default function TeamCardPage() {
           <div data-testid="summary-gross" style={{ fontSize: "1.5rem", fontWeight: 900, color: NAVY }}>{thru === 0 ? "—" : grossTotal}</div>
         </div>
       </div>
+
+      {/* Gross · HCP · Net caption — the headline above is the net delta. */}
+      {thru > 0 && (
+        <div
+          data-testid="summary-net-caption"
+          style={{
+            textAlign: "center", marginTop: "-8px", marginBottom: "16px",
+            fontSize: "0.72rem", fontWeight: 600, color: "#64748b",
+          }}
+        >
+          Gross {grossTotal} · HCP {teamHandicap ?? "—"} · Net {teamNet}
+        </div>
+      )}
 
       {/* Hole navigation dots */}
       <div style={{ display: "flex", overflowX: "auto", gap: "6px", marginBottom: "20px", paddingBottom: "10px", touchAction: "pan-x" }}>
@@ -335,6 +486,60 @@ export default function TeamCardPage() {
           Next Hole →
         </button>
       </div>
+
+      {/* Alternate Shot is 2-person only — persistent warning when this team
+          isn't exactly 2. The picker also blocks selection; this covers a team
+          edited after the format was locked. */}
+      {altShotBadSize && !isRoundComplete && (
+        <div
+          data-testid="altshot-team-size-warning"
+          style={{
+            marginTop: "16px", padding: "12px 14px", borderRadius: "10px",
+            background: "#fef2f2", border: "1px solid #fca5a5",
+            color: "#a32d2d", fontSize: "0.8rem", fontWeight: 600, textAlign: "center",
+          }}
+        >
+          Alternate Shot needs exactly 2 players per team. Team {teamFilter} has {teamSize}. Fix the team before submitting.
+        </div>
+      )}
+
+      {/* Phase 1C: Submit Final Scores — per-team commit gate (ported from the
+          individual scorecard). Disabled until every hole is scored (and, for
+          Alternate Shot, the team is exactly 2). Hides after this team submits. */}
+      {teamNumber != null && !isRoundComplete && !myTeamSubmitted && (
+        <div style={{ marginTop: "16px" }}>
+          <button
+            type="button"
+            onClick={() => setSubmitModal(true)}
+            disabled={!canSubmit || submitting}
+            style={{
+              width: "100%", padding: "18px", borderRadius: "12px",
+              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
+              color: "white", border: "none", fontWeight: 900, fontSize: "1rem",
+              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
+              fontFamily: "sans-serif",
+            }}
+          >
+            {submitting ? "Submitting…" : "Submit Final Scores"}
+          </button>
+          {!canSubmit && !altShotBadSize && (
+            <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#94a3b8" }}>
+              Available once this team has a score on every hole.
+            </p>
+          )}
+        </div>
+      )}
+
+      {submitModal && teamNumber != null && (
+        <DangerModal
+          title={`Submit Team ${teamFilter}'s final scores?`}
+          description="You won't be able to edit these scores after submitting."
+          cannotBeUndone
+          confirmLabel="Submit"
+          onConfirm={() => void submitTeam(teamNumber)}
+          onCancel={() => setSubmitModal(false)}
+        />
+      )}
     </div>
   );
 }

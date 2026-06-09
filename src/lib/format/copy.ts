@@ -11,6 +11,8 @@ export const FORMAT_ORDER: Format[] = [
   "stableford_standard",
   "gobs_stableford",
   "shambles",
+  "texas_scramble",
+  "alternate_shot",
 ];
 
 export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> = {
@@ -37,6 +39,14 @@ export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> 
   "shambles": {
     title: "Shambles",
     oneLiner: "Everyone plays their own ball after the team drive; take the best 1 (or 2) net per hole. Net only. Lowest team total wins.",
+  },
+  "texas_scramble": {
+    title: "Texas Scramble",
+    oneLiner: "One team ball per hole. Net via a weighted team handicap (35/15, 20/15/10, 20/15/10/5 by team size). Lowest net wins.",
+  },
+  "alternate_shot": {
+    title: "Alternate Shot",
+    oneLiner: "Two-player teams, one ball per hole. Net off half the combined handicaps. Lowest net wins.",
   },
 };
 
@@ -115,4 +125,10 @@ export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
     team_ball_count: 1,
     override_holes: [],
   },
+  // Phase 1C: NET team-card formats. One team ball per hole (count-1, so no
+  // team_ball_count / best_n), net-locked like Best Ball. The team handicap is
+  // derived from members' raw CHs at score time (computeTeamHandicap), not from
+  // any config key. override_holes is a no-op (one team score per hole).
+  "texas_scramble": { basis: "net", scoring_basis: "net", override_holes: [] },
+  "alternate_shot": { basis: "net", scoring_basis: "net", override_holes: [] },
 };

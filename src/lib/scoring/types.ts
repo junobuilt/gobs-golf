@@ -10,7 +10,18 @@ export type Format =
   // Relaxed close (best of the scores PRESENT; finalizes via
   // finalize_round_relaxed) and excluded from individual season stats — see
   // allowsIncompleteClose() / excludedFromIndividualStats() in lib/format/helpers.
-  | "shambles";
+  | "shambles"
+  // Phase 1C — team-card NET formats. The team plays ONE ball and records one
+  // gross score per hole in `team_scores` (NOT per-player `scores`). Net is a
+  // single deduction off the 18-hole team gross: net = teamGross − teamHandicap,
+  // where teamHandicap comes from a per-format weighting of the members' FULL
+  // (100%) course handicaps (computeTeamHandicap in lib/scoring/teamHandicap.ts)
+  // — the formula IS the allowance, so these never route through the Wave 1A
+  // allowance helper. Scored in results.ts' team-card branch, NOT the per-player
+  // engine (computeHoleResult throws for them). Finalize via
+  // finalize_round_team_card (every team scores every hole; no blind draw).
+  | "texas_scramble"
+  | "alternate_shot";
 
 export type FormatConfig = {
   basis: "net" | "gross";

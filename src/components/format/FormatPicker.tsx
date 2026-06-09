@@ -94,6 +94,9 @@ export default function FormatPicker({
   );
   // Wave 1B: team-card ball count (Shambles: 1 or 2). Inert for other formats.
   const [ballCount, setBallCount] = useState<number>(() => getTeamBallCount(currentConfig));
+  // Phase 1C: this round's team sizes (team_number → headcount), loaded when the
+  // picker opens. Powers the Alternate Shot "exactly 2 per team" selection guard.
+  const [teamSizes, setTeamSizes] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dangerOpen, setDangerOpen] = useState(false);
@@ -122,6 +125,27 @@ export default function FormatPicker({
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
+  // Phase 1C: load this round's team sizes so the Alternate Shot guard can block
+  // selection unless every assigned team is exactly 2.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from("round_players")
+        .select("team_number")
+        .eq("round_id", roundId)
+        .gt("team_number", 0);
+      if (cancelled) return;
+      const sizes: Record<number, number> = {};
+      for (const r of (data ?? []) as Array<{ team_number: number }>) {
+        sizes[r.team_number] = (sizes[r.team_number] ?? 0) + 1;
+      }
+      setTeamSizes(sizes);
+    })();
+    return () => { cancelled = true; };
+  }, [open, roundId]);
+
   const baseline = useMemo(() => {
     const baselinePoints = readGobsPointValues(currentConfig);
     return {
@@ -142,13 +166,25 @@ export default function FormatPicker({
   // net exactly like Best Ball, keep the 1/2 ball-count control, and let the
   // override-holes section render (it's a best-N family format).
   const isShambles = selectedFormat === "shambles";
-  // Best Ball and Shambles are locked to net (handicap equalization / net
-  // best-ball). Use a derived effective basis instead of mutating state in an
-  // effect — the toggle UI reads from this, and commitSave persists this value,
-  // so any stale choice from a previous format can't leak.
-  const isNetLocked = isBestBall || isShambles;
+  // Phase 1C: NET team-card formats. Net-locked like Best Ball; override-holes
+  // are a no-op (one team score per hole), shown dimmed like Stableford.
+  const isTeamCardNet =
+    selectedFormat === "texas_scramble" || selectedFormat === "alternate_shot";
+  // Best Ball, Shambles, and the team-card NET formats are locked to net. Use a
+  // derived effective basis instead of mutating state in an effect — the toggle
+  // UI reads from this, and commitSave persists this value, so any stale choice
+  // from a previous format can't leak.
+  const isNetLocked = isBestBall || isShambles || isTeamCardNet;
   const effectiveScoringBasis: "net" | "gross" =
     isNetLocked ? "net" : scoringBasis;
+  // Override-holes have no effect for Stableford or team-card formats.
+  const isOverrideNoOp = isStableford || isTeamCardNet;
+  // Alternate Shot is 2-person only. Block selecting it unless every assigned
+  // team is exactly 2 (and at least one team exists).
+  const teamSizeValues = Object.values(teamSizes);
+  const altShotTeamsOk =
+    teamSizeValues.length > 0 && teamSizeValues.every((n) => n === 2);
+  const altShotBlocked = selectedFormat === "alternate_shot" && !altShotTeamsOk;
 
   const hasChanges =
     selectedFormat !== baseline.format ||
@@ -248,6 +284,8 @@ export default function FormatPicker({
 
   function handleSaveClick() {
     if (!selectedFormat || !hasChanges) return;
+    // Phase 1C: never persist Alternate Shot with a non-2 team.
+    if (altShotBlocked) return;
     if (formatLocked) {
       setDangerOpen(true);
       return;
@@ -330,11 +368,15 @@ export default function FormatPicker({
             const { title, oneLiner } = FORMAT_LABELS[f];
             const isSelected = selectedFormat === f;
             const isCurrent = currentFormat === f;
+            // Phase 1C: Alternate Shot is 2-person only — block selecting it
+            // unless every assigned team is exactly 2.
+            const blocked = f === "alternate_shot" && !altShotTeamsOk;
+            const disabled = saving || blocked;
             return (
               <button
                 key={f}
-                onClick={() => setSelectedFormat(f)}
-                disabled={saving}
+                onClick={() => { if (!blocked) setSelectedFormat(f); }}
+                disabled={disabled}
                 style={{
                   display: "flex", alignItems: "flex-start", gap: 12,
                   width: "100%",
@@ -343,8 +385,8 @@ export default function FormatPicker({
                   borderRadius: 10,
                   background: isSelected ? "#f5f8fc" : "#fff",
                   textAlign: "left",
-                  cursor: saving ? "default" : "pointer",
-                  opacity: saving ? 0.6 : 1,
+                  cursor: disabled ? "default" : "pointer",
+                  opacity: saving ? 0.6 : blocked ? 0.5 : 1,
                   fontFamily: C.font,
                   transition: "border-color 0.15s, background 0.15s",
                 }}
@@ -375,7 +417,9 @@ export default function FormatPicker({
                     color: C.subtext,
                     lineHeight: 1.4,
                   }}>
-                    {oneLiner}
+                    {blocked
+                      ? "Needs exactly 2 players on every team. Adjust teams first."
+                      : oneLiner}
                   </div>
                 </div>
               </button>
@@ -409,6 +453,14 @@ export default function FormatPicker({
                     color: C.muted, textTransform: "none", letterSpacing: 0,
                   }}>
                     (Shambles is always net)
+                  </span>
+                )}
+                {isTeamCardNet && (
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none", letterSpacing: 0,
+                  }}>
+                    (team handicap — always net)
                   </span>
                 )}
               </div>
@@ -493,8 +545,9 @@ export default function FormatPicker({
             )}
 
             {/* Override-holes section. Applies to every per-player engine format
-                (best-N family incl. Shambles); dimmed + no-op for Stableford. */}
-            <div style={{ marginTop: 20, opacity: isStableford ? 0.55 : 1 }}>
+                (best-N family incl. Shambles); dimmed + no-op for Stableford and
+                the team-card NET formats (one team score per hole). */}
+            <div style={{ marginTop: 20, opacity: isOverrideNoOp ? 0.55 : 1 }}>
               <div style={{
                 fontSize: "0.78rem", fontWeight: 700, color: C.navy,
                 textTransform: "uppercase", letterSpacing: "0.06em",
@@ -508,6 +561,15 @@ export default function FormatPicker({
                     letterSpacing: 0,
                   }}>
                     (no effect on Stableford formats)
+                  </span>
+                )}
+                {isTeamCardNet && (
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none",
+                    letterSpacing: 0,
+                  }}>
+                    (no effect — one team score per hole)
                   </span>
                 )}
               </div>
@@ -687,16 +749,16 @@ export default function FormatPicker({
           </button>
           <button
             onClick={handleSaveClick}
-            disabled={saving || !selectedFormat || !hasChanges}
+            disabled={saving || !selectedFormat || !hasChanges || altShotBlocked}
             style={{
               flex: 2, padding: "12px",
-              background: (!selectedFormat || !hasChanges) ? "#e2e8f0" : C.gold,
+              background: (!selectedFormat || !hasChanges || altShotBlocked) ? "#e2e8f0" : C.gold,
               border: "none",
               borderRadius: 10,
-              color: (!selectedFormat || !hasChanges) ? C.muted : C.goldText,
+              color: (!selectedFormat || !hasChanges || altShotBlocked) ? C.muted : C.goldText,
               fontSize: "0.95rem",
               fontWeight: 700,
-              cursor: (saving || !selectedFormat || !hasChanges) ? "default" : "pointer",
+              cursor: (saving || !selectedFormat || !hasChanges || altShotBlocked) ? "default" : "pointer",
               fontFamily: C.font,
             }}
           >

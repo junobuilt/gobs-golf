@@ -198,6 +198,38 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
     return { status: 200, body: "finalized" };
   }
 
+  // Phase 1C: team-card finalize (migration 021). Finalized iff the round
+  // exists, isn't already complete, and every assigned team has a `team_scores`
+  // row on every hole 1..18 (one team ball per hole — no per-player gaps).
+  if (name === "finalize_round_team_card") {
+    const roundId = args.p_round_id;
+    const round = (db.tables.rounds ?? []).find((r) => looseEq(r.id, roundId));
+    if (!round) return { status: 200, body: "round_not_found" };
+    if (round.is_complete) return { status: 200, body: "already_complete" };
+
+    const teams = [
+      ...new Set(
+        (db.tables.round_players ?? [])
+          .filter((rp) => looseEq(rp.round_id, roundId) && (rp.team_number ?? 0) > 0)
+          .map((rp) => rp.team_number),
+      ),
+    ];
+    // team_number -> Set of scored hole numbers (strings, for loose match).
+    const scoredHolesByTeam: Record<string, Set<string>> = {};
+    for (const ts of db.tables.team_scores ?? []) {
+      if (!looseEq(ts.round_id, roundId)) continue;
+      (scoredHolesByTeam[String(ts.team_number)] ??= new Set()).add(String(ts.hole_number));
+    }
+    for (const team of teams) {
+      const scored = scoredHolesByTeam[String(team)];
+      for (let h = 1; h <= 18; h++) {
+        if (!scored?.has(String(h))) return { status: 200, body: "not_yet" };
+      }
+    }
+    round.is_complete = true;
+    return { status: 200, body: "finalized" };
+  }
+
   // Unknown RPC — succeed benignly so unrelated flows don't crash.
   return { status: 200, body: null };
 }

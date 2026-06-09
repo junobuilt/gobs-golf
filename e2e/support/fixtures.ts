@@ -158,6 +158,90 @@ export function seedShamblesRound(opts: {
 }
 
 /**
+ * Phase 1C — a NET team-card Texas Scramble round. ONE team of 2:
+ *   Adam course_handicap 10, Betty course_handicap 20.
+ *   Scramble 2p team handicap = 0.35*10 + 0.15*20 = 3.5 + 3 = 6.5 → 7 (.5 up).
+ * When `fullScores` is set, all 18 holes get a team ball of 4 → gross 72,
+ * net = 72 − 7 = 65, net delta vs par = 65 − 72 = −7. slope 113 / rating == par
+ * keeps the seeded CHs stable (no LT1 mutation on this surface).
+ */
+export function seedScrambleRound(opts: {
+  roundId: number;
+  fullScores?: boolean;
+  isComplete?: boolean;
+}): SeedData {
+  const today = todayLocal();
+  const teamScores: Row[] = opts.fullScores
+    ? Array.from({ length: 18 }, (_, i) => ({
+        id: 8500 + i,
+        round_id: opts.roundId,
+        team_number: 1,
+        hole_number: i + 1,
+        ball_index: 1,
+        strokes: 4,
+      }))
+    : [];
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4Holes(7300),
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: !!opts.isComplete,
+        season_id: SEASON.id,
+        format: "texas_scramble",
+        format_config: { basis: "net", scoring_basis: "net", override_holes: [], submitted_teams: [] },
+        format_locked_at: `${today}T00:00:00Z`,
+      },
+    ],
+    round_players: [
+      { id: 8201, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 10, handicap_index_snapshot: 10 },
+      { id: 8202, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, course_handicap: 20, handicap_index_snapshot: 20 },
+    ],
+    team_scores: teamScores,
+    scores: [],
+  };
+}
+
+/**
+ * Phase 1C — an Alternate Shot round whose Team 1 has THREE players (invalid:
+ * Alt-Shot is 2-person only). Drives the team-card surface's exactly-2 finalize
+ * guard (warning banner + blocked Submit).
+ */
+export function seedAltShotBadTeam(opts: { roundId: number }): SeedData {
+  const today = todayLocal();
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4Holes(7400),
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: false,
+        season_id: SEASON.id,
+        format: "alternate_shot",
+        format_config: { basis: "net", scoring_basis: "net", override_holes: [], submitted_teams: [] },
+        format_locked_at: `${today}T00:00:00Z`,
+      },
+    ],
+    round_players: [
+      { id: 8301, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 10, handicap_index_snapshot: 10 },
+      { id: 8302, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, course_handicap: 20, handicap_index_snapshot: 20 },
+      { id: 8303, round_id: opts.roundId, player_id: PLAYERS.carl.id, team_number: 1, tee_id: 1, course_handicap: 8, handicap_index_snapshot: 8 },
+    ],
+    team_scores: [],
+    scores: [],
+  };
+}
+
+/**
  * Wave 1A — a NET round (2-ball) with a SINGLE player at a known raw course
  * handicap and a populated 18-hole grid, so the scorecard renders stroke dots,
  * net, and the GHIN-adjusted grid. One player keeps the dot count + expand

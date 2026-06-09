@@ -21,13 +21,17 @@ export type RoundForLockGate = {
 // Wave 1B follow-up: Shambles was REMOVED from this set. Shambles is a best-ball
 // NET format scored on the individual scorecard (per-player `scores`), so it is
 // NOT team-card — it must route to `/scorecard`, show per-player rankings, and
-// allow the handicap allowance. The set is intentionally empty for now; the
-// team-card spine stays dormant until Texas Scramble / 1 Score Only / Alternate
-// Shot ride it later (add their string here + to the rounds_format_check CHECK
-// constraint — no other code change). NOTE: Shambles' STATS/GHIN exclusion did
-// NOT move with it — that contract now lives in excludedFromIndividualStats()
-// below, and its relaxed finalize in allowsIncompleteClose().
-const TEAM_CARD_FORMATS = new Set<Format>([]);
+// allow the handicap allowance. NOTE: Shambles' STATS/GHIN exclusion did NOT
+// move with it — that contract now lives in excludedFromIndividualStats() below,
+// and its relaxed finalize in allowsIncompleteClose().
+//
+// Phase 1C: the spine is now LIVE for the two NET team-card formats. They score
+// one team ball per hole in `team_scores` (no per-player `scores`), route to
+// `/round/[id]/team-card`, take a single team-handicap deduction off the team
+// gross (computeTeamHandicap), and finalize via finalize_round_team_card (every
+// team scores every hole; no blind draw). Adding a format here cascades through
+// every routing + display + finalize site that consults this helper.
+const TEAM_CARD_FORMATS = new Set<Format>(["texas_scramble", "alternate_shot"]);
 
 export function isTeamCardFormat(format: Format | null | undefined): boolean {
   if (!format) return false;
@@ -50,16 +54,21 @@ export function excludedFromIndividualStats(
 }
 
 // Wave 1B follow-up — "does this format finalize even with score gaps?" True for
-// team-card formats AND Shambles. Shambles allows a relaxed close (players pick
-// up; the team takes the best N net among the scores PRESENT on each hole), so
-// it finalizes via finalize_round_relaxed (>=1 score per hole per team floor, no
-// blind draw) instead of finalize_round_with_blind_draws. Drives the scorecard's
+// Shambles only. Shambles allows a relaxed close (players pick up; the team takes
+// the best N net among the scores PRESENT on each hole), so it finalizes via
+// finalize_round_relaxed (>=1 score per hole per team floor, no blind draw)
+// instead of finalize_round_with_blind_draws. Drives the INDIVIDUAL scorecard's
 // Submit-enable gate and finalize-RPC selection.
+//
+// Phase 1C: the NET team-card formats (Texas Scramble / Alternate Shot) are NOT
+// included — they are full-completion (every team scores every hole) and finalize
+// via their own finalize_round_team_card on the team-card surface, which never
+// consults this helper. Keeping them out keeps "incomplete close" meaning the
+// relaxed-pickup semantics it was written for.
 export function allowsIncompleteClose(
   format: Format | null | undefined,
 ): boolean {
-  if (!format) return false;
-  return isTeamCardFormat(format) || format === "shambles";
+  return format === "shambles";
 }
 
 // Wave 1B — reads the per-round team-card ball count (1 or 2). Null/undefined

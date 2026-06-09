@@ -138,3 +138,57 @@ describe("RoundResultsView — Shambles renders as an individual format (Wave 1B
     expect(renderToString(<RoundResultsView data={individualData("shambles")} />)).toContain("FINAL");
   });
 });
+
+describe("RoundResultsView — NET team-card (Texas Scramble / Alternate Shot)", () => {
+  // A NET team-card row: gross 80, team handicap 12 → net 68; team par 72 →
+  // net delta −4. teamGrid carries the gross hole row. Per-hole is GROSS;
+  // headline + caption are NET.
+  function teamCardTeam(): RankedTeam<TeamRow> {
+    return {
+      id: 1,
+      name: "Team 1",
+      rosterDisplay: "Player A · Player B",
+      total: -4, // net delta vs par
+      rawTeamScore: 80,
+      teamPar: 72,
+      thru: 18,
+      f9Total: 2, // GROSS leg delta
+      b9Total: 2,
+      players: [],
+      blindDraws: [],
+      teamGrid: { scores: Array(18).fill(null).map((_, i) => (i < 10 ? 4 : 5)), par: PAR_18 },
+      teamHandicap: 12,
+      teamNet: 68,
+      rank: 1,
+    };
+  }
+
+  function teamCardData(): LoadedRoundResults {
+    return {
+      ...makeData(true, [teamCardTeam()]),
+      format: "texas_scramble",
+    };
+  }
+
+  it("shows the NET delta headline (−4), NOT the gross delta (+8)", () => {
+    const html = renderToString(<RoundResultsView data={teamCardData()} />);
+    // U+2212 minus sign for negative deltas.
+    expect(html).toContain("−4");
+    expect(html).not.toContain("+8"); // gross delta (80 − 72) must not appear as headline
+  });
+
+  it("shows the Gross · HCP · Net caption with golden values", () => {
+    const html = renderToString(<RoundResultsView data={teamCardData()} />);
+    expect(html).toContain("Gross");
+    expect(html).toContain("80"); // gross
+    expect(html).toContain("HCP");
+    expect(html).toContain("12"); // team handicap
+    expect(html).toContain("Net");
+    expect(html).toContain("68"); // net
+  });
+
+  it("hides Individual Rankings (one team score per hole, no per-player rows)", () => {
+    const html = renderToString(<RoundResultsView data={teamCardData()} />);
+    expect(html).not.toContain("Individual Rankings");
+  });
+});

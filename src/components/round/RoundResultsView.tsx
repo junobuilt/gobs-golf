@@ -336,6 +336,21 @@ function TeamCard({
             <span style={{ fontWeight: 600, color: C.textSecondary }}>B9</span>{" "}
             {formatLegValue(team.b9Total, format)}
           </div>
+          {/* Phase 1C: NET team-card formats — the single team-handicap
+              deduction behind the net headline (the big number = net delta vs
+              par). F9/B9 above stay gross. */}
+          {isTeamCard && team.teamHandicap != null && team.teamNet != null && (
+            <div style={{ fontSize: 11, color: C.textMuted, letterSpacing: "0.3px", marginTop: 2 }}>
+              <span style={{ fontWeight: 600, color: C.textSecondary }}>Gross</span>{" "}
+              {team.rawTeamScore}
+              <span style={{ margin: "0 6px", opacity: 0.5 }}>·</span>
+              <span style={{ fontWeight: 600, color: C.textSecondary }}>HCP</span>{" "}
+              {team.teamHandicap}
+              <span style={{ margin: "0 6px", opacity: 0.5 }}>·</span>
+              <span style={{ fontWeight: 600, color: C.textSecondary }}>Net</span>{" "}
+              {team.teamNet}
+            </div>
+          )}
         </div>
         <div style={{ textAlign: "right", flexShrink: 0, minWidth: 64 }}>
           <div style={{
