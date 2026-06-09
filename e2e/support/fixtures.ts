@@ -201,6 +201,65 @@ export function seedNetRoundWithHoles(opts: { roundId: number; allowance: number
   };
 }
 
+// 18 par-4 holes for an ARBITRARY tee id (SI 1..18 in hole order). Used by the
+// two-tee I14 fixture so each tee has its own holes row set.
+function flatPar4HolesForTee(idBase: number, teeId: number): Row[] {
+  return Array.from({ length: 18 }, (_, i) => ({
+    id: idBase + i,
+    tee_id: teeId,
+    hole_number: i + 1,
+    par: 4,
+    yardage: 350,
+    stroke_index: i + 1,
+  }));
+}
+
+/**
+ * I14 — a live (not complete) NET round with ONE player (Adam) on Tee A and a
+ * SECOND tee available, for the mid-round Change-tee flow. Both tees keep
+ * slope/rating chosen so the recompute is a clean hand-derived golden:
+ *   - Tee A "White" (id 1): slope 113 / rating 72 / par 72 → CH = round(20) = 20.
+ *   - Tee B "Blue"  (id 2): slope 132 / rating 74 / par 72 → CH = 25.
+ * Adam's HI snapshot is 20 and seeded course_handicap is 20 (Tee A); the LT1
+ * self-heal recomputes 20 on Tee A (stable, no mutation). A gross 6 sits on
+ * hole 3 (SI 3): at CH 20 he gets 1 stroke there (net 5); at CH 25 he gets 2
+ * (net 4) — so the tee change visibly recomputes net.
+ */
+export function seedTwoTeeRound(opts: { roundId: number }): SeedData {
+  const today = todayLocal();
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [
+      { id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 },
+      { id: 2, color: "Blue", slope_rating: 132, course_rating: 74, par: 72, sort_order: 2 },
+    ],
+    holes: [...flatPar4HolesForTee(7000, 1), ...flatPar4HolesForTee(7100, 2)],
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: false,
+        season_id: SEASON.id,
+        format: "2_ball",
+        format_config: {
+          basis: "net",
+          scoring_basis: "net",
+          best_n: 2,
+          override_holes: [],
+          submitted_teams: [],
+        },
+        format_locked_at: `${today}T00:00:00Z`,
+      },
+    ],
+    round_players: [
+      { id: 8201, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 20, handicap_index_snapshot: 20 },
+    ],
+    scores: [{ id: 9400, round_id: opts.roundId, round_player_id: 8201, hole_number: 3, strokes: 6 }],
+  };
+}
+
 /** Empty world: active roster + active season, but NO round today. */
 export function seedNoRoundToday(): SeedData {
   return {

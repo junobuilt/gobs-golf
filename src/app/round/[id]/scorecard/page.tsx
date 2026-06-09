@@ -258,6 +258,14 @@ export default function ScorecardPage() {
   const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
   const [roundPlayedOn, setRoundPlayedOn] = useState<string | null>(null);
 
+  // I14 — mid-round tee change. changeTeeRpId is the round_player being edited
+  // (null = modal closed); changeTeeSelected holds the picked tee before
+  // confirm. On confirm we reuse updatePlayerTee, which recomputes CH +
+  // refreshes local state so the displayed CH / dots / par / net update live.
+  const [changeTeeRpId, setChangeTeeRpId] = useState<number | null>(null);
+  const [changeTeeSelected, setChangeTeeSelected] = useState<number | null>(null);
+  const [changeTeeSaving, setChangeTeeSaving] = useState(false);
+
   // D.1 hotfix (2026-05-18) — per-team submission gate replaces the original
   // auto-fire-on-last-score trigger. Each team taps "Submit Final Scores"
   // when their card is done; the blind-draw RPC fires only once every team
@@ -559,6 +567,23 @@ export default function ScorecardPage() {
         .eq("tee_id", teeId)
         .order("hole_number");
       setHolesByTee(prev => ({ ...prev, [teeId]: (h || []) as HoleInfo[] }));
+    }
+  };
+
+  // I14 — confirm a mid-round tee change from the dangerous-action modal.
+  // Reuses updatePlayerTee (the START-ROUND commit path), which recomputes
+  // course_handicap explicitly + updates local state so the CH number, stroke
+  // dots, per-hole par, and net all refresh immediately — no reload. Gross
+  // scores (keyed by round_player_id, not tee) are untouched.
+  const confirmChangeTee = async () => {
+    if (changeTeeRpId == null || changeTeeSelected == null) return;
+    setChangeTeeSaving(true);
+    try {
+      await updatePlayerTee(changeTeeRpId, changeTeeSelected);
+    } finally {
+      setChangeTeeSaving(false);
+      setChangeTeeRpId(null);
+      setChangeTeeSelected(null);
     }
   };
 
@@ -2027,6 +2052,10 @@ export default function ScorecardPage() {
                   surface="scorecard"
                   onChanged={refreshDropoutStates}
                   onRemove={() => setRemovePlayerModal(rp.id)}
+                  onChangeTee={() => {
+                    setChangeTeeRpId(rp.id);
+                    setChangeTeeSelected(rp.tee_id);
+                  }}
                 />
                 <button
                   aria-label={isExpanded ? "Collapse hole-by-hole" : "Expand hole-by-hole"}
@@ -2207,6 +2236,64 @@ export default function ScorecardPage() {
           onCancel={() => setRemovePlayerModal(null)}
         />
       )}
+
+      {/* I14: mid-round tee change. Dangerous-action modal — current tee +
+          picker of the round's tees + recalc warning. Confirm reuses
+          updatePlayerTee (recompute in-handler); disabled until a DIFFERENT
+          tee is picked. */}
+      {changeTeeRpId !== null && (() => {
+        const ctPlayer = roundPlayers.find(p => p.id === changeTeeRpId);
+        if (!ctPlayer) return null;
+        return (
+          <DangerModal
+            title={`Change ${ctPlayer.display_name}'s tee?`}
+            description={`Changing ${ctPlayer.display_name}'s tee recalculates their Course Handicap and net scores for this round. Gross scores already entered are kept.`}
+            cannotBeUndone={false}
+            confirmLabel="Change tee"
+            confirmDisabled={
+              changeTeeSelected == null ||
+              changeTeeSelected === ctPlayer.tee_id ||
+              changeTeeSaving
+            }
+            onConfirm={confirmChangeTee}
+            onCancel={() => { setChangeTeeRpId(null); setChangeTeeSelected(null); }}
+          >
+            <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+              {allTees.map(t => {
+                const isSelected = changeTeeSelected === t.id;
+                const isCurrent = ctPlayer.tee_id === t.id;
+                const colors = TEE_COLORS[t.color] || { bg: "#ccc", text: "#000" };
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setChangeTeeSelected(t.id)}
+                    style={{
+                      flex: 1, padding: "14px 4px", borderRadius: "12px",
+                      fontSize: "10px", fontWeight: 900,
+                      border: isSelected ? "4px solid #0c3057" : "1px solid #e2e8f0",
+                      background: colors.bg, color: colors.text, textTransform: "uppercase",
+                      opacity: isSelected ? 1 : 0.4,
+                      transform: isSelected ? "scale(1.05)" : "scale(1)",
+                      transition: "all 0.15s ease", cursor: "pointer",
+                      position: "relative",
+                    }}
+                  >
+                    {t.color}
+                    {isCurrent && (
+                      <span style={{
+                        display: "block", fontSize: "8px", fontWeight: 700,
+                        marginTop: "2px", letterSpacing: "0.02em",
+                      }}>
+                        (current)
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </DangerModal>
+        );
+      })()}
 
       {/* Phase D.2: Edit HI modal. Two save buttons:
             Save     — writes the entered value.

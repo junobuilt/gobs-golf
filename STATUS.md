@@ -2,8 +2,49 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Scorecard CH-allowance display fix + grid dots + Manage Team visibility)
-**Session purpose:** Fix the live round-174 (Shambles, 80%) scorecard so the displayed **Course Handicap number** reads the allowance-scaled playing value (Bill T: 24→**19**) instead of the raw 100% CH — reversing the shipped-and-tested Wave 1A **1A.C2** "CH label stays raw" decision (Dad found it confusing). Collapsed display + stroke dots + net engine onto ONE accessor (`getPlayingCourseHandicap`); added per-hole stroke **dots on the expanded `PlayerHoleGrid`** (scorecard + summary/leaderboard); relabeled the caption "Handicaps at N%" → "Course Handicap at N%"; tinted every scaled CH number the caption's orange; removed the **A2.5** Manage-Team hide-on-first-score gate (now hides only when finalized). Golden-value tests added (hand-derived literals + 80%-vs-100% negative controls).
+**Last updated:** 2026-06-09 (I14 — mid-round tee change)
+**Session purpose:** Ship **I14** — a per-player **Change tee** control on the live scorecard. Each player row's ⋯ menu opens a dangerous-action modal (current tee + tee picker + recalc warning); confirming reuses `updatePlayerTee` to recompute `course_handicap` in-handler and refresh the displayed CH, stroke dots, per-hole par, and net live (gross preserved). Live rounds only; finalized corrections still go through D2 reopen. Not admin-gated (Jonathan's call). Golden tests (`computeCourseHandicap` 20→25 + `e2e/changeTee.spec.ts`). ROADMAP I14 → shipped; CLAUDE.md principle #5 added (mid-round CH edits recompute in-handler — LT1 self-heal is mount-only).
+
+---
+
+## 2026-06-09 (I14 — mid-round tee change)
+
+### Where we left off
+
+**Players can change a player's tee mid-round from the live scorecard, and CH / dots / par / net recompute live while gross is preserved.** Plan-first; the recompute mechanism (`updatePlayerTee`, the START-ROUND commit path) already existed and already recomputes CH in-handler (the D2.6 / LT1-mount-only pattern), so the work was the affordance + modal + tests. Verified live on round 174: Bill T's ⋯ menu shows "Change tee", the modal reads "Change Bill T's tee?" with the recalc warning and a picker marking "White/Yellow Combo (current)".
+
+- **A — `PlayerOverflowMenu.tsx`.** New optional `onChangeTee?: () => void` delegate (mirrors `onRemove`). Renders a **"Change tee"** menu item (first) when provided and `!isRoundComplete` — so it auto-hides once the round is finalized OR my team has submitted (the menu's `isRoundComplete={isLocked}` gate), consistent with the other live-only actions. Added to the "nothing actionable → hide button" guard.
+- **B — `scorecard/page.tsx`.** New `changeTeeRpId` / `changeTeeSelected` / `changeTeeSaving` state; the menu's `onChangeTee` opens the modal pre-selected to the current tee. A `DangerModal` (`cannotBeUndone={false}`, confirm "Change tee", `confirmDisabled` until a DIFFERENT tee is picked) holds a tee picker (reuses the tee-setup button row + `TEE_COLORS`, marks the current tee "(current)"). `confirmChangeTee` → `await updatePlayerTee(rpId, selectedTee)` → recomputes `course_handicap = computeCourseHandicap(snapshot, newTee.slope/rating/par)`, writes the row, updates local state, and lazy-loads the new tee's holes — so CH (via `getPlayingCourseHandicap`), dots, par, and net refresh with no reload. Gross scores (keyed by `round_player_id`, not tee) are untouched.
+
+**Files:** MODIFIED `src/components/round/PlayerOverflowMenu.tsx`, `src/app/round/[id]/scorecard/page.tsx`, `e2e/support/fixtures.ts`, `tests/lib/scoring/handicap.test.ts`, `ROADMAP.md`, `CLAUDE.md`, `STATUS.md`. NEW `e2e/changeTee.spec.ts`.
+
+### Today's commits
+
+- (this session) feat(scorecard): I14 — mid-round per-player tee change (recompute CH/dots/par/net live, keep gross)
+
+### DB changes (today)
+
+- **None.** `tee_id` + `course_handicap` columns already exist; no migration. (Read-only queries against round 174 to verify the live render.)
+
+### Tests / verification
+
+- **NEW unit golden** (`handicap.test.ts`): `computeCourseHandicap(20, 113/72/72)=20`, `(20, 132/74/72)=25`, negative control (A ≠ B). **NEW e2e** (`changeTee.spec.ts`, 2 tests): change Tee A→B → displayed CH 20→25, Net on hole 3 5→4, entry stroke dots 1→2, gross 6 preserved; and the affordance is absent on a finalized round. **689/689 vitest, 24/24 Playwright, `tsc --noEmit` clean.**
+- **Live preview** (round 174, real data): ⋯ menu shows "Change tee" (first item); modal "Change Bill T's tee?" + recalc warning + picker (Blue / White / Yellow / White/Yellow Combo **(current)**). Cancelled without mutating live data (the confirm path is covered by the e2e).
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) with Dad before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **The 4 new asks** — F1.7 (player-profile round-detail routing fix) + the F1.6/F1.8 `RoundResultsView` convergence; **D2.8** can now fold in I14's tee-change for the edit-a-set-card flow (player-swap-recalc is the remaining-novel part).
+
+### Considered but not changed (confession)
+
+- **Engine per-hole stroke index still uses the team's representative tee** (`engineHole` reads `roundPlayers[0].tee_id`) for net allocation — pre-existing mixed-tee behavior. A tee change drives net via the **CH change** (which is correct + visible); the SI-source nuance is unchanged and out of scope.
+- **Team-card tee handling NOT built** — Scramble / Alt-Shot aren't merged, so no format reaches the team-card surface; the overflow menu only renders on the individual scorecard.
+- **Finalized-round tee changes** route through the existing **D2 reopen/edit** flow — the affordance hides once the round is complete/submitted.
+- **Not admin-gated** (Jonathan's call) — consistent with how the original tee is set (START ROUND). Behind the 1.5s dangerous-action modal.
+- **No new fixture for the unit golden** beyond the e2e two-tee fixture; `updatePlayerTee` reused verbatim (no recompute code added).
+- **Out of scope (untouched):** the scoring engine math / payout rules, migrations, `golden.csv`, D2.8 player-swap-recalc, the pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) — left unstaged.
 
 ---
 

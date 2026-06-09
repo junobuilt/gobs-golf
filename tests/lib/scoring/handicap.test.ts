@@ -90,4 +90,26 @@ describe("computeCourseHandicap", () => {
   it("matches Wayne's documented Course Handicap on the white/yellow combo", () => {
     expect(computeCourseHandicap(20.1, 120, 67.6, 72)).toBe(17);
   });
+
+  // I14 (2026-06-09) — mid-round tee change recompute golden. Same HI snapshot
+  // (20.0), two different tees → two DIFFERENT course handicaps. The expected
+  // values are hand-derived literals (negative control: B ≠ A), and they pin
+  // the exact numbers the e2e change-tee spec asserts on screen (20 → 25).
+  describe("mid-round tee change recompute (I14)", () => {
+    const HI = 20.0;
+    // Tee A "White": slope 113, rating 72, par 72 → round(20 × 113/113 + 0) = 20.
+    it("Tee A (slope 113 / rating 72 / par 72) → 20", () => {
+      expect(computeCourseHandicap(HI, 113, 72, 72)).toBe(20);
+    });
+    // Tee B "Blue": slope 132, rating 74, par 72 →
+    //   round(20 × 132/113 + (74 − 72)) = round(23.363 + 2) = round(25.363) = 25.
+    it("Tee B (slope 132 / rating 74 / par 72) → 25", () => {
+      expect(computeCourseHandicap(HI, 132, 74, 72)).toBe(25);
+    });
+    it("the two tees yield DIFFERENT course handicaps (negative control)", () => {
+      expect(computeCourseHandicap(HI, 113, 72, 72)).not.toBe(
+        computeCourseHandicap(HI, 132, 74, 72),
+      );
+    });
+  });
 });

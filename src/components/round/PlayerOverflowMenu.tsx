@@ -29,6 +29,10 @@ export interface PlayerOverflowMenuProps {
   onChanged: () => void; // called after a successful mark/undo write
   onRemove?: () => void; // called when user picks Remove; parent owns the action
   removeLabel?: string;  // override the menu copy (default: "Remove from round")
+  // I14: called when user picks "Change tee"; parent owns the modal + the
+  // updatePlayerTee recompute (so the CH/dots/par/net refresh live). Hidden
+  // when the round is finalized (the menu's isRoundComplete gate).
+  onChangeTee?: () => void;
 }
 
 const MENU_BG = "#ffffff";
@@ -46,6 +50,7 @@ export default function PlayerOverflowMenu({
   onChanged,
   onRemove,
   removeLabel = "Remove from round",
+  onChangeTee,
 }: PlayerOverflowMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [markModalOpen, setMarkModalOpen] = useState(false);
@@ -120,12 +125,13 @@ export default function PlayerOverflowMenu({
     setUndoModalOpen(false);
   }
 
+  const showChangeTeeOption = !isRoundComplete && !!onChangeTee;
   const showMarkOption = !isRoundComplete && droppedAfterHole == null;
   const showUndoOption = !isRoundComplete && droppedAfterHole != null;
   const showRemoveOption = !isRoundComplete && !!onRemove;
 
   // If nothing is actionable, hide the button entirely.
-  if (!showMarkOption && !showUndoOption && !showRemoveOption) {
+  if (!showChangeTeeOption && !showMarkOption && !showUndoOption && !showRemoveOption) {
     return null;
   }
 
@@ -175,6 +181,15 @@ export default function PlayerOverflowMenu({
             fontFamily: "inherit",
           }}
         >
+          {showChangeTeeOption && (
+            <MenuItem
+              label="Change tee"
+              onClick={() => {
+                setMenuOpen(false);
+                onChangeTee?.();
+              }}
+            />
+          )}
           {showMarkOption && (
             <MenuItem
               label="Mark as left round"
