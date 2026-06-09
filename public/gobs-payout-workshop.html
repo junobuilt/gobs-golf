@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOBS Golf — Payout Choices</title>
+<style>
+  :root{
+    --fairway:#1f5135;      /* deep fairway green */
+    --fairway-d:#163a26;
+    --cream:#f6f1e2;        /* scorecard paper */
+    --card:#fffdf6;
+    --ink:#23271f;          /* near-black ink */
+    --brass:#b8862f;        /* trophy / money */
+    --brass-d:#8c6420;
+    --flag:#b23b2e;         /* "this is where it breaks" */
+    --flag-bg:#f6e4df;
+    --line:#d9d0b8;
+    --pick:#1f5135;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--fairway);
+    color:var(--ink);
+    font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:20px; line-height:1.5;
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:18px 16px 120px}
+  header.top{
+    text-align:center;color:var(--cream);padding:26px 10px 14px;
+  }
+  header.top .kicker{
+    font-size:15px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--brass);font-weight:700;
+  }
+  header.top h1{
+    font-family:Georgia,"Times New Roman",serif;
+    font-size:38px;line-height:1.1;margin:6px 0 4px;font-weight:700;
+  }
+  header.top p{margin:6px auto 0;max-width:560px;color:#e8e1cd;font-size:18px}
+
+  /* progress */
+  .progress{position:sticky;top:0;z-index:5;background:var(--fairway);
+    padding:10px 0 12px;}
+  .bar{height:12px;border-radius:8px;background:var(--fairway-d);overflow:hidden;
+    border:1px solid rgba(255,255,255,.15)}
+  .bar > i{display:block;height:100%;background:var(--brass);width:0;transition:width .3s}
+  .pcount{color:#e8e1cd;font-size:15px;text-align:center;margin-top:6px;letter-spacing:.03em}
+
+  /* card */
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 10px 30px rgba(0,0,0,.22);
+    padding:24px 22px 20px;margin-top:18px;
+  }
+  .tab{display:inline-block;background:var(--fairway);color:var(--cream);
+    font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+    padding:5px 12px;border-radius:999px;margin-bottom:14px}
+  .tab.break{background:var(--flag)}
+  .card h2{font-family:Georgia,serif;font-size:27px;line-height:1.2;margin:2px 0 8px}
+  .ctx{font-size:19px;margin:0 0 6px;color:#33372d}
+  .pot{font-weight:700;color:var(--fairway);font-size:19px;margin:10px 0 4px}
+  .pot .muted{color:#6f6a58;font-weight:400}
+
+  .opts{display:flex;flex-direction:column;gap:14px;margin-top:16px}
+  .opt{
+    border:3px solid var(--line);border-radius:12px;background:#fffef9;
+    padding:16px 16px 14px;cursor:pointer;transition:border-color .15s,background .15s;
+    text-align:left;width:100%;font:inherit;color:inherit;
+  }
+  .opt:hover{border-color:var(--brass)}
+  .opt:focus-visible{outline:3px solid var(--fairway);outline-offset:2px}
+  .opt.sel{border-color:var(--pick);background:#eef5ef}
+  .opt .olabel{font-weight:700;font-size:21px;display:flex;align-items:center;gap:10px}
+  .opt .check{width:26px;height:26px;border-radius:50%;border:3px solid var(--line);
+    flex:0 0 auto;display:inline-grid;place-items:center;color:#fff;font-size:16px}
+  .opt.sel .check{background:var(--pick);border-color:var(--pick)}
+  .opt .orule{font-size:16px;color:#6f6a58;margin:4px 0 10px 36px}
+
+  table.pay{width:100%;border-collapse:collapse;margin-left:0}
+  table.pay td,table.pay th{padding:7px 8px;border-bottom:1px solid #eee5cf;font-size:18px;text-align:right}
+  table.pay th{font-size:14px;color:#8a8470;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+  table.pay td.place{text-align:left;font-weight:700;color:var(--fairway)}
+  table.pay td.money{font-variant-numeric:tabular-nums;font-weight:700}
+  table.pay td.per{color:#55503f;font-variant-numeric:tabular-nums}
+
+  .notes{margin-top:16px}
+  .notes label{display:block;font-size:16px;font-weight:700;color:#55503f;margin-bottom:6px}
+  .notes textarea{width:100%;min-height:64px;border:2px solid var(--line);border-radius:10px;
+    padding:10px 12px;font:inherit;font-size:18px;resize:vertical;background:#fffef9}
+  .notes textarea:focus{outline:3px solid var(--fairway);outline-offset:1px;border-color:var(--fairway)}
+
+  /* nav */
+  .nav{display:flex;gap:12px;margin-top:20px}
+  button.b{font:inherit;font-weight:700;font-size:20px;border-radius:12px;padding:15px 20px;
+    border:2px solid transparent;cursor:pointer;flex:1}
+  button.b:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+  button.next{background:var(--brass);color:#fff}
+  button.next:hover{background:var(--brass-d)}
+  button.next:disabled{background:#cfc6ac;cursor:not-allowed}
+  button.back{background:transparent;color:var(--fairway);border-color:var(--fairway);flex:0 0 auto;min-width:110px}
+  button.back:hover{background:#eef5ef}
+
+  .atlasbtn{position:fixed;right:14px;bottom:14px;z-index:8;background:var(--fairway-d);
+    color:var(--cream);border:1px solid var(--brass);border-radius:999px;padding:12px 18px;
+    font:inherit;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+
+  /* overlay */
+  .overlay{position:fixed;inset:0;background:rgba(15,30,20,.92);z-index:20;display:none;
+    overflow:auto;padding:24px 14px}
+  .overlay.on{display:block}
+  .sheet{max-width:760px;margin:0 auto;background:var(--card);border-radius:14px;padding:22px}
+  .sheet h3{font-family:Georgia,serif;font-size:26px;margin:0 0 4px}
+  .sheet p.sub{margin:0 0 14px;color:#6f6a58;font-size:17px}
+  table.atlas{width:100%;border-collapse:collapse;font-size:17px}
+  table.atlas th,table.atlas td{padding:9px 8px;border-bottom:1px solid #eee5cf;text-align:center}
+  table.atlas th{background:var(--fairway);color:var(--cream);font-size:14px;letter-spacing:.04em}
+  table.atlas td.t{text-align:left;font-weight:700;color:var(--fairway)}
+  table.atlas tr.brk td{background:var(--flag-bg)}
+  .closex{background:var(--fairway);color:#fff;border:none;border-radius:10px;padding:12px 18px;
+    font:inherit;font-weight:700;font-size:18px;cursor:pointer;margin-top:16px;width:100%}
+  .legend{font-size:15px;color:#6f6a58;margin-top:10px}
+  .legend .sw{display:inline-block;width:14px;height:14px;background:var(--flag-bg);
+    border:1px solid var(--flag);border-radius:3px;vertical-align:-2px;margin-right:4px}
+
+  /* recap */
+  .recap .rrow{border-bottom:1px solid #eee5cf;padding:12px 0}
+  .recap .rrow b{color:var(--fairway)}
+  .recap .pick{color:var(--brass-d);font-weight:700}
+  .recap .note{color:#55503f;font-style:italic;font-size:17px;margin-top:3px}
+  .lastchance{background:#eef5ef;border:2px solid var(--fairway);border-radius:12px;padding:18px;margin-top:18px}
+  .lastchance label{font-weight:700;font-size:19px;display:block;margin-bottom:8px}
+  .copybar{margin-top:18px}
+  .copied{color:#fff;background:var(--fairway);text-align:center;border-radius:10px;
+    padding:10px;margin-top:10px;display:none;font-weight:700}
+  .copied.on{display:block}
+  .hint{color:#e8e1cd;font-size:16px;text-align:center;margin-top:14px;padding:0 10px}
+  @media (max-width:480px){
+    body{font-size:19px}
+    header.top h1{font-size:31px}
+    .card h2{font-size:23px}
+    .nav{flex-direction:column}
+    button.back{min-width:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker">GOBS Golf · Pot Payouts</div>
+    <h1>How should the money pay out?</h1>
+    <p>A few real situations. For each one, tap the payout you'd want. There are no wrong answers — your picks are what build the rules. Add a note any time something's on your mind.</p>
+  </header>
+
+  <div class="progress">
+    <div class="bar"><i id="barfill"></i></div>
+    <div class="pcount" id="pcount"></div>
+  </div>
+
+  <div id="stage"></div>
+</div>
+
+<button class="atlasbtn" id="atlasOpen">📋 See the full chart</button>
+
+<div class="overlay" id="atlas">
+  <div class="sheet">
+    <h3>The full payout chart</h3>
+    <p class="sub">What the proposed rules pay at every field size. Amounts are <b>per player</b>. Shaded rows are where the rules start to strain — those are the questions in the green section.</p>
+    <table class="atlas" id="atlasTable"></table>
+    <div class="legend"><span class="sw"></span> Strained — too few places can't spend a big pot, so leftover money goes to the Blaine Food Bank.</div>
+    <button class="closex" id="atlasClose">Close chart</button>
+  </div>
+</div>
+
+<script>
+/* ---------- scenario data (numbers pre-computed, verified to total the pot) ---------- */
+const S = [
+ {id:"A1",sec:"A · Fewer places paid",break:false,
+  title:"4 teams (16 players)",
+  ctx:"Your most common day. Today the app pays 3 teams. The idea this season is to pay fewer. Pay the top 2 instead?",
+  pot:112, size:4,
+  kind:"fork",
+  opts:[
+   {label:"Pay 2 teams", rule:"The change Dad asked for — top two only.",
+    rows:[["1st",18,72],["2nd",10,40]]},
+   {label:"Keep paying 3 teams", rule:"How it works today.",
+    rows:[["1st",15,60],["2nd",8,32],["3rd",5,20]]}
+  ]},
+
+ {id:"A2",sec:"A · Fewer places paid",break:false,
+  title:"6 teams (18 players)",
+  ctx:"Today this pays 4 teams. Drop to 3?",
+  pot:126, size:3,
+  kind:"fork",
+  opts:[
+   {label:"Pay 3 teams", rule:"Fewer paid.",
+    rows:[["1st",23,69],["2nd",13,39],["3rd",6,18]]},
+   {label:"Keep paying 4 teams", rule:"How it works today.",
+    rows:[["1st",20,60],["2nd",11,33],["3rd",6,18],["4th",5,15]]}
+  ]},
+
+ {id:"A3",sec:"A · Fewer places paid",break:false,
+  title:"Only 2 teams played",
+  ctx:"A small turnout — just 2 teams. Winner takes the whole pot, or split it so the runner-up gets something? (With only 2 teams the pot's too small for 2nd to fully break even either way.)",
+  pot:56, size:4,
+  kind:"fork",
+  opts:[
+   {label:"Winner takes all", rule:"One payout; runner-up gets nothing.",
+    rows:[["1st",14,56],["2nd",0,0]]},
+   {label:"Split the pot", rule:"Runner-up gets something, but not their full $10 back.",
+    rows:[["1st",9,36],["2nd",5,20]]}
+  ]},
+
+ {id:"B1",sec:"B · Should 2nd place get its money back?",break:false,
+  title:"3 teams (9 players) — a small pot",
+  ctx:"Buy-in is $10 a man. You said 2nd should at least get their money back. On a small day that's a tight squeeze — watch what it does to the winner.",
+  pot:63, size:3,
+  kind:"fork",
+  opts:[
+   {label:"Winner clearly ahead", rule:"2nd does NOT get all their money back ($7).",
+    rows:[["1st",14,42],["2nd",7,21]]},
+   {label:"2nd gets money back", rule:"2nd breaks even ($10) — but 1st is barely ahead.",
+    rows:[["1st",11,33],["2nd",10,30]]}
+  ]},
+
+ {id:"B2",sec:"B · Should 2nd place get its money back?",break:false,
+  title:"4 teams (16 players) — money-back is free here",
+  ctx:"On a bigger day, 2nd gets its money back ($10) AND the winner still wins big. It only pinches on small days. Happy with money-back when it costs nothing?",
+  pot:112, size:4,
+  kind:"confirm",
+  opts:[
+   {label:"Looks right", rule:""},
+   {label:"I'd change this", rule:""}
+  ],
+  show:[["1st",18,72],["2nd",10,40]]},
+
+ {id:"B3",sec:"B · Should 2nd place get its money back?",break:false,
+  title:"What does “get their money back” mean?",
+  ctx:"Each man pays $10 — but $3 of that goes to the hole-in-one and food-bank funds, so only $7 actually lands in the prize pot. So “money back” could mean two things. Here it is on that same 3-team day:",
+  pot:63, size:3,
+  kind:"fork",
+  opts:[
+   {label:"The full $10 they paid", rule:"2nd reaches $10 — but the winner ends up barely ahead.",
+    rows:[["1st",11,33],["2nd",10,30]]},
+   {label:"The $7 that's in the pot", rule:"2nd reaches $7 — and the winner stays clearly ahead.",
+    rows:[["1st",14,42],["2nd",7,21]]}
+  ]},
+
+ {id:"C1",sec:"C · How top-heavy should it be?",break:false,
+  title:"5 teams (20 players)",
+  ctx:"Pays 3 teams. Should the winner take a big share, or keep it closer so 3rd still feels worth it? (This is the “$20 / $10” day you mentioned on the phone.)",
+  pot:140, size:4,
+  kind:"fork",
+  opts:[
+   {label:"Top-heavy", rule:"Reward winning hard.",
+    rows:[["1st",20,80],["2nd",10,40],["3rd",5,20]]},
+   {label:"Flatter", rule:"3rd gets more, winner less.",
+    rows:[["1st",16,64],["2nd",11,44],["3rd",8,32]]}
+  ]},
+
+ {id:"C2",sec:"C · How top-heavy should it be?",break:false,
+  title:"7 teams (21 players) — your biggest regular day",
+  ctx:"Pays 4 teams. Push the money to the winner, or spread it more evenly across all four?",
+  pot:147, size:3,
+  kind:"fork",
+  opts:[
+   {label:"Reward the winner", rule:"Winner near the $25 cap.",
+    rows:[["1st",24,72],["2nd",13,39],["3rd",7,21],["4th",5,15]]},
+   {label:"Spread it out", rule:"Flatter across all four.",
+    rows:[["1st",20,60],["2nd",13,39],["3rd",10,30],["4th",6,18]]}
+  ]},
+
+ {id:"C3",sec:"C · How top-heavy should it be?",break:false,
+  title:"8 teams (24 players) — the “creep” call",
+  ctx:"Half of 8 is 4. The idea is that creeping to 5 is OK sometimes. Pay 4, or stretch to a 5th team?",
+  pot:168, size:3,
+  kind:"fork",
+  opts:[
+   {label:"Pay 4 teams", rule:"Half the field, winner at the cap.",
+    rows:[["1st",25,75],["2nd",17,51],["3rd",9,27],["4th",5,15]]},
+   {label:"Creep to 5 teams", rule:"One more team gets in, everyone a bit less.",
+    rows:[["1st",23,69],["2nd",13,39],["3rd",9,27],["4th",6,18],["5th",5,15]]}
+  ]},
+
+ {id:"D1",sec:"D · Ties",break:false,
+  title:"Two teams tie for 1st",
+  ctx:"On a 6-team day (3 paid). Plan: add the 1st and 2nd money together and split it evenly between the tied teams — then the next team still gets 3rd. Agree?",
+  pot:126, size:3,
+  kind:"confirm",
+  opts:[
+   {label:"Yes — combine and split evenly", rule:""},
+   {label:"No — I'd handle ties differently", rule:""}
+  ],
+  show:[["Tied 1st (each)",18,54],["Next team (3rd)",6,18]]},
+
+ {id:"E1",sec:"E · Big days the app hasn't seen yet",break:true,
+  title:"40 players · 10 teams",
+  ctx:"Bigger than anything played so far. Pays 5 teams (the most the rules allow). The $25-a-man cap kicks in on the winner. Does this spread feel right?",
+  pot:280, size:4,
+  kind:"confirm",
+  opts:[
+   {label:"Looks right", rule:""},
+   {label:"I'd change this", rule:""}
+  ],
+  show:[["1st",25,100],["2nd",19,76],["3rd",12,48],["4th",8,32],["5th",6,24]]},
+
+ {id:"E2",sec:"E · Big days the app hasn't seen yet",break:true,
+  title:"60 players · 30 teams — where the rules break",
+  ctx:"A huge two-man field. The $25-a-man cap means even paying 5 teams can't spend the whole pot — about $190 is left over. Where should it go?",
+  pot:420, size:2,
+  kind:"multi",
+  opts:[
+   {label:"Send the leftover to the Blaine Food Bank", rule:"Top 5 teams near the cap; ~$190 to BFB.",
+    rows:[["1st",25,50],["2nd",24,48],["3rd",23,46],["4th",22,44],["5th",21,42]]},
+   {label:"Pay more teams instead", rule:"Break the 5-team limit so the pot gets spread, not swept.",
+    rows:[["1st–10th","spread","≈$420"]]},
+   {label:"Raise the cap on giant days", rule:"Let the winner take more than $25 when the field is this big.",
+    rows:[["1st",">25","—"]]}
+  ]},
+
+ {id:"E3",sec:"E · Big days the app hasn't seen yet",break:true,
+  title:"60 players · 15 teams — pay how many?",
+  ctx:"A big four-man field. Paying just 5 of 15 teams bunches the top four near the cap (little separation). Stick with 5, or pay more teams so places mean more?",
+  pot:420, size:4,
+  kind:"fork",
+  opts:[
+   {label:"Pay 5 teams", rule:"Top four bunch near the cap.",
+    rows:[["1st",25,100],["2nd",24,96],["3rd",23,92],["4th",17,68],["5th",13,52]]},
+   {label:"Pay more teams", rule:"More places, real gaps between them.",
+    rows:[["1st–8th","spread","≈$420"]]}
+  ]},
+
+ {id:"F1",sec:"F · Short-handed teams",break:false,
+  title:"A team plays a man short (blind draw)",
+  ctx:"A team is missing a player, so the empty spot is filled with a blind draw — a random score borrowed from the field. If they win, they're paid as a FULL team (luck of the draw). The open question is the buy-in: does the empty seat pay in too?",
+  pot:0, size:4,
+  kind:"fork",
+  opts:[
+   {label:"Pay a full team's buy-in", rule:"4 × $10 = $40 in, paid as 4. Covers the empty seat and collects for it too.",
+    rows:[["Buy-in","4 men","$40"]]},
+   {label:"Pay for real men only", rule:"3 × $10 = $30 in, still paid as 4. The empty seat collects but didn't pay.",
+    rows:[["Buy-in","3 men","$30"]]}
+  ]},
+
+ {id:"G1",sec:"G · The safety limits",break:false,
+  title:"The two limits that keep payouts sane",
+  ctx:"Every payout runs inside two guardrails: no man wins more than $25 in a single day (the cap), and every paid team gets at least $5 a man (the floor). Are both numbers right?",
+  pot:0, size:0,
+  kind:"confirm",
+  opts:[
+   {label:"Both are right", rule:""},
+   {label:"I'd change one", rule:""}
+  ]}
+];
+
+/* recap implication text keyed by scenario id + chosen index */
+const IMPL = {
+ A1:["Pay fewer places — top 2 at 4 teams (the change you wanted).","Keep 3 places at 4 teams (no change)."],
+ A2:["Pay fewer places — 3 at 6 teams.","Keep 4 places at 6 teams (no change)."],
+ B1:["On small pots, the WINNER's gap matters more than 2nd getting even.","2nd getting its money back matters even when it leaves the winner barely ahead."],
+ B2:["Money-back for 2nd is good when the pot can afford it.","You have a concern about money-back even on bigger days — see your note."],
+ C1:["Payouts should be top-heavy — reward winning.","Payouts should be flatter — keep lower places worthwhile."],
+ C2:["Push money to the winner on big days.","Spread money more evenly on big days."],
+ C3:["At 8 teams, pay 4 (don't creep).","At 8 teams, creep to a 5th team."],
+ D1:["Ties: combine the pots and split evenly. Confirmed.","Ties need a different rule — see your note."],
+ E1:["The big-field spread looks right as-is.","The big-field spread needs work — see your note."],
+ E2:["On giant fields, sweep the un-spendable money to the food bank.","On giant fields, pay MORE teams instead of sweeping.","On giant fields, raise the $25 cap so the winner can take more."],
+ E3:["On a big 15-team day, paying only 5 is fine even if bunched.","On a big 15-team day, pay more teams for real separation."],
+ A3:["At 2 teams, winner takes all.","At 2 teams, split so the runner-up gets something."],
+ B3:["“Money back” means the full $10 paid (tighter winner's gap).","“Money back” means the $7 that's in the pot (winner stays clearly ahead)."],
+ F1:["Short teams pay a full buy-in and are paid as a full team (symmetric).","Short teams pay for real men only but are still paid as a full team."],
+ G1:["The $25 cap and $5 floor are both confirmed.","One of the limits needs changing — see note."]
+};
+
+/* atlas data (per-player), break flag */
+const ATLAS = [
+ [2,1,"$14","—","—","—","—",false],
+ [3,2,"$11","$10","—","—","—",false],
+ [4,2,"$18","$10","—","—","—",false],
+ [5,3,"$20","$10","$5","—","—",false],
+ [6,3,"$23","$13","$6","—","—",false],
+ [7,4,"$24","$13","$7","$5","—",false],
+ [8,5,"$23","$13","$9","$6","$5",false],
+ [10,5,"$25","$19","$13","$8","$6",false],
+ [15,5,"$25","$24","$23","$17","$13",true],
+ [30,5,"$25","$24","$23","$22","$21",true]
+];
+
+/* ---------- state ---------- */
+const answers = {};         // id -> {choice:int, note:string}
+let idx = 0;
+
+const stage = document.getElementById('stage');
+const barfill = document.getElementById('barfill');
+const pcount = document.getElementById('pcount');
+
+function money(v){return (typeof v==="number") ? "$"+v : v;}
+
+function renderCard(i){
+  const s = S[i];
+  const a = answers[s.id] || {choice:null, note:""};
+  const total = S.length;
+  barfill.style.width = ((i)/(total)*100)+"%";
+  pcount.textContent = "Question "+(i+1)+" of "+total+"  ·  "+s.sec;
+
+  let optsHtml = s.opts.map((o,oi)=>{
+    let body = "";
+    const rows = o.rows || s.show;
+    if(rows){
+      body = `<table class="pay"><tr><th class="place" style="text-align:left">Place</th><th>Per player</th><th>Team total</th></tr>`+
+        rows.map(r=>`<tr><td class="place">${r[0]}</td><td class="money">${money(r[1])}</td><td class="per">${money(r[2])}</td></tr>`).join("")+
+        `</table>`;
+    }
+    const rule = o.rule ? `<div class="orule">${o.rule}</div>` : "";
+    const sel = a.choice===oi ? " sel":"";
+    return `<button class="opt${sel}" data-oi="${oi}">
+        <span class="olabel"><span class="check">${a.choice===oi?"✓":""}</span>${o.label}</span>
+        ${rule}${o.rows?body:""}
+      </button>`;
+  }).join("");
+
+  // for confirm/single-show, show the payout once above the options
+  let showBlock = "";
+  if(s.show){
+    showBlock = `<table class="pay"><tr><th class="place" style="text-align:left">Place</th><th>Per player</th><th>Team total</th></tr>`+
+      s.show.map(r=>`<tr><td class="place">${r[0]}</td><td class="money">${money(r[1])}</td><td class="per">${money(r[2])}</td></tr>`).join("")+
+      `</table>`;
+  }
+
+  stage.innerHTML = `
+    <div class="card">
+      <span class="tab${s.break?' break':''}">${s.break?'Where it strains':'Decision'}</span>
+      <h2>${s.title}</h2>
+      <p class="ctx">${s.ctx}</p>
+      ${s.pot?`<div class="pot">Pot to pay out: $${s.pot} <span class="muted">· ${s.size} players per team</span></div>`:''}
+      ${showBlock}
+      <div class="opts">${optsHtml}</div>
+      <div class="notes">
+        <label for="note">Your note (optional)</label>
+        <textarea id="note" placeholder="Anything you're thinking…">${a.note||""}</textarea>
+      </div>
+      <div class="nav">
+        ${i>0?'<button class="b back" id="back">← Back</button>':''}
+        <button class="b next" id="next" ${a.choice===null?'disabled':''}>${i===S.length-1?'See summary →':'Next →'}</button>
+      </div>
+    </div>`;
+
+  stage.querySelectorAll('.opt').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const oi = +btn.dataset.oi;
+      answers[s.id] = {choice:oi, note: (document.getElementById('note').value||"")};
+      renderCard(i);
+    });
+  });
+  const noteEl = document.getElementById('note');
+  if(noteEl){
+    noteEl.addEventListener('input',()=>{
+      answers[s.id] = answers[s.id]||{choice:null,note:""};
+      answers[s.id].note = noteEl.value;
+    });
+  }
+  const nb = document.getElementById('next');
+  if(nb) nb.addEventListener('click',()=>{ if(answers[s.id]&&answers[s.id].choice!==null){ idx++; if(idx>=S.length){renderRecap();} else {renderCard(idx); window.scrollTo(0,0);} } });
+  const bb = document.getElementById('back');
+  if(bb) bb.addEventListener('click',()=>{ idx--; renderCard(idx); window.scrollTo(0,0); });
+}
+
+function renderRecap(){
+  barfill.style.width="100%";
+  pcount.textContent="Summary — last look before you send";
+  let rows = S.map(s=>{
+    const a = answers[s.id];
+    const choiceLabel = a&&a.choice!==null ? s.opts[a.choice].label : "(skipped)";
+    const impl = a&&a.choice!==null && IMPL[s.id] ? IMPL[s.id][a.choice] : "";
+    const note = a&&a.note ? `<div class="note">“${escapeHtml(a.note)}”</div>` : "";
+    return `<div class="rrow">
+      <b>${s.title}</b><br>
+      You chose: <span class="pick">${choiceLabel}</span>
+      <div style="font-size:17px;color:#55503f;margin-top:3px">${impl}</div>
+      ${note}
+    </div>`;
+  }).join("");
+
+  stage.innerHTML = `
+    <div class="card recap">
+      <span class="tab">Summary</span>
+      <h2>Here's what your picks mean</h2>
+      <p class="ctx">This is what Jonathan will turn into the actual rules. Read it over. If anything looks off, change it below or go back.</p>
+      ${rows}
+      <div class="lastchance">
+        <label for="last">Last word — anything to add, change, or flag before this becomes the rules?</label>
+        <textarea id="last" style="width:100%;min-height:90px;border:2px solid var(--fairway);border-radius:10px;padding:10px 12px;font:inherit;font-size:18px">${(answers.__last)||""}</textarea>
+      </div>
+      <div class="copybar">
+        <button class="b next" id="send" style="width:100%">✉️ Send my answers to Jonathan</button>
+        <div class="copied" id="sent">Opening your email — just tap Send.</div>
+        <button class="b back" id="copy" style="width:100%;margin-top:10px">📋 Or copy them instead</button>
+        <div class="copied" id="copied">Copied! Paste it into a text or email to Jonathan.</div>
+      </div>
+      <div class="nav">
+        <button class="b back" id="back">← Back to questions</button>
+      </div>
+    </div>`;
+
+  const lastEl=document.getElementById('last');
+  lastEl.addEventListener('input',()=>{answers.__last=lastEl.value;});
+  document.getElementById('back').addEventListener('click',()=>{idx=S.length-1;renderCard(idx);window.scrollTo(0,0);});
+  document.getElementById('copy').addEventListener('click',copyAll);
+  document.getElementById('send').addEventListener('click',()=>{
+    const subject=encodeURIComponent("My GOBS payout answers");
+    const body=encodeURIComponent(buildExport());
+    document.getElementById('sent').classList.add('on');
+    window.location.href="mailto:jonyang@gmail.com?subject="+subject+"&body="+body;
+  });
+}
+
+function escapeHtml(t){return t.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));}
+
+function buildExport(){
+  let out = "GOBS GOLF — DAD'S PAYOUT ANSWERS\n";
+  out += "Date: "+new Date().toLocaleString()+"\n";
+  out += "================================\n\n";
+  S.forEach(s=>{
+    const a=answers[s.id];
+    out += `[${s.id}] ${s.title}\n`;
+    out += `   Chose: ${a&&a.choice!==null ? s.opts[a.choice].label : "(skipped)"}\n`;
+    if(a&&a.choice!==null && IMPL[s.id]) out += `   Means: ${IMPL[s.id][a.choice]}\n`;
+    if(a&&a.note) out += `   Note: ${a.note}\n`;
+    out += "\n";
+  });
+  out += "--------------------------------\n";
+  out += "LAST WORD: "+ (answers.__last||"(none)") +"\n";
+  return out;
+}
+
+function copyAll(){
+  const text=buildExport();
+  const done=()=>{document.getElementById('copied').classList.add('on');};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallback(text,done));
+  } else { fallback(text,done); }
+}
+function fallback(text,done){
+  const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);
+  ta.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);done();
+}
+
+/* atlas */
+function buildAtlas(){
+  let head=`<tr><th>Teams</th><th>Places paid</th><th>1st</th><th>2nd</th><th>3rd</th><th>4th</th><th>5th</th></tr>`;
+  let body=ATLAS.map(r=>`<tr class="${r[7]?'brk':''}"><td class="t">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join("");
+  document.getElementById('atlasTable').innerHTML=head+body;
+}
+document.getElementById('atlasOpen').addEventListener('click',()=>{document.getElementById('atlas').classList.add('on');});
+document.getElementById('atlasClose').addEventListener('click',()=>{document.getElementById('atlas').classList.remove('on');});
+
+buildAtlas();
+renderCard(0);
+</script>
+</body>
+</html>
