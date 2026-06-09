@@ -166,6 +166,38 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
     return { status: 200, body: newTeam };
   }
 
+  // Wave 1B follow-up: relaxed-close finalize for Shambles (migration 020).
+  // Replicate the RPC's OBSERVABLE effect for the display layer: a round is
+  // finalized iff it exists, isn't already complete, and every assigned team
+  // (team_number > 0) has at least one score on every hole 1..18. On success
+  // set is_complete = true and return "finalized"; otherwise return the same
+  // status strings the scorecard branches on.
+  if (name === "finalize_round_relaxed") {
+    const roundId = args.p_round_id;
+    const round = (db.tables.rounds ?? []).find((r) => looseEq(r.id, roundId));
+    if (!round) return { status: 200, body: "round_not_found" };
+    if (round.is_complete) return { status: 200, body: "already_complete" };
+
+    const teamRps = (db.tables.round_players ?? []).filter(
+      (rp) => looseEq(rp.round_id, roundId) && (rp.team_number ?? 0) > 0,
+    );
+    // round_player_id -> Set of scored hole numbers (as strings, for loose match).
+    const scoredHolesByRp: Record<string, Set<string>> = {};
+    for (const s of db.tables.scores ?? []) {
+      (scoredHolesByRp[String(s.round_player_id)] ??= new Set()).add(String(s.hole_number));
+    }
+    const teams = [...new Set(teamRps.map((rp) => rp.team_number))];
+    for (const team of teams) {
+      const ids = teamRps.filter((rp) => rp.team_number === team).map((rp) => String(rp.id));
+      for (let h = 1; h <= 18; h++) {
+        const anyScored = ids.some((id) => scoredHolesByRp[id]?.has(String(h)));
+        if (!anyScored) return { status: 200, body: "not_yet" };
+      }
+    }
+    round.is_complete = true;
+    return { status: 200, body: "finalized" };
+  }
+
   // Unknown RPC — succeed benignly so unrelated flows don't crash.
   return { status: 200, body: null };
 }
@@ -265,6 +297,19 @@ export async function fulfillFromMock(route: Route, request: Request, db: MockDb
     }
   } catch (err) {
     res = { status: 500, body: { message: `mock error: ${(err as Error).message}` } };
+  }
+
+  // PostgREST single-object negotiation. `.single()` / `.maybeSingle()` send
+  // Accept: application/vnd.pgrst.object+json, and real PostgREST then returns a
+  // bare object (or null for 0 rows), NOT an array. postgrest-js only
+  // array-unwraps client-side for `.maybeSingle()` — `.single()` (e.g.
+  // loadRoundResults reading `rounds`) trusts the server shape, so without this
+  // it would read fields off an array. Mirror the server for REST reads.
+  if (target.kind === "rest" && Array.isArray(res.body)) {
+    const accept = headers["accept"] ?? "";
+    if (accept.includes("application/vnd.pgrst.object+json")) {
+      res.body = res.body.length > 0 ? res.body[0] : null;
+    }
   }
 
   const respHeaders: Record<string, string> = {

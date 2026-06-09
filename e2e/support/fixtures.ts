@@ -6,7 +6,7 @@
 // leaked to production (assertNoProdHits) — the prod-safety backstop.
 
 import { test as base, expect } from "@playwright/test";
-import { MockDb, SeedData, installSupabaseMock, assertNoProdHits } from "./supabaseMock";
+import { MockDb, SeedData, Row, installSupabaseMock, assertNoProdHits } from "./supabaseMock";
 
 // Match the app's todayLocal() (src/lib/date.ts): local calendar date.
 export function todayLocal(): string {
@@ -91,46 +91,113 @@ export function seedScorecardRound(opts: { roundId: number; withScore: boolean }
   };
 }
 
+// 18 par-4 holes on tee 1 with stroke index 1..18 in hole order. Par-4-flat +
+// SI == hole number makes stroke allocation and par sums trivially predictable
+// for the display assertions (a CH-N player gets a stroke on holes SI<=N%18...).
+function flatPar4Holes(idBase: number): Row[] {
+  return Array.from({ length: 18 }, (_, i) => ({
+    id: idBase + i,
+    tee_id: 1,
+    hole_number: i + 1,
+    par: 4,
+    yardage: 350,
+    stroke_index: i + 1,
+  }));
+}
+
 /**
- * A team-card (Shambles) round set up for the team-card entry surface. One team
- * (Team 1) of two players on tee 1, 18 holes with known pars. `ballCount`
- * drives format_config.team_ball_count (1 = one box per hole; 2 = two summed
- * balls). No team_scores yet — the surface enters them.
+ * Wave 1B follow-up — a Shambles round (individual best-ball NET, relaxed close)
+ * for the INDIVIDUAL scorecard surface (`/round/[id]/scorecard?team=N`). A
+ * 4-player Team 1 on tee 1, 18 flat par-4 holes. Carl carries course_handicap 18
+ * → exactly one stroke on every hole, so his NET can beat an equal GROSS — the
+ * fixture proves the team score is best-NET (not gross/average) on the test hole.
+ * `scores` lets each scenario seed exactly the holes it asserts on; `isComplete`
+ * + `ballCount` parameterize the finalize and count-1/count-2 cases.
  */
-export function seedTeamCardRound(opts: { roundId: number; ballCount: 1 | 2 }): SeedData {
+export function seedShamblesRound(opts: {
+  roundId: number;
+  ballCount: 1 | 2;
+  scores?: Row[];
+  isComplete?: boolean;
+}): SeedData {
   const today = todayLocal();
-  // Par-4-heavy 18 (a couple par 3s / 5s) so par lookups are concrete.
-  const pars = [4, 4, 3, 5, 4, 4, 3, 5, 4, 4, 4, 3, 5, 4, 3, 5, 4, 4];
   return {
     players: ALL_PLAYERS,
     seasons: [SEASON],
     league_settings: [{ key: "buy_in_amount", value: "10" }],
-    tees: [{ id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 }],
-    holes: pars.map((par, i) => ({
-      id: 7000 + i,
-      tee_id: 1,
-      hole_number: i + 1,
-      par,
-      yardage: 350,
-      stroke_index: i + 1,
-    })),
+    // slope 113 / rating == par 72 makes computeCourseHandicap(snapshot) ===
+    // snapshot, so the scorecard's LT1 self-heal (recompute CH from snapshot on
+    // load) is a no-op and the seeded course_handicap stays put.
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4Holes(7100),
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: !!opts.isComplete,
+        season_id: SEASON.id,
+        format: "shambles",
+        format_config: {
+          basis: "net",
+          scoring_basis: "net",
+          team_ball_count: opts.ballCount,
+          override_holes: [],
+          submitted_teams: [],
+        },
+        format_locked_at: opts.scores && opts.scores.length ? `${today}T00:00:00Z` : null,
+      },
+    ],
+    round_players: [
+      { id: 8001, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 8002, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 8003, round_id: opts.roundId, player_id: PLAYERS.carl.id, team_number: 1, tee_id: 1, course_handicap: 18, handicap_index_snapshot: 18 },
+      { id: 8004, round_id: opts.roundId, player_id: PLAYERS.dora.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+    ],
+    scores: opts.scores ?? [],
+  };
+}
+
+/**
+ * Wave 1A — a NET round (2-ball) with a SINGLE player at a known raw course
+ * handicap and a populated 18-hole grid, so the scorecard renders stroke dots,
+ * net, and the GHIN-adjusted grid. One player keeps the dot count + expand
+ * control unambiguous. Adam carries course_handicap 20: at 80% allowance his
+ * playing strokes are round(16) = 16 → on hole 1 (SI 1) he gets 1 stroke
+ * (scaled) vs 2 (raw), and the GHIN cap uses the raw 20. Hole 1 gross 10 makes
+ * the allowance-scaled net (9) and the 100% GHIN-adjusted score (8) distinct.
+ */
+export function seedNetRoundWithHoles(opts: { roundId: number; allowance: number }): SeedData {
+  const today = todayLocal();
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    // slope 113 / rating == par keeps computeCourseHandicap(snapshot) == snapshot
+    // so the LT1 self-heal leaves Adam's seeded course_handicap (20) untouched.
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4Holes(7200),
     rounds: [
       {
         id: opts.roundId,
         played_on: today,
         is_complete: false,
         season_id: SEASON.id,
-        format: "shambles",
-        format_config: { basis: "gross", scoring_basis: "gross", team_ball_count: opts.ballCount, override_holes: [] },
-        format_locked_at: null,
+        format: "2_ball",
+        format_config: {
+          basis: "net",
+          scoring_basis: "net",
+          best_n: 2,
+          override_holes: [],
+          submitted_teams: [],
+          handicap_allowance: opts.allowance,
+        },
+        format_locked_at: `${today}T00:00:00Z`,
       },
     ],
     round_players: [
-      { id: 6001, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, handicap_index_snapshot: 10 },
-      { id: 6002, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, handicap_index_snapshot: 12 },
+      { id: 8101, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 20, handicap_index_snapshot: 20 },
     ],
-    scores: [],
-    team_scores: [],
+    scores: [{ id: 9300, round_player_id: 8101, hole_number: 1, strokes: 10 }],
   };
 }
 

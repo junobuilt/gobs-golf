@@ -1,82 +1,29 @@
-// E2E — Wave 1B C2 team-card entry surface (/round/[id]/team-card?team=N).
-// Verifies dash-until-tap par-anchoring, count-1 entry + running totals,
-// count-2 two boxes + summed hole total, and the gross-only caption (no
-// handicap-allowance text). The surface writes to `team_scores`, never `scores`.
+// E2E (display-layer) — guard for the c0723a5 Shambles reclassification.
+//
+// Shambles was rebuilt from a gross TEAM-CARD format into an individual best-ball
+// NET format: it was REMOVED from TEAM_CARD_FORMATS (src/lib/format/helpers.ts),
+// so it now routes to the individual `/round/[id]/scorecard` and the `/team-card`
+// surface rejects it. (The team-card spine stays dormant until a real team-card
+// format — Texas Scramble, Alternate Shot — rides it later; these tests will move
+// to that format when one exists.) This file replaces the original team-card
+// entry-surface specs, which the rebuild orphaned.
 
-import { test, expect, seed, seedTeamCardRound } from "./support/fixtures";
+import { test, expect, seed, seedShamblesRound } from "./support/fixtures";
 
-test("count-1: dash until first tap, then lands on par + updates totals", async ({ page, db }) => {
-  seed(db, seedTeamCardRound({ roundId: 300, ballCount: 1 }));
-  await page.goto("/round/300/team-card?team=1");
-
-  // Reached the team-card surface (negative control: not the "not a team-card"
-  // / "no team" fallbacks).
-  await expect(page.getByText("TEAM 1")).toBeVisible();
-  await expect(page.getByText("1 ball per hole")).toBeVisible();
-  await expect(page.getByText("Gross only — no handicap")).toBeVisible();
-
-  // Dash until first tap.
-  await expect(page.getByTestId("ball-1-value")).toHaveText("—");
-
-  // First tap lands on par (hole 1 par = 4 in the fixture).
-  await page.getByTestId("ball-1-plus").click();
-  await expect(page.getByTestId("ball-1-value")).toHaveText("4");
-
-  // Running totals update: thru 1, gross 4, even (E) vs par.
-  await expect(page.getByTestId("summary-thru")).toHaveText("1");
-  await expect(page.getByTestId("summary-gross")).toHaveText("4");
-  await expect(page.getByTestId("summary-delta")).toHaveText("E");
-});
-
-test("count-1: writes a team_scores row (not scores)", async ({ page, db }) => {
-  seed(db, seedTeamCardRound({ roundId: 301, ballCount: 1 }));
-  await page.goto("/round/301/team-card?team=1");
-
-  await page.getByTestId("ball-1-plus").click(); // → par 4
-
-  await expect.poll(() => db.tables.team_scores?.length ?? 0).toBe(1);
-  const row = db.tables.team_scores[0];
-  expect(row).toMatchObject({ round_id: 301, team_number: 1, hole_number: 1, ball_index: 1, strokes: 4 });
-  // The individual scores table must stay empty for a team-card round.
-  expect(db.tables.scores?.length ?? 0).toBe(0);
-});
-
-test("count-2: two boxes and the hole total is the sum of the balls", async ({ page, db }) => {
-  seed(db, seedTeamCardRound({ roundId: 302, ballCount: 2 }));
-  await page.goto("/round/302/team-card?team=1");
-
-  await expect(page.getByText("2 balls per hole")).toBeVisible();
-  // Two independent ball steppers.
-  await expect(page.getByTestId("ball-1-value")).toHaveText("—");
-  await expect(page.getByTestId("ball-2-value")).toHaveText("—");
-  await expect(page.getByTestId("hole-total")).toContainText("—");
-
-  // Ball 1 → 4 (par). Ball 2 → 4 then 5.
-  await page.getByTestId("ball-1-plus").click();
-  await page.getByTestId("ball-2-plus").click();
-  await page.getByTestId("ball-2-plus").click();
-
-  await expect(page.getByTestId("ball-1-value")).toHaveText("4");
-  await expect(page.getByTestId("ball-2-value")).toHaveText("5");
-  // Hole team score = 4 + 5 = 9.
-  await expect(page.getByTestId("hole-total")).toContainText("9");
-});
-
-test("the handicap-allowance caption is replaced by a gross-only note", async ({ page, db }) => {
-  seed(db, seedTeamCardRound({ roundId: 303, ballCount: 1 }));
-  await page.goto("/round/303/team-card?team=1");
-
-  await expect(page.getByText("Gross only — no handicap")).toBeVisible();
-  // The individual card's "Handicaps at N%" allowance caption must NOT appear.
-  await expect(page.getByText(/Handicaps at/)).toHaveCount(0);
-});
-
-test("C3b routing: homepage links a Shambles round's team to the team-card surface", async ({ page, db }) => {
-  seed(db, seedTeamCardRound({ roundId: 310, ballCount: 1 }));
+test("homepage links a Shambles team to /scorecard, not /team-card", async ({ page, db }) => {
+  seed(db, seedShamblesRound({ roundId: 600, ballCount: 1 }));
   await page.goto("/");
 
-  // The team card on the homepage routes to /team-card (not /scorecard) for a
-  // team-card format — the single isTeamCardFormat routing decision.
-  await expect(page.locator('a[href="/round/310/team-card?team=1"]')).toHaveCount(1);
-  await expect(page.locator('a[href="/round/310/scorecard?team=1"]')).toHaveCount(0);
+  await expect(page.locator('a[href="/round/600/scorecard?team=1"]')).toHaveCount(1);
+  await expect(page.locator('a[href="/round/600/team-card?team=1"]')).toHaveCount(0);
+});
+
+test("the team-card surface rejects a Shambles round", async ({ page, db }) => {
+  seed(db, seedShamblesRound({ roundId: 601, ballCount: 1 }));
+  await page.goto("/round/601/team-card?team=1");
+
+  // The surface guards on isTeamCardFormat — Shambles falls through to the
+  // "this round uses an individual scorecard" fallback.
+  await expect(page.getByText("Not a team-card round")).toBeVisible();
+  await expect(page.getByText("This round uses an individual scorecard.")).toBeVisible();
 });

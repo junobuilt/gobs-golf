@@ -2,8 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-08 (Wave 1B follow-up — Shambles rebuilt as individual best-ball NET)
-**Session purpose:** Wave 1B follow-up — Shambles was modeled WRONG (team-card, gross, one score/hole). It's a **best-ball NET** format: after the team drive everyone plays their own ball, individual scores exist, team takes the best 1 (or 2) NET ball(s). Rebuilt off the team-card spine onto the individual scorecard. **Classifier split** (load-bearing): emptied `isTeamCardFormat` (Shambles removed → routing/results/RoundResultsView/RoundSetup/scorecardHref all cascade Shambles back to individual automatically); new `excludedFromIndividualStats()` (= team-card OR shambles) keeps Shambles OUT of season averages; new `allowsIncompleteClose()` drives a **relaxed close**. Engine dispatches Shambles → `computeBestNHole` (N from `team_ball_count`, NET, best-of-present with count-2 degrading to best-available). FormatPicker net-locks Shambles + keeps the 1/2 ball control + re-enables allowance + shows override-holes. **Relaxed finalize**: new `finalize_round_relaxed` RPC (migration 020, **applied to prod**) — floor = ≥1 score per hole per team, no blind draw; scorecard chooses it by `allowsIncompleteClose` while sharing the payout-persist call. The team-card spine (`team_scores`, `/team-card`, C4) STAYS but is now dormant. **675/675 vitest; `tsc` clean.**
+**Last updated:** 2026-06-08 (Playwright display-layer specs — Shambles + Handicap Allowance)
+**Session purpose:** Add DISPLAY-LAYER Playwright specs that assert RENDERED DOM (not engine output) for the two surfaces most prone to "math-correct, UI-wrong" bugs: **Shambles** (`e2e/shambles.spec.ts`, 7 tests) and **Handicap Allowance** (`e2e/allowance.spec.ts`, 2 tests). Reused the existing harness (sentinel-URL interception, prod-ref guard, PIN storageState) with **two minimal additions to `e2e/support/supabaseMock.ts`** (test infra, NOT app code): honor the `application/vnd.pgrst.object+json` Accept header so `.single()` works (needed by `loadRoundResults`), and implement the `finalize_round_relaxed` RPC (set `is_complete`, return `'finalized'`). Repurposed the now-orphaned `e2e/teamCard.spec.ts` (the c0723a5 rebuild broke its 5 tests) into a 2-test routing guard. **No app code changed. `tsc` clean; full e2e 22/22; zero prod writes (`assertNoProdHits` green).**
+
+---
+
+## 2026-06-08 (Playwright display-layer specs — Shambles + Handicap Allowance)
+
+### Where we left off
+
+**Two new display-layer Playwright specs assert the RENDERED scorecard/leaderboard DOM for Shambles + Handicap Allowance, plus a repurposed routing guard — full e2e suite 11→22 green.** The specs drive a real Next dev server (port 3100, sentinel Supabase URL) against the in-process route mock; every assertion reads a visible value (team total, per-player Net, stroke dots, CH label, the GHIN-adjusted total, the "no score on hole" block, the finalized "Final" tag), not engine output. **No `src/` change** — the app already rendered these correctly; the gap was test coverage that would catch a future UI regression.
+
+- **Fixture-strategy confirmation (the Phase-0 ask).** The existing harness already drives a fully-scored individual round (`seedScorecardRound` + `handicapAllowance.spec.ts`). Score entry is the +/− steppers + the 18-dot hole rail; there are **no `data-testid`s on the scorecard**, so assertions are text/structure based. Two genuine gaps were found and closed in the mock — see below. Confirmed NOT a problem: `isTeamCardFormat("shambles")` is now `false` (`TEAM_CARD_FORMATS` empty), so `loadRoundResults` routes Shambles down the **engine branch** reading individual `scores` (verified by reading `results.ts:249` directly — an Explore pass misread the stale comment at 243-248).
+- **A — `e2e/support/supabaseMock.ts` (2 additive test-infra capabilities).** (1) **Object Accept negotiation:** REST reads whose `Accept` includes `application/vnd.pgrst.object+json` now return a single object / null instead of an array — mirrors PostgREST, because postgrest-js only array-unwraps client-side for `.maybeSingle()`, NOT `.single()` (`loadRoundResults` reads `rounds` with `.single()` → without this it read `.format` off an array → `missing_format`). (2) **`finalize_round_relaxed` RPC:** replicates migration 020's observable effect (floor = every assigned team ≥1 score on every hole 1..18 → set `is_complete`, return `'finalized'`; else `'already_complete'`/`'not_yet'`). Both verified non-regressive against the full suite.
+- **B — `e2e/support/fixtures.ts`.** NEW `seedShamblesRound({roundId, ballCount, scores?, isComplete?})` (4-player Team 1; Carl carries CH 18 → a winning NET that beats an equal GROSS, proving best-NET) and `seedNetRoundWithHoles({roundId, allowance})` (1 player, raw CH 20, populated holes). Both seed a tee with **slope 113 / rating == par 72** so `computeCourseHandicap(snapshot) === snapshot` and the scorecard's LT1 self-heal can't mutate the seeded handicaps. REMOVED the now-dead `seedTeamCardRound`.
+- **C — `e2e/shambles.spec.ts` (NEW, 7 tests).** FormatPicker (Shambles selectable, gross disabled / net-locked, 1-ball/2-ball control visible, allowance select enabled on RoundSetup); routing → `/scorecard` not `/team-card`; count-1 best-NET-of-present (absent excluded); count-2 sum-of-two-best-nets; count-2 degrade to best-available; zero-score hole blocks finalize + names the hole; submit→`finalize_round_relaxed`→`/round/[id]/summary` renders **Final** + the correct team **+2** total.
+- **D — `e2e/allowance.spec.ts` (NEW, 2 tests).** At 80% allowance: stroke dots show the SCALED 1 (not raw 2); the `Course Handicap: 20` LABEL stays raw; `Handicaps at 80%` caption; `Net: 9` reflects scaled strokes; the expanded grid's GHIN `Adj Tot` is the **100%** value 8 (not the scaled 7), proving the adjusted score ignores the allowance.
+- **E — `e2e/teamCard.spec.ts` (REPURPOSED).** The c0723a5 rebuild orphaned its 5 tests (Shambles no longer routes to `/team-card`); replaced with a 2-test guard: the homepage links Shambles to `/scorecard`, and the `/team-card` surface rejects Shambles ("Not a team-card round").
+
+**Files:** NEW `e2e/shambles.spec.ts`, `e2e/allowance.spec.ts`. MODIFIED `e2e/support/supabaseMock.ts`, `e2e/support/fixtures.ts`, `e2e/teamCard.spec.ts`, `STATUS.md`.
+
+**Tests:** full Playwright suite **11 → 22/22 green** (baseline had been 11 passed / 5 failed — the 5 orphaned teamCard tests — now replaced by 2 guards + 9 new). `tsc --noEmit` clean. Prod-safety: `assertNoProdHits` passed for all 22 (no request reached the prod ref).
+
+### Today's commits
+
+- (this session) test(e2e): display-layer Playwright specs for Shambles + Handicap Allowance (+ mock single()/finalize_round_relaxed; teamCard guard)
+
+### DB changes (today)
+
+- **None.** Test-only session; the `finalize_round_relaxed` change is in the in-process **mock**, not the DB. Migration 020 was already applied to prod in the prior session.
+
+### Tomorrow's priority
+
+1. **Carry-over from the prior session:** run `npm run db:backup` to fold migrations 019 + 020 into `supabase/schema.sql`; live click-test a real Shambles round end-to-end once an `ADMIN_PIN` is available.
+2. If a real team-card format (Scramble / Alternate Shot) lands, the `teamCard.spec.ts` guard should grow back into a full entry-surface spec for that format (and `seedTeamCardRound` can be reinstated for it).
+
+### Considered but not changed (confession)
+
+- **Interpretations flagged at plan time + approved.** (i) The spec's "allowance control enabled" is asserted on **RoundSetup**, not inside the FormatPicker — the allowance control doesn't live in the picker. (ii) The scorecard renders a running headline **"Team Net"** total, NOT a per-hole team cell — so each per-hole Shambles scenario seeds exactly one hole and reads the headline (which then equals that hole's best-net delta). (iii) Stroke dots have **no test-id** (can't add one without an app change) — located structurally by their 5px navy style, with the per-player `Net` value as the robust corroborator.
+- **Mock additions are shared test infra.** Honoring the object Accept header changes the REST response shape for `.single()`/`.maybeSingle()` requests across ALL specs — verified non-regressive by the full 22/22 run (the previously-green 11 still pass).
+- **`seedTeamCardRound` deleted, not kept.** No selectable format routes to `/team-card` now, so it was genuinely dead; the dormant team-card page is still guarded by the new `teamCard.spec.ts` rejection test. Reinstate when a real team-card format lands.
+- **Pre-existing breakage surfaced, not silently absorbed.** The c0723a5 commit didn't update `e2e/teamCard.spec.ts`, leaving the suite red on master before this session. Repurposing it is the one extra in-scope change.
+- **Out of scope (untouched):** all of `src/` (no app code), the scoring engine, `results.ts`, migrations, `golden.csv`, the vitest suite, and the pre-existing uncommitted `supabase/schema.sql` + `.claude/settings.local.json` + other untracked files (not mine — left unstaged).
 
 ---
 
