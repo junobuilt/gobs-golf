@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 48DDAh3hWtms8gAUbnhjuAzr32FSqjosQ3acnlUlmTfO3wfqJpC5bljtgb9MhgM
+\restrict FudSynQiBvZdiQP4ymphe9lWh55I0Y12B1fQLszoWDaZxPqcZsUK6gQcyA0LU52
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10
@@ -64,6 +64,59 @@ BEGIN
   END LOOP;
 
   RETURN v_next_team_number;
+END;
+$$;
+
+
+--
+-- Name: finalize_round_relaxed(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalize_round_relaxed(p_round_id bigint) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_is_complete boolean;
+BEGIN
+  -- Serialize concurrent finalize attempts on the same round.
+  SELECT COALESCE(r.is_complete, false) INTO v_is_complete
+    FROM rounds r
+    WHERE r.id = p_round_id
+    FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'round_not_found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_is_complete THEN
+    RETURN 'already_complete';
+  END IF;
+
+  -- Relaxed completion FLOOR: every assigned team must have at least one score
+  -- on every hole 1..18. A team-hole with zero scores blocks finalize.
+  IF EXISTS (
+    SELECT 1
+    FROM (
+      SELECT DISTINCT team_number
+        FROM round_players
+        WHERE round_id = p_round_id AND team_number > 0
+    ) teams
+    CROSS JOIN generate_series(1, 18) AS h(hole)
+    WHERE NOT EXISTS (
+      SELECT 1
+        FROM round_players rp
+        JOIN scores s ON s.round_player_id = rp.id
+        WHERE rp.round_id = p_round_id
+          AND rp.team_number = teams.team_number
+          AND s.hole_number = h.hole
+    )
+  ) THEN
+    RETURN 'not_yet';
+  END IF;
+
+  -- No blind draw for relaxed close — short teams play short.
+  UPDATE rounds SET is_complete = true WHERE id = p_round_id;
+  RETURN 'finalized';
 END;
 $$;
 
@@ -268,6 +321,48 @@ $$;
 
 
 --
+-- Name: override_round_payout(bigint, integer, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.override_round_payout(p_round_id bigint, p_team_number integer, p_new_per_player integer, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_team_size integer;
+  v_was       boolean;
+  v_per       integer;
+BEGIN
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'override_round_payout: reason is required';
+  END IF;
+  IF p_new_per_player IS NULL OR p_new_per_player < 0 THEN
+    RAISE EXCEPTION 'override_round_payout: per_player must be >= 0';
+  END IF;
+
+  SELECT team_size, was_overridden, per_player
+    INTO v_team_size, v_was, v_per
+    FROM round_payouts
+    WHERE round_id = p_round_id AND team_number = p_team_number
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'override_round_payout: no row for round % team %',
+      p_round_id, p_team_number;
+  END IF;
+
+  UPDATE round_payouts SET
+    per_player      = p_new_per_player,
+    total_for_team  = p_new_per_player * v_team_size,
+    original_amount = CASE WHEN v_was THEN original_amount ELSE v_per END,
+    was_overridden  = true,
+    admin_override  = true,
+    override_reason = btrim(p_reason)
+  WHERE round_id = p_round_id AND team_number = p_team_number;
+END;
+$$;
+
+
+--
 -- Name: persist_round_payouts(bigint, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -339,6 +434,51 @@ BEGIN
   FROM fund_transactions WHERE round_id = p_round_id GROUP BY fund HAVING SUM(amount) <> 0;
   DELETE FROM round_payouts WHERE round_id = p_round_id;
 END; $$;
+
+
+--
+-- Name: revert_round_payout(bigint, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revert_round_payout(p_round_id bigint, p_team_number integer, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_team_size integer;
+  v_was       boolean;
+  v_orig      integer;
+BEGIN
+  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+    RAISE EXCEPTION 'revert_round_payout: reason is required';
+  END IF;
+
+  SELECT team_size, was_overridden, original_amount
+    INTO v_team_size, v_was, v_orig
+    FROM round_payouts
+    WHERE round_id = p_round_id AND team_number = p_team_number
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'revert_round_payout: no row for round % team %',
+      p_round_id, p_team_number;
+  END IF;
+  IF NOT v_was THEN
+    RAISE EXCEPTION 'revert_round_payout: row is not overridden';
+  END IF;
+  IF v_orig IS NULL THEN
+    RAISE EXCEPTION 'revert_round_payout: original_amount missing';
+  END IF;
+
+  UPDATE round_payouts SET
+    per_player      = v_orig,
+    total_for_team  = v_orig * v_team_size,
+    was_overridden  = false,
+    admin_override  = false,
+    original_amount = NULL,
+    override_reason = btrim(p_reason)
+  WHERE round_id = p_round_id AND team_number = p_team_number;
+END;
+$$;
 
 
 --
@@ -616,6 +756,7 @@ CREATE TABLE public.round_payouts (
     original_amount integer,
     import_source text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    override_reason text,
     CONSTRAINT round_payouts_per_player_check CHECK ((per_player >= 0)),
     CONSTRAINT round_payouts_place_check CHECK (((place >= 1) AND (place <= 4))),
     CONSTRAINT round_payouts_team_number_check CHECK ((team_number > 0)),
@@ -1416,5 +1557,5 @@ ALTER TABLE public.tees ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 48DDAh3hWtms8gAUbnhjuAzr32FSqjosQ3acnlUlmTfO3wfqJpC5bljtgb9MhgM
+\unrestrict FudSynQiBvZdiQP4ymphe9lWh55I0Y12B1fQLszoWDaZxPqcZsUK6gQcyA0LU52
 

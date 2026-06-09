@@ -2,8 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-08 (Playwright display-layer specs — Shambles + Handicap Allowance)
-**Session purpose:** Add DISPLAY-LAYER Playwright specs that assert RENDERED DOM (not engine output) for the two surfaces most prone to "math-correct, UI-wrong" bugs: **Shambles** (`e2e/shambles.spec.ts`, 7 tests) and **Handicap Allowance** (`e2e/allowance.spec.ts`, 2 tests). Reused the existing harness (sentinel-URL interception, prod-ref guard, PIN storageState) with **two minimal additions to `e2e/support/supabaseMock.ts`** (test infra, NOT app code): honor the `application/vnd.pgrst.object+json` Accept header so `.single()` works (needed by `loadRoundResults`), and implement the `finalize_round_relaxed` RPC (set `is_complete`, return `'finalized'`). Repurposed the now-orphaned `e2e/teamCard.spec.ts` (the c0723a5 rebuild broke its 5 tests) into a 2-test routing guard. **No app code changed. `tsc` clean; full e2e 22/22; zero prod writes (`assertNoProdHits` green).**
+**Last updated:** 2026-06-09 (Doc reconciliation — ROADMAP + CLAUDE + STATUS + schema.sql)
+**Session purpose:** **DOC-ONLY** pass to reconcile the project docs with shipped reality and fold in Dad's 2026-06-09 decisions. No `src/`, tests, or migrations touched. Brought ROADMAP's phase tables current (the entire **formats track** — Wave 1A handicap allowance / GHIN adjusted score / 3 scorecard bugs, and Wave 1B team-card spine + the **Shambles rebuild as individual net best-ball**, migrations 018/020 — had no rows); marked the G2 payout **S5 pills UNBLOCKED-not-started** and **S3 no-engine-backfill**; added 4 new asks (History nav tab, player-profile round-detail routing bug, admin day→leaderboard, edit-a-set-card swap-player/change-tee); folded Dad's locked answers (Scramble / Alternate Shot / tee times / Tournament-Ryder-Cup / S3) into Decisions Locked; closed Open Questions Q1–Q7, left Q9–Q12 open, added Q13 (tournament %-vs-relative conflict that blocks the Tournament build); retracted stale Decision #575. **CLAUDE.md:** added the Bash-not-PowerShell here-string note; removed the dropped `played_with_matrix` schema entry. **schema.sql:** committed the 019+020 fold (`override_round_payout`/`revert_round_payout`/`override_reason`/`finalize_round_relaxed`) from the `db:backup` run. One commit; only doc files staged.
+
+---
+
+## 2026-06-09 (Doc reconciliation — ROADMAP + CLAUDE + STATUS + schema.sql)
+
+### Where we left off
+
+**DOC-ONLY session — no application code, tests, or migrations changed.** Reconciled the three canonical docs with what's actually shipped (verified against STATUS history, `supabase/migrations/` up to 020, and `git log`), folded in Dad's 2026-06-09 locked answers, and committed the pending `schema.sql` 019+020 fold. Ground-truth + delta list was reviewed and approved before any rewrite.
+
+- **ROADMAP — formats track added.** New **Wave 1 — Format Expansion (1A + 1B)** section (the whole track had shipped commits but zero roadmap rows). **1A ✅:** handicap allowance storage+UI (`37c9072`/`50bd816`), GHIN adjusted score / Net Double Bogey (`00220ac`, allowance-independent), 3 per-player scorecard row bugs (`a209305`). **1B ✅:** team-card spine (migration 018 `team_scores`, `/round/[id]/team-card`, `isTeamCardFormat`) — now **dormant** (`TEAM_CARD_FORMATS` empty); **Shambles REBUILT** as individual net best-ball (1/2 balls, relaxed close migration 020 `finalize_round_relaxed`, excluded from season/GHIN stats, kept in played-with, drives payouts) — **supersedes the gross-team-card design**.
+- **ROADMAP — G2 payout status.** S5 (leaderboard/summary payout pills) marked **UNBLOCKED, not started** (the team-card surfaces it waited on landed in Wave 1B); S3 historical import marked **pending + will NOT engine-backfill** per Dad.
+- **ROADMAP — 4 new asks.** F1.6 (History nav tab → summary), F1.7 (player-profile round-detail opens summary not live scorecard — routing bug), F1.8 (admin day→finished leaderboard) — all three converge on `RoundResultsView`/summary; D2.8 (edit a set card: swap player / change tee + recalc — tee-change ≈ I14, reopen ≈ D2, player-swap-recalc is new). TD29 gained the 2026-06-08 Playwright display-spec note.
+- **ROADMAP — Decisions Locked (Dad 2026-06-09).** Scramble (NET, team-card, % by player count: 2p 35/15, 3p 20/15/10, 4p 20/15/10/5 by CH asc); Alternate Shot (2-person ONLY, (CH1+CH2)/2 round-up, dead 3/4-man split); Shambles (confirms the rebuild); Scramble/Shambles money (short-team pot concern removed); tee times (optional manual, no interval picker); Tournament/Ryder Cup (relative-to-lowest, alt-shot team-level / best-ball player-level, NO % [conflict flagged], close-out=win, halved=.5, national score=matches won, tie→defending champ keeps cup [track holder], manual matchups, no money); Payout history/S3 (no engine-backfill, actuals in spreadsheet col F).
+- **ROADMAP — Open Questions.** Q1–Q7 marked ✅ ANSWERED (pot questions encoded in the G2 engine; Q1/Q6/Q7 in Dad's rules review — answer text not fabricated here); Q9–Q12 left ❓ open; **new Q13** (tournament handicap: whole-relative vs per-format % — conflict that **blocks the Tournament build**). **Decision #575 retracted** (struck through) — render-time name disambiguation via `getDisplayName` is the shipped behavior.
+- **CLAUDE.md.** Added the "Claude Code runs bash, not PowerShell — no `@'...'@` here-strings" workflow note; removed the stale `played_with_matrix` schema subsection (view dropped in migration 015 / E6), replaced with a one-line pointer.
+- **schema.sql.** Staged the modified file — the 019+020 fold (`override_round_payout`, `revert_round_payout`, `round_payouts.override_reason`, `finalize_round_relaxed`) from Thomas's `db:backup` run.
+
+**Files:** MODIFIED `ROADMAP.md`, `CLAUDE.md`, `STATUS.md`, `supabase/schema.sql`. No code/test/migration files touched.
+
+### Today's commits
+
+- (this session) docs: reconcile ROADMAP/CLAUDE/STATUS + fold in Dad's 2026-06-09 decisions + schema.sql 019+020 fold
+
+### DB changes (today)
+
+- **None.** `schema.sql` was regenerated by a prior `db:backup` (folds already-applied migrations 019 + 020); no new migration, no prod write this session.
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative conflict) with Dad before starting the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (now unblocked).
+3. **The 4 new asks** — start with F1.7 (player-profile round-detail routing fix; likely the smallest) and the F1.6/F1.8 convergence on `RoundResultsView`.
+
+### Considered but not changed (confession)
+
+- **Q1/Q6/Q7 answer TEXT not written.** Marked ANSWERED per the explicit instruction, but the prompt didn't supply the actual answers (they live in Dad's rules-doc review), so no specific resolution was invented — only the status flipped. Flagged inline in the Open Questions note.
+- **Wave 1 section placed after Phase B** (it extends the format engine) rather than renumbering existing phases — least-disruptive placement; the phase order is dependency-based and Wave 1 depends on B.
+- **Decision #575 struck through, not deleted** — kept for session-history continuity per the anti-drift convention (matches how the "Admin button on homepage" decision was retracted).
+- **schema.sql not byte-verified against a fresh `pg_dump`** — taken as-is from Thomas's `db:backup` run; the diff matches the expected 019+020 objects (verified by grep), but I did not re-run the dump.
+- **Out of scope (untouched):** all of `src/`, tests, migrations, `golden.csv`; the pre-existing untracked/dirty files (`.claude/launch.json`, `.claude/scheduled_tasks.lock`, `.claude/worktrees/`, `.claude/settings.local.json`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) — left unstaged, not mine to touch.
 
 ---
 

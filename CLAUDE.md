@@ -108,6 +108,10 @@ fetch it alongside `ROADMAP.md` before doing anything else.
   committing.
 - **After completing changes, confirm each item was addressed.** If anything
   was skipped, say so explicitly.
+- **Claude Code runs the Bash tool (bash), NOT PowerShell.** Do not use
+  PowerShell here-string syntax (`@'...'@`) in bash commands — it leaks
+  literal `@` characters (bit us on commit messages twice). Use bash
+  heredocs (`<<'EOF' ... EOF`) for multi-line content.
 
 ---
 
@@ -181,14 +185,7 @@ official number obtained from pro shop.
 Keys in use: `show_leaderboard`, `show_weekly_winners`, `two_ball_scoring`,
 `buy_in_amount` (default "10")
 
-### played_with_matrix
-*Aggregated view/table used by `src/app/admin/tabs/PlayedWith.tsx` heatmap. Keyed by `full_name` strings, **not** `player.id` FKs — earlier versions of this doc misdescribed it as integer FKs (corrected 2026-05-24 during E1 v1 ship). Left as-is for now; will be deprecated when admin Played With UI is rebuilt (E6). The player-profile Played With section (E1, 2026-05-24) deliberately queries `round_players` directly instead of this view, to get ID-keyed pills for navigation and to avoid the freshness uncertainty around this aggregate post-H.5 import.*
-
-| column | type | notes |
-|--------|------|-------|
-| player_a | text | `full_name` string, NOT FK to `players.id` |
-| player_b | text | `full_name` string, NOT FK to `players.id` |
-| times_played_together | integer | aggregate count |
+*(The legacy `played_with_matrix` view was DROPPED in migration `015_drop_played_with_matrix_view.sql` with the Phase E6 admin Played-With redesign — 2026-06-06. All Played-With surfaces now compute from `round_players` via `src/lib/playedWith/compute.ts`. Its schema entry was removed from this doc 2026-06-09.)*
 
 ---
 
