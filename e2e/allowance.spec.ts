@@ -36,8 +36,8 @@ test("scorecard scales strokes + net AND shows CH (raw) · PH (scaled) explicitl
   // The prior collapsed single-number format must be gone.
   await expect(page.getByText("Course Handicap: 16")).toHaveCount(0);
 
-  // 3. The round-level allowance caption renders (relabeled "Player Allowance").
-  await expect(page.getByText("Player Allowance at 80%")).toBeVisible();
+  // 3. The round-level allowance caption renders (relabeled "Handicap Allowance").
+  await expect(page.getByText("Handicap Allowance at 80%")).toBeVisible();
 
   // 4. Net reflects the SCALED strokes: 10 − 1 = 9 (raw would be 10 − 2 = 8).
   await expect(page.getByText("Net: 9")).toBeVisible();

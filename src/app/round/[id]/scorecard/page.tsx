@@ -1648,7 +1648,7 @@ export default function ScorecardPage() {
             fontSize: "0.75rem", fontWeight: 700, color: "#c2410c",
             letterSpacing: "0.02em", marginBottom: "8px",
           }}>
-            Player Allowance at {getHandicapAllowance(roundFormatConfig)}%
+            Handicap Allowance at {getHandicapAllowance(roundFormatConfig)}%
           </div>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
@@ -1939,12 +1939,14 @@ export default function ScorecardPage() {
                   )}
                 </div>
                 <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                  <ChPh ch={rp.course_handicap} ph={playingCH} />
-                  <span>·</span>
                   {/* H.2.5.7: per-round HI display reads the snapshot, not
                       players.handicap_index. Keeps finalized rounds visually
-                      consistent with their locked CH and net scores. */}
-                  <span>Handicap Index: {rp.handicap_index_snapshot != null ? rp.handicap_index_snapshot.toFixed(1) : "?"}</span>
+                      consistent with their locked CH and net scores. Order is
+                      HI · CH · PH (HI abbreviation; same middle-dot separator
+                      ChPh uses internally between CH and PH). */}
+                  <span>HI {rp.handicap_index_snapshot != null ? rp.handicap_index_snapshot.toFixed(1) : "?"}</span>
+                  <span>·</span>
+                  <ChPh ch={rp.course_handicap} ph={playingCH} />
                   {/* Phase D.2: Edit HI link — admin in edit mode only.
                       Available on every player (newly added or pre-existing). */}
                   {isAdmin && isRoundEditMode && (

@@ -223,13 +223,13 @@ describe("H.2.5.7 — per-round HI display reads from snapshot", () => {
     render(<ScorecardPage />);
     await act(async () => { await flush(50); });
 
-    // The metadata strip on the player row shows "Handicap Index: 19.4".
-    // Pre-fix this would render "Handicap Index: 10.0" — current player HI.
-    expect(screen.getByText(/Handicap Index:\s*19\.4/)).toBeInTheDocument();
+    // The metadata strip on the player row shows the snapshot HI as "HI 19.4".
+    // Pre-fix this would render the current player HI (10.0) instead.
+    expect(screen.getByText(/HI\s*19\.4/)).toBeInTheDocument();
     // Belt-and-braces: the current-HI value 10.0 must not appear as the
-    // HI label. (A "10.0" anywhere else in the page would be coincidence,
-    // but specifically "Handicap Index: 10.0" would prove the regression.)
-    expect(screen.queryByText(/Handicap Index:\s*10\.0/)).toBeNull();
+    // HI label. (A "10.0" elsewhere would be coincidence, but specifically
+    // "HI 10.0" would prove the regression.)
+    expect(screen.queryByText(/HI\s*10\.0/)).toBeNull();
   });
 
   it("CH display also derives from snapshot (regression coverage for H.2.5.3)", async () => {
@@ -241,8 +241,16 @@ describe("H.2.5.7 — per-round HI display reads from snapshot", () => {
     const { container } = render(<ScorecardPage />);
     await act(async () => { await flush(50); });
 
-    // Meta row now shows CH (raw) · PH (playing). At 100% allowance PH = CH,
-    // so the snapshot-derived 16 appears as "CH 16 · PH 16".
-    expect(container.textContent).toContain("CH 16 · PH 16");
+    // Meta row order is HI · CH · PH (HI abbreviation; middle-dot separators,
+    // no hyphen). HI is the snapshot 19.4; at 100% allowance PH = CH = the
+    // snapshot-derived 16. (The HI↔CH dot is a standalone span spaced by flex
+    // gap, so it has no spaces in textContent — match the · with optional ws.)
+    const txt = container.textContent ?? "";
+    expect(txt).toContain("CH 16 · PH 16"); // ChPh's own spaced "CH · PH"
+    expect(txt).toMatch(/HI 19\.4\s*·\s*CH 16 · PH 16/); // HI first, "·" separator
+    // Order: HI precedes CH precedes PH; separator is the middle-dot, not "-".
+    expect(txt.indexOf("HI 19.4")).toBeLessThan(txt.indexOf("CH 16"));
+    expect(txt.indexOf("CH 16")).toBeLessThan(txt.indexOf("PH 16"));
+    expect(txt).not.toMatch(/HI 19\.4\s*-\s*CH/);
   });
 });

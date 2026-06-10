@@ -2,8 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Scoring test-hardening — golden-master + cross-surface + invariants + CI gate)
-**Session purpose:** Make the bug class that bit twice (allowance display; TD33 History scores — "same value computed in two places, copies disagree") impossible to ship green, for the score/handicap/payout family. **Part 1:** golden-master `loadRoundResults` on 4 real prod rounds (frozen snapshots, each independently anchored to gross-from-scores + locked payouts). **Part 2:** cross-surface agreement (History list == summary == payouts; drill-in CH == scorecard CH). **Part 3:** engine invariants + negative controls. **Part 4 CODE LANDED:** `.github/workflows/ci.yml` (tsc + vitest gate, + e2e visibility job) + `scripts/vercel-ignored-build-step.mjs` (Option (a) deploy gate) — **Jonathan still wires the Vercel settings field + a `GITHUB_TOKEN` env var** (see TD36). 786/786 vitest, tsc clean.
+**Last updated:** 2026-06-09 (Scorecard handicap-display tweaks — caption rename + HI·CH·PH order)
+**Session purpose:** Display-only scorecard polish. (1) The above-holes allowance caption "Player Allowance at N%" → "**Handicap Allowance at N%**" (still hidden at 100%). (2) The meta row under the player name reordered to **HI · CH · PH** with HI abbreviated (`HI 23.9 · CH 21 · PH 21`) — same middle-dot separators, PH still orange when ≠ CH; HI is the per-round `handicap_index_snapshot` (no recompute). Two edit points in `scorecard/page.tsx`; caption + meta-row order covered by e2e + the jsdom scorecard render test. No scoring/dots/net change. 786/786 vitest, 33/33 Playwright, tsc clean.
+
+---
+
+## 2026-06-09 (Scorecard handicap-display tweaks)
+
+### Where we left off
+
+**Scorecard handicap line + allowance caption are reworded; nothing else changed.** Plan-first confirmed exactly two edit points in `src/app/round/[id]/scorecard/page.tsx`:
+
+- **Caption rename.** The round-level caption under the format chip: `Player Allowance at {N}%` → `Handicap Allowance at {N}%`. The hidden-at-100% gate is unchanged (allowance only matters when reduced).
+- **Meta-row reorder to HI · CH · PH.** Was `<ChPh/> · Handicap Index: {snapshot}`; now `HI {snapshot} · <ChPh/>` → renders `HI 23.9 · CH 21 · PH 21`. HI uses the abbreviation (now an official term alongside CH/PH). The HI↔CH separator is the existing standalone middle-dot span; the CH↔PH dot is `ChPh`'s internal `" · "` — same `·` character, no hyphen. PH keeps the orange-when-≠-CH accent; HI + CH plain. HI value = `handicap_index_snapshot` (display only).
+- **Flagged out of scope (not touched):** the tee-setup confirm card spells out "Handicap Index:" in a HI-left / CH·PH-right two-column layout (not the inline order); the player-profile header shows "Handicap Index:" (the portable live HI, a different stat). The drill-in + profile round rows show no HI, so there's nothing to reorder there.
+
+**Files:** MODIFIED `src/app/round/[id]/scorecard/page.tsx` (caption + meta row), `tests/components/scorecard-hi-snapshot.test.tsx` (HI label + new HI·CH·PH order assertion), `e2e/allowance.spec.ts` + `e2e/handicapAllowance.spec.ts` (caption string), `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(scorecard): rename allowance caption + reorder handicap line to HI · CH · PH
+
+### DB changes (today)
+
+- **None.** Display-only.
+
+### Tests / verification
+
+- **786/786 vitest** (updated the `scorecard-hi-snapshot` meta-row assertions: HI label → "HI 19.4"; new order/`·`-separator/no-hyphen check `HI 19.4 · CH 16 · PH 16`). **33/33 Playwright** (caption specs → "Handicap Allowance at 80%", still hidden at 100%; changeTee's `CH 20 · PH 20` still matches the `ChPh` span after the reorder). `tsc --noEmit` clean.
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **TD34** — History `teamsOnly` perf mode if it lags on a real phone. (The CI deploy gate, TD36, is now fully wired + proven — no longer pending.)
+
+### Considered but not changed (confession)
+
+- **Tee-setup card + profile header still say "Handicap Index:"** — both are different surfaces/contexts than the scorecard meta row the spec targeted; flagged, not changed (no silent scope expansion).
+- **HI↔CH dot has no spaces in `textContent`** (it's a standalone span spaced by flex `gap`, same as before the reorder) — visually identical to the CH↔PH dot; the unit test matches the `·` with optional whitespace rather than a brittle contiguous string.
+- **Out of scope (untouched):** dots/net/any scoring path (HI/CH/PH are display only), the `ChPh` component internals, migrations; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
+
+---
 
 ---
 
