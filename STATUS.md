@@ -2,8 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Handicap allowance selector — 5% steps, was 10%)
-**Session purpose:** Dad's ask — the Round Setup handicap-allowance picker now steps in **5%** (100 / 95 / 90 / 85 … / 10) instead of 10%. Same floor/ceiling + 100% default; one-line list change (`ALLOWANCE_OPTIONS`). No schema/scoring change — `format_config.handicap_allowance` already stores an integer and PH = `round(CH × allowance%)` already handles the half-steps. Golden tests pin the new values + the half-up boundary (CH 10 @ 95% = 9.5 → 10); e2e asserts the 5% options render.
+**Last updated:** 2026-06-09 (Scoring test-hardening — golden-master + cross-surface + invariants; Parts 1–3 of 4)
+**Session purpose:** Make the bug class that bit twice (allowance display; TD33 History scores — "same value computed in two places, copies disagree") impossible to ship green, for the score/handicap/payout family. **Part 1:** golden-master `loadRoundResults` on 4 real prod rounds (frozen snapshots, each independently anchored to gross-from-scores + locked payouts). **Part 2:** cross-surface agreement (History list == summary == payouts; drill-in CH == scorecard CH). **Part 3:** engine invariants + negative controls. **PAUSED before Part 4 (CI deploy-gate)** — it needs Jonathan's GitHub/Vercel settings (see TD36 + the report below). 786/786 vitest, tsc clean.
+
+---
+
+## 2026-06-09 (Scoring test-hardening — Parts 1–3)
+
+### Where we left off
+
+**Three new test suites lock the score/handicap/payout family against silent drift; Part 4 (the CI gate) is paused pending Jonathan's hands.** Committed in stages (one commit per part) so each is independently reviewable.
+
+- **Part 1 — golden-master (`cc4e930`).** `tests/lib/round/goldenMaster.test.ts` + `tests/fixtures/goldenRounds/` freeze the canonical `loadRoundResults` output for **4 real finalized prod rounds**, spanning the engine paths: **171** (2-Ball net best-2, override holes, **payout-anchored** — the TD33 round), **161** (2-Ball + blind draw), **157** (Best Ball best-1, override holes), **148** (GOBS Stableford, mixed tees + blind draw). Each round is **independently anchored before its snapshot is trusted**: every player's gross total is reconstructed from the raw fixture scores (pure summation, no engine — the exact check the History list lacked at TD33), and 171's net ranking is anchored to its locked `round_payouts`. Fixtures were exported READ-ONLY from prod via the Supabase MCP into deterministic committed data; **CI never touches prod**. Added `blind_draws` to the `FakeData` seed shape. **Finding:** only round 171 has `round_payouts` in prod (S3 historical backfill was deliberately skipped), so the other 3 lean on the engine-independent gross anchor + invariants — reported, not a gap in the discipline.
+- **Part 2 — cross-surface agreement (`b67833a`).** `crossSurface.test.ts`: (a) round 171 — the History list (`loadRoundsList`), the summary (`loadRoundResults`), and the locked `round_payouts` agree team-for-team on rank + total + string and all crown Team 3 (the test that would have caught TD33); (b) every golden round — the drill-in's per-player raw CH equals the scorecard's `round_players.course_handicap` ⇒ identical PH via `getPlayingCourseHandicap` (the test that would have caught the allowance-display bug).
+- **Part 3 — invariants + negative controls (`57f2554`).** `engineInvariants.test.ts` over all goldens: skip-tie rank permutation of 1..N; ranking monotonic in total (best-N ascending / Stableford descending); F9+B9 reconcile to the 18-hole total; net ≤ gross per scored player (stroke formats); thru 18; gross-from-scores. Negative controls prove the checks bite: removing the winner's scores throws the payout-ranking anchor; a **partial truncated scores fetch (the TD33 mechanism)** throws the gross anchor.
+- **CLAUDE.md** gained a "Golden-master the scoring engine" locked-pattern note: any change to `results.ts` / `teamTotals.ts` / `scoring/*` / `leaderboard/rank*` must run the goldens and, if a known round legitimately changes, regenerate (`vitest -u`) AND explain why in the commit.
+
+**Files:** NEW `tests/fixtures/goldenRounds/{roster,build,index}.ts` + `data/round{171,161,157,148}.ts`, `tests/lib/round/{goldenMaster,crossSurface,engineInvariants}.test.ts`, `tests/lib/round/__snapshots__/goldenMaster.test.ts.snap`. MODIFIED `tests/components/fake-supabase.ts` (+`blind_draws`), `CLAUDE.md`, `ROADMAP.md` (TD35 ✅ / TD36 📋), `STATUS.md`.
+
+### Today's commits
+
+- `cc4e930` test(scoring): golden-master loadRoundResults on 4 real prod rounds (Part 1)
+- `b67833a` test(scoring): cross-surface agreement — list == summary == payouts, CH == PH (Part 2)
+- `57f2554` test(scoring): engine property/invariant tests + negative controls (Part 3)
+- (docs) ROADMAP TD35/TD36 + STATUS (this commit)
+
+### DB changes (today)
+
+- **None.** Read-only prod export (Supabase MCP `execute_sql`) to build committed fixtures. No migration, no write.
+
+### Tests / verification
+
+- **786/786 vitest** (+42 across the 3 new suites). `tsc --noEmit` clean. Snapshots verified against the gross/payout anchors + hand-derived spot values (171 winner Team 3 −17; 161 winner −28 cross-validates the live History preview from the TD33 session).
+
+### Tomorrow's priority — **Part 4 (CI gate) needs Jonathan**
+
+See the **handoff report** (below / in chat) + TD36. Decisions/actions Jonathan owns:
+1. Pick the deploy-gate approach: (a) Vercel **Ignored Build Step** that checks the commit's CI status; (b) deploy-on-green via a GitHub Action + Vercel deploy hook (`VERCEL_TOKEN` secret, disable Vercel auto-deploy); (c) branch protection (gates PRs only — weak for direct pushes to master).
+2. Approve adding `.github/workflows/ci.yml` (vitest + `tsc`; Playwright as an optional heavier job that runs `npx playwright install`).
+3. Then the gate gets wired.
+
+### Considered but not changed (confession)
+
+- **Payout anchor only on round 171.** Prod has `round_payouts` for exactly one finalized round (S3 backfill skipped). Rather than fabricate anchors, the other 3 rounds use the engine-independent **gross-from-scores** anchor + invariants — which is the check that actually catches the TD33 missing-scores class. Surfaced, not hidden.
+- **No real Shambles / Texas Scramble / Alternate Shot round exists in prod** (those formats shipped after the last real round), so no golden for them — they stay covered by their hand-derived engine unit tests (`engine-shambles`, `teamHandicap`, `results-teamcard-net`). Noted in the fixtures index.
+- **Snapshot is a projection** (teams: rank/total/roster/F9/B9; players: gross/net; blind-draw fills) — deliberately omits the 18-length per-hole arrays (huge + redundant with gross/net + leg totals). Captures scoring correctness, stays human-readable.
+- **Part 4 NOT attempted headless** per the spec — no `.github/` or Vercel config committed; reported instead.
+- **Out of scope (untouched):** all app code (test-only session), migrations, the existing tests; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 
