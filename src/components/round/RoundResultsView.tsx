@@ -15,9 +15,15 @@
 // call `loadRoundResults` from `@/lib/round/results`).
 
 import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useIsAdmin, withAdminFlags } from "@/lib/admin";
+import { reopenRound } from "@/lib/round/reopenRound";
+import DangerModal from "@/app/admin/components/DangerModal";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { isStablefordFormat, type RankedTeam } from "@/lib/leaderboard/rank";
-import { getScoringBasis, isTeamCardFormat } from "@/lib/format/helpers";
+import type { RankedFormattedTeam } from "@/lib/leaderboard/rankAndFormat";
+import { getScoringBasis, isTeamCardFormat, getPlayingCourseHandicap } from "@/lib/format/helpers";
+import { sumAdjusted } from "@/lib/scoring";
 import type { Format, FormatConfig } from "@/lib/scoring";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
@@ -153,8 +159,76 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
             )}
           </>
         )}
+        <AdminEditRoundButton data={data} />
       </div>
     </>
+  );
+}
+
+// F.1 Part 6: admin-only "Edit this round" entry point on the summary. Players
+// never see it (gated on useIsAdmin). Intentionally re-adds an Edit entry that
+// D2.7 removed — but via the cleaner withAdminFlags path (TD20) and routed
+// through the existing D2 reopen DangerModal, not straight into edit mode.
+// Approved 2026-06-09 (see ROADMAP D2.7). Finalized rounds only — a live round
+// is already open, so admins edit it from the scorecard directly.
+function AdminEditRoundButton({ data }: { data: LoadedRoundResults }) {
+  const isAdmin = useIsAdmin();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!isAdmin || !data.isComplete) return null;
+
+  const blindDrawCount = data.teams.reduce((n, t) => n + t.blindDraws.length, 0);
+
+  const doEdit = async () => {
+    setBusy(true);
+    try {
+      await reopenRound(data.roundId);
+      // TD20: carry admin + edit through to the scorecard's edit mode.
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.set("admin", "1");
+      params.set("edit", "1");
+      router.push(withAdminFlags(`/round/${data.roundId}/scorecard`, params));
+    } catch (err) {
+      setBusy(false);
+      setConfirming(false);
+      alert("Error reopening round: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  return (
+    <div style={{ padding: "16px 0 0" }}>
+      <button
+        type="button"
+        data-testid="summary-edit-round-button"
+        onClick={() => setConfirming(true)}
+        disabled={busy}
+        style={{
+          width: "100%", padding: "12px", borderRadius: 10,
+          border: "1.5px solid #c0392b", background: "white",
+          color: "#8c2424", fontSize: 14, fontWeight: 700,
+          cursor: busy ? "default" : "pointer", fontFamily: "inherit",
+        }}
+      >
+        {busy ? "Opening…" : "Edit this round"}
+      </button>
+      {confirming && (
+        <DangerModal
+          title="Reopen this round?"
+          description={
+            blindDrawCount > 0
+              ? `This round has ${blindDrawCount} blind ${blindDrawCount === 1 ? "draw" : "draws"} on file — they will be preserved and NOT recomputed against any new teams you add. Do not add players to teams that already had blind draws applied — their drawn scores will become stale.`
+              : "The round will return to active state until you finalize it again."
+          }
+          confirmLabel="Reopen round"
+          cannotBeUndone={false}
+          onConfirm={doEdit}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -248,7 +322,7 @@ function TeamCard({
   onToggleTeam,
   onTogglePlayer,
 }: {
-  team: RankedTeam<TeamRow>;
+  team: RankedFormattedTeam<TeamRow>;
   format: Format;
   formatConfig: FormatConfig;
   isComplete: boolean;
@@ -357,7 +431,7 @@ function TeamCard({
             fontSize: 24, fontWeight: 700, lineHeight: 1,
             color: totalColor,
           }}>
-            {formatTeamTotal(team.total, format)}
+            {team.totalLabel}
           </div>
           <div style={{
             fontSize: 10, color: C.textMuted,
@@ -533,6 +607,42 @@ function PlayerSection({
 
       {expanded && (
         <div style={{ padding: "0 14px 12px" }}>
+          {/* F.1 Part 5: per-round Course Handicap + GHIN Adjusted total for
+              real players (skip blind-draw fills/dropouts and team-card roster
+              rows, mirroring the Individual Rankings exclusion). CH is the
+              allowance-adjusted PLAYING handicap so it matches the scorecard on
+              allowance rounds; GHIN Adjusted is the NDB-capped total players
+              post to GHIN. */}
+          {player.holesPlayed > 0
+            && player.droppedAfterHole == null
+            && !dropoutFill
+            && !isUnmatchedDropout && (() => {
+              const playingCH = getPlayingCourseHandicap(player.courseHandicap, formatConfig);
+              const adjTotal = sumAdjusted(player.adjScores);
+              return (
+                <div style={{
+                  display: "flex", gap: 18, flexWrap: "wrap",
+                  padding: "10px 0 4px", fontSize: 12.5, color: C.textSecondary,
+                }}>
+                  <span>
+                    <span style={{ fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.3px", fontSize: 10, marginRight: 6 }}>
+                      Course Handicap
+                    </span>
+                    <span style={{ fontWeight: 700, color: C.textPrimary }}>
+                      {playingCH ?? "—"}
+                    </span>
+                  </span>
+                  <span>
+                    <span style={{ fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.3px", fontSize: 10, marginRight: 6 }}>
+                      GHIN Adjusted
+                    </span>
+                    <span style={{ fontWeight: 700, color: "#c2410c" }}>
+                      {adjTotal ?? "—"}
+                    </span>
+                  </span>
+                </div>
+              );
+            })()}
           {dropoutFill && (
             <div style={{
               fontSize: 11, color: C.textMuted,

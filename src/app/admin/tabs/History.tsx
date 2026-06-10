@@ -1,25 +1,22 @@
 "use client";
 
+// F.1 Part 4 — admin Settings → History tab. Renders the SAME finalized-round
+// list component as the global /history tab (do not fork), composed with an
+// admin-only "In progress" section pinned at the top. That pinned section is
+// the only place a round left open 2+ days ago surfaces: the homepage only
+// shows today + yesterday's unfinished rounds, and the Leaderboard shows today
+// only — so a stale open round is invisible everywhere else.
+//
+// Finalized rows → /round/[id]/summary (via HistoryRoundList). In-progress rows
+// → the live scorecard so the admin can resume/correct scoring.
+
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { getTeamColor } from "@/lib/teamColors";
-import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
+import { loadRoundsList, type RoundListItem } from "@/lib/round/loadRoundsList";
+import HistoryRoundList from "@/components/history/HistoryRoundList";
 
-const C = {
-  navy: "#0c3057",
-  border: "rgba(0,0,0,0.08)",
-  bg: "#f5f4f0",
-};
-
-type TeamMap = Record<number, string[]>;
-
-type RoundEntry = {
-  id: number;
-  played_on: string;
-  is_complete: boolean;
-  teams: TeamMap;
-  playerCount: number;
-};
+type InProgressRound = { id: number; played_on: string };
 
 function formatDate(d: string) {
   return new Date(d + "T12:00:00").toLocaleDateString("en-US", {
@@ -28,60 +25,27 @@ function formatDate(d: string) {
 }
 
 export default function History() {
-  const [rounds, setRounds] = useState<RoundEntry[]>([]);
+  const [rounds, setRounds] = useState<RoundListItem[]>([]);
+  const [inProgress, setInProgress] = useState<InProgressRound[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
-    async function load() {
-      const [{ data: rawRounds }, { data: activePlayerRows }] = await Promise.all([
+    let cancelled = false;
+    (async () => {
+      const [items, { data: openRows }] = await Promise.all([
+        loadRoundsList(),
         supabase
           .from("rounds")
-          .select("id, played_on, is_complete")
+          .select("id, played_on")
+          .eq("is_complete", false)
           .order("played_on", { ascending: false }),
-        supabase
-          .from("players")
-          .select("id, full_name, is_active")
-          .eq("is_active", true),
       ]);
-
-      if (!rawRounds) { setLoading(false); return; }
-
-      // Disambiguating short names against the full active roster, so a
-      // player's name matches every other surface ("Wayne H" / "Wayne V").
-      const activeRoster: PlayerLike[] = (activePlayerRows ?? []) as PlayerLike[];
-      const nameFor = (playerId: number, fullName: string | null | undefined): string => {
-        const fn = fullName ?? "";
-        if (!fn) return "?";
-        return getDisplayName({ id: playerId, full_name: fn }, activeRoster);
-      };
-
-      const entries = await Promise.all(rawRounds.map(async (r: any) => {
-        const { data: rps } = await supabase
-          .from("round_players")
-          .select("team_number, player_id, players(display_name, full_name)")
-          .eq("round_id", r.id);
-
-        const teams: TeamMap = {};
-        let count = 0;
-        rps?.forEach((rp: any) => {
-          const tn = rp.team_number;
-          if (!tn) return;
-          // TD2 family: PostgREST embed may return the parent row as object
-          // or single-element array depending on relationship metadata.
-          const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
-          if (!teams[tn]) teams[tn] = [];
-          teams[tn].push(nameFor(rp.player_id, playerRow?.full_name));
-          count++;
-        });
-
-        return { id: r.id, played_on: r.played_on, is_complete: r.is_complete, teams, playerCount: count };
-      }));
-
-      setRounds(entries);
+      if (cancelled) return;
+      setRounds(items);
+      setInProgress((openRows ?? []) as InProgressRound[]);
       setLoading(false);
-    }
-    load();
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) {
@@ -94,88 +58,43 @@ export default function History() {
 
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "24px 16px" }}>
-      {rounds.length === 0 && (
-        <div style={{ textAlign: "center", color: "#9ca3af", padding: "40px" }}>No rounds recorded yet.</div>
-      )}
-
-      {rounds.map(round => {
-        const teamNums = Object.keys(round.teams).map(Number).sort((a, b) => a - b);
-        const isExpanded = expanded === round.id;
-
-        return (
-          <div
-            key={round.id}
-            style={{
-              background: "white", borderRadius: "10px", border: `1px solid ${C.border}`,
-              marginBottom: "10px", overflow: "hidden",
-            }}
-          >
-            <button
-              onClick={() => setExpanded(isExpanded ? null : round.id)}
+      {inProgress.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, color: "#92400e", textTransform: "uppercase",
+            letterSpacing: "0.5px", marginBottom: 8, paddingLeft: 2,
+          }}>
+            In progress
+          </div>
+          {inProgress.map(r => (
+            <Link
+              key={r.id}
+              href={`/round/${r.id}/scorecard?admin=1`}
               style={{
-                width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: "14px 16px", background: "none", border: "none", cursor: "pointer",
-                fontFamily: "DM Sans, system-ui, sans-serif", textAlign: "left",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                textDecoration: "none", color: "inherit",
+                background: "#fff6e0", border: "1px solid #ecd9a6", borderRadius: 12,
+                padding: "13px 15px", marginBottom: 8,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <span style={{ fontSize: "0.95rem", fontWeight: 600, color: "#1f2937" }}>
-                  {formatDate(round.played_on)}
-                </span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#042C53" }}>
+                {formatDate(r.played_on)}
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{
-                  padding: "2px 10px", borderRadius: "999px", fontSize: "0.7rem", fontWeight: 700,
-                  background: round.is_complete ? "#dcfce7" : "#fef3c7",
-                  color: round.is_complete ? "#166534" : "#92400e",
+                  fontSize: 11, fontWeight: 700, color: "#92400e",
+                  background: "#fdebc4", borderRadius: 999, padding: "2px 9px",
                 }}>
-                  {round.is_complete ? "Complete" : "In progress"}
+                  In progress
                 </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
-                  {teamNums.length} teams · {round.playerCount} players
-                </span>
-                <span style={{ color: "#9ca3af", fontSize: "0.85rem", transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
-                  ▾
-                </span>
-              </div>
-            </button>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#8c5010" }}>Resume →</span>
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
 
-            {isExpanded && (
-              <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px", background: C.bg }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px" }}>
-                  {teamNums.map(tn => {
-                    const tc = getTeamColor(tn);
-                    return (
-                    <div key={tn} style={{
-                      background: tc.bg, borderRadius: "8px",
-                      border: `1px solid ${tc.border}`, borderLeft: `3px solid ${tc.border}`,
-                      overflow: "hidden",
-                    }}>
-                      <div style={{ padding: "6px 10px" }}>
-                        <span style={{
-                          background: tc.pillBg, color: tc.pillText,
-                          fontSize: "0.62rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em",
-                          padding: "2px 7px", borderRadius: "999px",
-                        }}>
-                          Team {tn}
-                        </span>
-                      </div>
-                      <div style={{ padding: "4px 10px 10px" }}>
-                        {round.teams[tn].map((name, i) => (
-                          <div key={i} style={{ fontSize: "0.82rem", color: "#374151", padding: "2px 0" }}>
-                            {name}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
+      <HistoryRoundList rounds={rounds} />
     </div>
   );
 }

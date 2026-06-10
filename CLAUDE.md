@@ -347,6 +347,30 @@ or calls those surfaces.
 
 ---
 
+### List/detail ranking parity (F.1)
+
+The History list rows (`src/lib/round/loadRoundsList.ts` →
+`HistoryRoundList.tsx`) and the round detail (`RoundResultsView.tsx`) must show
+the SAME team rank, total string (`−4` / `E` / `12 pts`), and place (`T2 of 8`)
+for a given round. They stay in sync because BOTH read from one shared core:
+
+- **Team total math** lives once in `src/lib/round/teamTotals.ts`
+  (`buildEnginePerTeam` + `individualTeamTotal` for individual formats,
+  `teamCardScalars` for team-card). `loadRoundResults` AND `loadRoundsList`
+  both call these — neither recomputes a team total.
+- **Rank + total-string + place** come from `rankAndFormatTeams`
+  (`src/lib/leaderboard/rankAndFormat.ts`), which composes the existing
+  `rankTeams` (`leaderboard/rank.ts`) + `formatTeamTotal` (`format/copy.ts`).
+  `LoadedRoundResults.teams` is `RankedFormattedTeam<TeamRow>[]`, so the view
+  reads `team.totalLabel` directly.
+
+NEVER reimplement ranking or total formatting inside a loader or component —
+call `rankAndFormatTeams` (or compose `rankTeams`/`formatTeamTotal`). A
+divergence here is the render-layer drift class unit tests miss; the cross-loader
+parity test in `tests/lib/round/loadRoundsList.test.ts` is the guard.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

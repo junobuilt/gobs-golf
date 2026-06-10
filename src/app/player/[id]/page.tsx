@@ -317,7 +317,7 @@ export default function PlayerProfilePage() {
             {rounds.map((round) => (
               <Link
                 key={round.round_id}
-                href={`/round/${round.round_id}/scorecard`}
+                href={`/round/${round.round_id}/summary`}
                 className="player-row"
               >
                 <div>

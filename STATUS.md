@@ -2,8 +2,56 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Wave 1C — Texas Scramble + Alternate Shot on the NET team-card spine)
-**Session purpose:** Finalize the dormant team-card spine for NET play and ship **Texas Scramble** + **Alternate Shot** end-to-end. New pure `teamHandicap.ts` (per-format weighting of full member CHs; .5-up); `results.ts` nets the team-card headline (`total = (gross − teamHandicap) − teamPar`, additive `TeamRow.teamHandicap`/`teamNet`); migration 021 `finalize_round_team_card` (every team scores every hole; no blind draw) + format-check extended; team-card surface gained Submit→finalize→payouts + a Gross·HCP·Net / NET-delta headline. Alt-Shot 2-person enforced in BOTH the picker and the Submit guard. Per-hole/F9/B9 stay GROSS (locked rule). Migration dry-run-validated on prod then applied.
+**Last updated:** 2026-06-09 (Phase F.1 — History cluster: tab + profile re-target + admin + detail additions)
+**Session purpose:** Ship the F.1 History cluster — a global-nav **History tab** + admin Settings History tab (one shared list component), re-target the player-profile + admin rows to the existing `/round/[id]/summary`, add GHIN-Adjusted + per-round CH to the summary's expanded player rows, and re-add an admin "Edit this round" button to the summary (via `withAdminFlags`, consuming TD20). Backbone = a **shared ranking core** (`rankAndFormatTeams`) + a **trimmed list loader** (`loadRoundsList`, batched queries) + a **frozen-contract extraction** of the team-total math into `teamTotals.ts`, so list rows and the detail can never diverge (cross-loader parity test guards it). +24 unit tests + 2 e2e; live-verified against prod data.
+
+---
+
+## 2026-06-09 (Phase F.1 — History cluster)
+
+### Where we left off
+
+**The History cluster is shipped end-to-end and live-verified against real production data.** Three entry points (new global-nav History tab, player-profile rows, admin Settings History tab) all converge on the existing `/round/[id]/summary` (`RoundResultsView`) — no new detail surface. The list rows are compact mini-leaderboards whose rank/total-string/place are structurally identical to the detail because both read one shared core.
+
+- **Shared ranking core (NEW `src/lib/leaderboard/rankAndFormat.ts`).** `rankAndFormatTeams<T>(teams, format)` composes the existing `rankTeams` + `formatTeamTotal` and adds a tie-aware place label (`formatPlace` → "6th of 8" / "T2 of 8"). Returns `RankedFormattedTeam<T>` (`+ totalLabel + placeLabel`). `loadRoundResults` now ranks via this (so `LoadedRoundResults.teams` is `RankedFormattedTeam<TeamRow>[]` — additive); `RoundResultsView` reads `team.totalLabel` instead of calling `formatTeamTotal` inline.
+- **Frozen-contract extraction (NEW `src/lib/round/teamTotals.ts`).** The per-team total math moved out of `results.ts` into one place: `buildEnginePerTeam` + `individualTeamTotal` (individual formats) and `teamCardScalars` (team-card). `loadRoundResults` AND the new list loader both call these — neither recomputes a total. **Sourcing change to the frozen `loadRoundResults` path (TeamRow shape untouched) — flagged per the TeamRow frozen-contract memo + approved.** Behavior-preserving (existing `results-*` tests green).
+- **Trimmed list loader (NEW `src/lib/round/loadRoundsList.ts`).** All finalized rounds' per-team rank/names/total in **~6 BATCHED queries total** (independent of round count) — NOT `loadRoundResults` ×21. No per-hole/per-player data; `hasBlindDraws` from the batched blind_draws read drives the 🎲 chip. Returns `RoundListItem[]` with `teams: HistoryTeamLine[]` (incl. `playerIds` for the filter).
+- **History list component (NEW `src/components/history/HistoryRoundList.tsx`).** Default mode = mini-leaderboard rows (date · format chip · 🎲 · ≤5 ranked team lines · bold-navy "+N more teams"). Filtered mode = one compact row/round for the chosen player (their team line, bolded name, place + TEAM NET/PTS). Rows → `/round/[id]/summary`. ONE component for both the global tab and the admin tab (not forked).
+- **History page (NEW `src/app/history/page.tsx`) + nav.** `/history` loads `loadRoundsList` + active players; "Filter by player" reuses the E6 `PlayerCombobox` (session-only; persistence → I15). Bottom nav gained a 4th **History** item (3rd slot, before Players, clock icon) in `layout.tsx`.
+- **Admin Settings History tab (REWRITE `src/app/admin/tabs/History.tsx`).** Was a dead-end roster accordion → now renders the SAME `HistoryRoundList` (finalized, → summary) + an admin-only pinned **"In progress"** section (open rounds, any date, → scorecard) — the only surface catching a round left open 2+ days.
+- **Profile re-target (Part 3).** `player/[id]` round-history rows: `/round/[id]/scorecard` → `/summary`. Structure/ordering unchanged; GHIN Adj already shown (Wave 1A).
+- **Detail additions (Part 5, `RoundResultsView.tsx`).** Expanded player row gains **Course Handicap** (the allowance-adjusted PLAYING CH via `getPlayingCourseHandicap` — golden: raw 10 @ 90% → 9) + **GHIN Adjusted** total (`sumAdjusted(adjScores)`, already loaded). Skipped on dropouts/fills/team-card rows. Needed an additive `PlayerRow.courseHandicap` (raw, from `round_players` — flagged additive).
+- **Admin Edit button (Part 6, `RoundResultsView.tsx`).** When `useIsAdmin()` + `is_complete`, an "Edit this round" button → existing D2 reopen `DangerModal` → `reopenRound` → `withAdminFlags('/round/[id]/scorecard', {admin,edit})`. **Consciously reverses D2.7's single-entry invariant** (approved 2026-06-09); players never see it.
+
+**Files:** NEW `src/lib/leaderboard/rankAndFormat.ts`, `src/lib/round/teamTotals.ts`, `src/lib/round/loadRoundsList.ts`, `src/components/history/HistoryRoundList.tsx`, `src/app/history/page.tsx`, `history-tab-mockup-v2.html`, and tests `tests/lib/leaderboard/rankAndFormat.test.ts`, `tests/lib/round/loadRoundsList.test.ts`, `tests/components/history/HistoryRoundList.test.tsx`, `tests/components/round/RoundResultsView-history.test.tsx`, `e2e/history.spec.ts`. MODIFIED `src/lib/round/results.ts`, `src/components/round/RoundResultsView.tsx`, `src/app/layout.tsx`, `src/app/admin/tabs/History.tsx`, `src/app/player/[id]/page.tsx`, `tests/lib/round/blindDrawPairing.test.ts`, `tests/components/round/RoundResultsView.test.tsx`, `ROADMAP.md`, `CLAUDE.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(history): F.1 cluster — History tab + profile/admin re-target + summary GHIN/CH + admin Edit (shared ranking core + trimmed loader)
+
+### DB changes (today)
+
+- **None.** Read-only feature; no migration, no prod write. The live verification ran `loadRoundsList` read-only against prod.
+
+### Tests / verification
+
+- **730/730 vitest** (+24: `rankAndFormat` tie-aware place + best-N/Stableford totals; `loadRoundsList` finalized-only + ranking + **cross-loader total-string parity vs `loadRoundResults` for best-N AND Stableford**; `HistoryRoundList` ≤5+「+N more」+🎲+filter+negative-control+href; `RoundResultsView` golden allowance CH + GHIN-adj + absent-on-dropout + admin-present/player-absent/live-absent). **30/30 Playwright** (+2 in `e2e/history.spec.ts`: newest-first render → tap → correct summary; nav reachability). `tsc --noEmit` clean; **`npm run build` clean** (`/history` prerenders, no Suspense issue from the new `useSearchParams`).
+- **Live preview** (`/history`, real prod data): newest-first rows, format chips, 🎲 on blind-draw rounds, disambiguated names (Wayne H & Wayne V both correct), Stableford "33 pts", "+N more teams" on >5-team rounds, all rows → `/round/[id]/summary`; bottom nav = Home · Leaderboard · History · Players. Zero console errors.
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) with Dad before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked; the summary is now the natural home for the pills).
+3. **`npm run db:backup`** to fold the still-pending migration 019/020/021 objects into `supabase/schema.sql`.
+
+### Considered but not changed (confession)
+
+- **Frozen-contract extraction + additive `PlayerRow.courseHandicap` + `RankedFormattedTeam` teams type** — all flagged against the TeamRow frozen-contract memo. Sourcing/additive only; payout + S5 read `rank` + `players.length` + totals, all preserved. Approved via the parity-by-extraction plan decision.
+- **`history-tab-mockup-v2.html`** wasn't in the repo at handoff (only the older `leaderboard-mockup.html`); Jonathan dropped the real v2 mid-session — copied into the repo root for the record. Followed the **handoff over the mockup** where they conflicted (no "Pot $" money pill → S5; "+N more" navy+bold after 5 lines, not faint after 4) and the **mockup over the handoff** on nav order (History 3rd, not appended last). Dropped the mockup's `.me` row highlight in all-rounds mode (the app has no per-user identity).
+- **Newest-first sort** is delegated to Supabase `.order(...,{ascending:false})` — neither the FakeSupabase unit mock nor the e2e route mock re-sorts on `.order`, so those tests assert render/parity, not the DB sort; the live preview confirmed real newest-first ordering.
+- **Part 6 gated to `is_complete`** (finalized only) in addition to admin — a live round is already open, so reopening from the summary would just reset submission flags; admins edit live rounds from the scorecard. Slight scope choice beyond "gated on admin-ness"; flagged.
+- **RoundResultsView refactored onto the shared core in the same pass** (user-approved) so parity is structural, not just test-enforced. The Individual-Rankings player-place logic stays inline (it's player-level, not the team-place the core returns) — left as-is.
+- **Out of scope (untouched):** F1.4 (per-player standalone page — redundant), F1.5 (date/season nav), I15 (filter persistence), S5 (payout pills), the payout engine, migrations, `golden.csv`; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `supabase/schema.sql`) left unstaged.
 
 ---
 

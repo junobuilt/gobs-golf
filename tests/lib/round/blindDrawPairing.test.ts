@@ -31,6 +31,7 @@ function player(
     adjScores: Array.from({ length: 18 }, () => null),
     strokeAllocation: Array.from({ length: 18 }, () => 0),
     droppedAfterHole,
+    courseHandicap: null,
   };
 }
 

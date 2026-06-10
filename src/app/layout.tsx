@@ -59,6 +59,14 @@ function ClipboardIcon() {
     </svg>
   );
 }
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12 7 12 12 15 14" />
+    </svg>
+  );
+}
 function TrophyIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -97,6 +105,10 @@ export default function RootLayout({
           <Link href="/leaderboard">
             <TrophyIcon />
             Leaderboard
+          </Link>
+          <Link href="/history">
+            <HistoryIcon />
+            History
           </Link>
           <Link href="/players">
             <UsersIcon />

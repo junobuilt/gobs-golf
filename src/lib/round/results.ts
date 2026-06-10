@@ -4,23 +4,25 @@
 // React imports. Consumers wrap the call in their own useEffect.
 
 import { supabase } from "@/lib/supabase";
-import { computeRoundResult, getHandicapStrokes, computeAdjustedHoleScores, computeTeamHandicap } from "@/lib/scoring";
-import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
-import { getScoringBasis, getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
+import { getHandicapStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
+import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
+import { getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
 import {
-  rankTeams,
   holesCompleteForTeam,
   isStablefordFormat,
-  type RankedTeam,
 } from "@/lib/leaderboard/rank";
+import {
+  rankAndFormatTeams,
+  type RankedFormattedTeam,
+} from "@/lib/leaderboard/rankAndFormat";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 import { loadTeamScores } from "@/lib/round/teamScoresIo";
+import { buildTeamScoreMap } from "@/lib/round/teamScores";
 import {
-  buildTeamScoreMap,
-  getTeamHoleTotal,
-  getTeamTotal,
-  holesScoredForTeam,
-} from "@/lib/round/teamScores";
+  buildEnginePerTeam,
+  individualTeamTotal,
+  teamCardScalars,
+} from "@/lib/round/teamTotals";
 
 const F9 = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 const B9 = [10, 11, 12, 13, 14, 15, 16, 17, 18] as const;
@@ -54,6 +56,13 @@ export type PlayerRow = {
   // that hole. Drives the "Left after hole N" badge and the mid-round
   // dropout merge with a blind_draws fill in PlayerHoleGrid.
   droppedAfterHole: number | null;
+  // F.1 Part 5: the round's STORED (raw, 100%) course handicap from
+  // round_players.course_handicap. Display-only — the expanded player row on
+  // RoundResultsView renders the allowance-adjusted PLAYING CH via
+  // getPlayingCourseHandicap(courseHandicap, formatConfig) so the number
+  // matches the scorecard on allowance rounds. NULL for players missing a CH.
+  // (Carried on team-card roster rows too, though those never expand per-player.)
+  courseHandicap: number | null;
 };
 
 // D.1: one blind-draw fill on a short team. Display layer (RoundResultsView,
@@ -126,7 +135,7 @@ export type LoadedRoundResults = {
   format: Format;
   formatConfig: FormatConfig;
   formatLocked: boolean;
-  teams: Array<RankedTeam<TeamRow>>;
+  teams: Array<RankedFormattedTeam<TeamRow>>;
   maxThru: number;
 };
 
@@ -266,37 +275,23 @@ export async function loadRoundResults(
       const teamNum = parseInt(teamNumStr);
       const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
       const teamHoles = holesByTee[firstTeeId] || [];
-      const parByHole: Record<number, number> = {};
-      teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
 
-      const gridScores: (number | null)[] = Array.from({ length: 18 }, (_, i) =>
-        getTeamHoleTotal(tsMap, teamNum, i + 1),
-      );
-      const gridPar: number[] = Array.from({ length: 18 }, (_, i) => parByHole[i + 1] ?? 0);
-
-      const rawTeamScore = getTeamTotal(tsMap, teamNum);
-      let teamPar = 0;
-      for (let i = 0; i < 18; i++) if (gridScores[i] != null) teamPar += gridPar[i];
-      // Phase 1C: NET team-card formats take a SINGLE team-handicap deduction off
-      // the team gross (net = gross − teamHandicap), using members' FULL (100%)
-      // course handicaps — the per-format weighting IS the allowance, so the
-      // Wave 1A allowance helper is deliberately not applied. Per-hole/F9/B9 stay
-      // GROSS (legTotal below is unchanged); only the headline `total` is net.
-      const teamHandicap = computeTeamHandicap(
-        format,
-        (teamPlayers as any[]).map((rp: any) => rp.course_handicap ?? null),
-      ) ?? 0;
-      const teamNet = rawTeamScore - teamHandicap;
-      const total = teamNet - teamPar; // signed NET delta vs par (lower = better)
-      const thru = holesScoredForTeam(tsMap, teamNum);
+      // Phase 1C / F.1: team-card headline total + grid scalars now come from the
+      // shared teamCardScalars() so the History list scores team-card rounds
+      // identically. NET team-card formats take a SINGLE team-handicap deduction
+      // off the team gross (net = gross − teamHandicap) using members' FULL CHs;
+      // per-hole/F9/B9 stay GROSS (legTotal below), only `total` is net.
+      const {
+        rawTeamScore, teamPar, total, thru, teamHandicap, teamNet, gridScores, gridPar,
+      } = teamCardScalars({ format, teamNum, teamPlayers, teamHoles, tsMap });
 
       const legTotal = (holes: ReadonlyArray<number>): number | null => {
         let scoreSum = 0, parSum = 0, any = false;
         for (const h of holes) {
-          const t = getTeamHoleTotal(tsMap, teamNum, h);
+          const t = gridScores[h - 1];
           if (t == null) continue;
           scoreSum += t;
-          parSum += parByHole[h] ?? 0;
+          parSum += gridPar[h - 1];
           any = true;
         }
         return any ? scoreSum - parSum : null;
@@ -323,6 +318,7 @@ export async function loadRoundResults(
           adjScores: Array.from({ length: 18 }, () => null),
           strokeAllocation: Array.from({ length: 18 }, () => 0),
           droppedAfterHole: rp.dropped_after_hole ?? null,
+          courseHandicap: rp.course_handicap ?? null,
         };
       });
 
@@ -344,7 +340,7 @@ export async function loadRoundResults(
       };
     });
 
-    const ranked = rankTeams(teamRows, format);
+    const ranked = rankAndFormatTeams(teamRows, format);
     const maxThru = teamRows.reduce((m, t) => Math.max(m, t.thru), 0);
 
     return {
@@ -362,83 +358,28 @@ export async function loadRoundResults(
     };
   }
 
-  const useGross = getScoringBasis(formatConfig) === "gross";
-  // Wave 1A: per-round handicap allowance scales every player's raw CH before
-  // the engine allocates strokes (competition net). 2026-06-09: routed through
-  // getPlayingCourseHandicap — the single source the dots + CH display also read.
-  // No-op at 100% and under gross scoring (CH zeroed below).
   const isStableford = isStablefordFormat(format);
 
-  // D.1 hotfix follow-up: precompute engine + par lookup per team in a
-  // first pass so the second pass can do cross-team lookups when
-  // computing each blind-draw fill's contribution (the drawn player's
-  // engine output lives on their OWN team, not the short team).
-  type TeamEngineCache = {
-    engine: ReturnType<typeof computeRoundResult>;
-    parByHole: Record<number, number>;
-  };
-  const enginePerTeam: Record<number, TeamEngineCache> = {};
-  Object.entries(teamMap).forEach(([teamNumStr, teamPlayers]) => {
-    const teamNum = parseInt(teamNumStr);
-    const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
-    const teamHoles = holesByTee[firstTeeId] || [];
-    const parByHole: Record<number, number> = {};
-    teamHoles.forEach(h => { parByHole[h.holeNumber] = h.par; });
-    const playersForEngine = (teamPlayers as any[]).map((rp: any) => ({
-      playerId: String(rp.id),
-      courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, formatConfig),
-      grossScores: scoresByRpId[rp.id] || {},
-    }));
-    // Blind-draw fills for THIS team. Best-N: the engine injects them into the
-    // per-hole "best of" pool, so their effect is already in result.teamScore /
-    // teamParAtScored (blindDrawTotal stays 0). Stableford: they accumulate into
-    // result.blindDrawTotal and result.blindDrawPerHole. Drawn player's tee/CH
-    // come from their own round_players row (looked up via playerLookup).
-    const blindDrawInputs: BlindDrawInput[] = (blindDrawRows ?? [])
-      .filter((bd: any) => bd.short_team_number === teamNum)
-      .map((bd: any) => {
-        const drawnPlayerId = bd.drawn_player_id as number;
-        const lookup = playerLookup[drawnPlayerId];
-        const drawnRpId = lookup?.rpId;
-        const drawnHoles = lookup ? (holesByTee[lookup.teeId] || []) : [];
-        const drawnRp = (rps as any[]).find(r => r.id === drawnRpId);
-        const drawnCH = useGross
-          ? 0
-          : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, formatConfig);
-        return {
-          drawnPlayerId: String(drawnRpId ?? drawnPlayerId),
-          drawnPlayerCourseHandicap: drawnCH,
-          drawnPlayerScores: drawnRpId ? (scoresByRpId[drawnRpId] || {}) : {},
-          drawnPlayerHoles: drawnHoles,
-          holeRangeStart: bd.hole_range_start as number,
-          holeRangeEnd: bd.hole_range_end as number,
-        };
-      });
-    enginePerTeam[teamNum] = {
-      engine: computeRoundResult({
-        format,
-        formatConfig: { ...formatConfig, basis: useGross ? "gross" : "net" },
-        holes: teamHoles,
-        players: playersForEngine,
-        blindDraws: blindDrawInputs,
-      }),
-      parByHole,
-    };
+  // D.1 hotfix follow-up: precompute engine + par lookup per team in a first
+  // pass so the second pass can do cross-team lookups when computing each
+  // blind-draw fill's contribution (the drawn player's engine output lives on
+  // their OWN team, not the short team). F.1: this pass (and the headline-total
+  // arithmetic below) now lives in src/lib/round/teamTotals.ts so the History
+  // list loader scores every round through the identical path.
+  const enginePerTeam = buildEnginePerTeam({
+    format, formatConfig, teamMap, holesByTee, scoresByRpId, blindDrawRows, rps, playerLookup,
   });
 
   const teamRows: TeamRow[] = Object.entries(teamMap).map(([teamNumStr, teamPlayers]) => {
     const teamNum = parseInt(teamNumStr);
     const firstTeeId = teamPlayers[0]?.tee_id as number;
     const teamHoles = holesByTee[firstTeeId] || [];
-    const { engine: result, parByHole } = enginePerTeam[teamNum];
-
-    const rawTeamScore = result.teamScore ?? 0;
-    const teamPar = result.teamParAtScored;
-    // Best-N: total is delta (blindDrawTotal stays 0 for best-N this session).
-    // Stableford: teamPar is 0, so total = rawTeamScore + blindDrawTotal.
-    // The blind-draw accumulator lives on a separate field so per-hole
-    // engine teamScore stays = sum of perPlayer.points (team-only invariant).
-    const total = rawTeamScore + result.blindDrawTotal - teamPar;
+    const cache = enginePerTeam[teamNum];
+    const result = cache.engine;
+    const parByHole = cache.parByHole;
+    // Headline total from the shared single definition (see teamTotals.ts).
+    // Best-N: delta vs par (blindDrawTotal 0). Stableford: points incl. fills.
+    const { rawTeamScore, teamPar, total } = individualTeamTotal(cache);
 
     // F9 / B9 leg split from engine perHole + blindDrawPerHole. Best-N:
     // legTotal = legScore - legPar accumulated across scored holes (blind-
@@ -539,6 +480,7 @@ export async function loadRoundResults(
         adjScores,
         strokeAllocation,
         droppedAfterHole: rp.dropped_after_hole ?? null,
+        courseHandicap: rp.course_handicap ?? null,
       };
     });
 
@@ -621,7 +563,7 @@ export async function loadRoundResults(
     };
   });
 
-  const ranked = rankTeams(teamRows, format);
+  const ranked = rankAndFormatTeams(teamRows, format);
   const maxThru = teamRows.reduce((m, t) => Math.max(m, t.thru), 0);
 
   return {

@@ -17,6 +17,7 @@ vi.mock("@/lib/supabase", () => ({
 import RoundResultsView from "@/components/round/RoundResultsView";
 import type { LoadedRoundResults, TeamRow } from "@/lib/round/results";
 import type { RankedTeam } from "@/lib/leaderboard/rank";
+import { rankAndFormatTeams } from "@/lib/leaderboard/rankAndFormat";
 import type { Format } from "@/lib/scoring";
 
 const PAR_18 = [4, 4, 4, 3, 5, 4, 3, 5, 4, 4, 4, 3, 5, 4, 3, 5, 4, 4];
@@ -50,6 +51,7 @@ function makeTeam(
         adjScores: SCORES_18,
         strokeAllocation: Array.from({ length: 18 }, () => 0),
         droppedAfterHole: null,
+        courseHandicap: null,
       },
     ],
     blindDraws: [],
@@ -68,7 +70,10 @@ function makeData(
     format: "2_ball",
     formatConfig: { basis: "net" },
     formatLocked: isComplete,
-    teams,
+    // Run through the real shared core so totalLabel/placeLabel match prod.
+    // All fixtures here are best-N (non-Stableford), so "2_ball" labels are
+    // correct even for the rows whose format is overridden afterward.
+    teams: rankAndFormatTeams(teams, "2_ball"),
     maxThru: teams.reduce((m, t) => Math.max(m, t.thru), 0),
   };
 }
