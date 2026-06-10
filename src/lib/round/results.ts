@@ -29,6 +29,9 @@ const B9 = [10, 11, 12, 13, 14, 15, 16, 17, 18] as const;
 
 export type PlayerRow = {
   rpId: number;
+  // F.1 fix: players.id (NOT round_players.id) — lets the History list, which is
+  // now a projection of loadRoundResults, map teams → player ids for its filter.
+  playerId: number;
   displayName: string;
   grossTotal: number;
   // Best-N: signed net delta vs par-of-played. Stableford: absolute points sum.
@@ -308,6 +311,7 @@ export async function loadRoundResults(
         const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
         return {
           rpId: rp.id as number,
+          playerId: rp.player_id as number,
           displayName: nameFor(rp.player_id as number, playerRow?.full_name),
           grossTotal: 0,
           netValue: 0,
@@ -470,6 +474,7 @@ export async function loadRoundResults(
 
       return {
         rpId: rp.id as number,
+        playerId: rp.player_id as number,
         displayName,
         grossTotal,
         netValue,

@@ -2,8 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Phase F.1 — History cluster: tab + profile re-target + admin + detail additions)
-**Session purpose:** Ship the F.1 History cluster — a global-nav **History tab** + admin Settings History tab (one shared list component), re-target the player-profile + admin rows to the existing `/round/[id]/summary`, add GHIN-Adjusted + per-round CH to the summary's expanded player rows, and re-add an admin "Edit this round" button to the summary (via `withAdminFlags`, consuming TD20). Backbone = a **shared ranking core** (`rankAndFormatTeams`) + a **trimmed list loader** (`loadRoundsList`, batched queries) + a **frozen-contract extraction** of the team-total math into `teamTotals.ts`, so list rows and the detail can never diverge (cross-loader parity test guards it). +24 unit tests + 2 e2e; live-verified against prod data.
+**Last updated:** 2026-06-09 (TD33 — History list wrong-winner fix: scores-fetch truncation)
+**Session purpose:** Fix a HIGH-priority live bug — the F.1 History list showed wrong team scores + winner vs the summary/`round_payouts` (round 171 crowned the last-place team). Root cause was NOT a parallel scoring path (the list already shared the engine): it batch-fetched all 5,256 finalized scores in one un-paginated `.in()`, hitting Supabase's **1000-row cap** → newest rounds lost their scores → engine computed E/garbage. Fix: rewrote `loadRoundsList` as a **per-round projection of `loadRoundResults`** (each fetch small + complete; list can't disagree with summary). Added `PlayerRow.playerId`, a gross≠net negative control, an e2e winner-agreement assertion, and CLAUDE.md principles #6 (single source of truth incl. the fetch) + #7 (cross-surface agreement tests at scale). Live-verified all 21 prod rounds now match the summary.
+
+---
+
+## 2026-06-09 (TD33 — History list wrong-winner fix)
+
+### Where we left off
+
+**The History list now agrees with the summary and `round_payouts` on every round, live-verified against prod.** Round 171 was the reported case: the list crowned Team 2 (Wayne V · Drew Z · Chuck B · Steve D, the actual LAST place at +2) as the −1 "winner" and flattened the other three teams to E; the summary correctly showed Team 3 (−17) 1st, Team 1 (−8), Team 4 (−7), Team 2 (+2) — matching the locked payouts.
+
+- **Root cause (corrected the bug report's hypothesis).** The list was NOT running a parallel/divergent scoring calculation — `loadRoundsList` already reused the canonical engine via `teamTotals.ts`. The real bug: it batch-fetched **every** finalized score in ONE `.in("round_player_id", rpIds)` with no `.limit`/`.range`/`.order`. Prod has **5,256** finalized scores across 292 players; Supabase's default **1000-row API response cap** silently truncated the result, dropping the newest rounds' scores (round 171's scores sit at id-positions 4969–5256, the furthest past the cap of any round → total loss). Scoreless teams compute as E (0−0); a boundary team gets the phantom −1. The cross-loader parity test passed because it seeded ~144 rows — under the cap (the "fixtures must not accidentally pass" trap, at the data-volume level).
+- **Fix — `loadRoundsList` is now a PROJECTION of `loadRoundResults`.** It queries the finalized round ids, then `Promise.all`s `loadRoundResults(id)` per round and **selects** the trimmed fields (`teamNumber`, `rosterDisplay`, `rank`, `total`, `totalLabel`, `placeLabel`, `playerIds`, `hasBlindDraws`). No more batched `scores`/`round_players`/`holes`/`blind_draws` reads and no direct `teamTotals`/`rankAndFormatTeams` calls in the list. Each round's own fetch (≤378 scores) is far under the cap, so the list is structurally incapable of disagreeing with the summary.
+- **Additive `PlayerRow.playerId`** (players.id, distinct from `rpId` = round_players.id) so the list's player filter can map teams → player ids now that it consumes `loadRoundResults` output. Flagged per the TeamRow frozen-contract memo (additive, populated at both PlayerRow sites).
+- **`teamTotals.ts` stays** as `loadRoundResults`' internal single-source engine core (still has its own unit test); the list just stops calling it directly.
+- **Perf tradeoff (accepted by Jonathan):** runs full `loadRoundResults` ~21× per History load. Mitigated by `Promise.all` + the loading state. A `teamsOnly` mode (skip per-player roll-up) is logged as **TD34** — correctness chosen over the trimmed-loader optimization.
+
+**Files:** MODIFIED `src/lib/round/loadRoundsList.ts` (rewrite), `src/lib/round/results.ts` (`PlayerRow.playerId`), `e2e/history.spec.ts` (+ winner-agreement test), `tests/lib/round/loadRoundsList.test.ts` (+ gross≠net negative control), `tests/lib/round/blindDrawPairing.test.ts`, `tests/components/round/RoundResultsView.test.tsx`, `tests/components/round/RoundResultsView-history.test.tsx` (fixtures + `playerId`), `CLAUDE.md` (principles #6/#7), `ROADMAP.md` (TD33/TD34), `STATUS.md`.
+
+### Today's commits
+
+- (this session) fix(history): rank History list via per-round loadRoundResults projection — fixes scores-fetch truncation (wrong winner)
+
+### DB changes (today)
+
+- **None.** Read-only diagnosis (MCP `execute_sql` against prod confirmed 5,256 finalized scores, round 171's `scores_before_min = 4968`, and the team→payout ground truth). No migration, no prod write.
+
+### Tests / verification
+
+- **737/737 vitest** (+ gross≠net negative control proving the list ranks by NET not gross + agrees with `loadRoundResults` team-for-team; existing cross-loader parity tests now structurally guaranteed since the list IS the projection). **31/31 Playwright** (+ `e2e/history.spec.ts` winner-agreement: list ranks Team 1 above Team 2 with sub-par net totals, summary agrees). `tsc --noEmit` + `npm run build` clean.
+- **Live-verified against prod** via preview `/history`: round 171 = Team 3 −17 (1st) / −8 / −7 / Team 2 +2 (last), matching summary + payouts exactly. Spot-checked all 21 rounds — real spreads everywhere, blind-draw rounds (🎲) sensible, Stableford in "pts", tie-aware ranks (May 13 two teams at rank 3); zero all-E garbage. (No Shambles round exists in prod history.)
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **TD34** if History feels slow on a real phone (the `teamsOnly` mode).
+
+### Considered but not changed (confession)
+
+- **Bug report's root-cause hypothesis was wrong, and I said so.** It assumed a parallel/divergent scoring path (summing raw scores, skipping best-N/handicaps). Reality: shared engine, truncated FETCH. The fix still follows the report's directive (list = projection of `loadRoundResults`), which also eliminates the fetch-divergence surface entirely.
+- **`teamTotals.ts` kept, not deleted** — it's still `loadRoundResults`' internal core (the list no longer calls it, but `results.ts` does). Its unit test stays valid.
+- **The 1000-row cap can't be reproduced in the unit mocks** (FakeSupabase / e2e route mock impose no cap), so the truncation itself is guarded **architecturally** (per-round fetch < cap) rather than by a unit test; the gross≠net + winner-agreement tests guard the observable symptom. Noted in CLAUDE.md #7.
+- **Perf:** accepted the 21× cost per Jonathan's call; `teamsOnly` deferred to TD34. Did not pre-optimize.
+- **Out of scope (untouched):** the scoring engine, payouts, migrations, other surfaces; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 

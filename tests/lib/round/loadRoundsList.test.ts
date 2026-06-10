@@ -134,3 +134,62 @@ describe("loadRoundsList", () => {
     expect(list.teams[0].totalLabel).toMatch(/pts$/);
   });
 });
+
+// Negative control for the truncation regression: a round where GROSS order ≠
+// NET order. The old batched loader truncated its scores fetch (Supabase
+// 1000-row cap) and produced near-E garbage with the wrong winner; the
+// projection must rank by NET and agree with loadRoundResults team-for-team.
+function grossNetSeed(): FakeData {
+  return {
+    rounds: [
+      {
+        id: 10, played_on: "2026-05-30", course_id: 1, is_complete: true,
+        format: "best_ball", format_config: { basis: "net", override_holes: [] },
+        format_locked_at: "2026-05-30T00:00:00Z", created_at: "2026-05-30T00:00:00Z",
+      },
+    ],
+    tees: [{ id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 }],
+    holes: holes(),
+    round_players: [
+      // Team 1: scratch (CH 0), LOWER gross (72) → would win on gross.
+      { id: 311, round_id: 10, player_id: 301, tee_id: 1, team_number: 1, course_handicap: 0, dropped_after_hole: null },
+      // Team 2: CH 36 (2 strokes/hole), HIGHER gross (90) → wins on NET.
+      { id: 312, round_id: 10, player_id: 302, tee_id: 1, team_number: 2, course_handicap: 36, dropped_after_hole: null },
+    ],
+    players: [
+      { id: 301, full_name: "Scratch Sam", display_name: "Sam", handicap_index: 0, preferred_tee_id: 1, is_active: true },
+      { id: 302, full_name: "Bogey Bob", display_name: "Bob", handicap_index: 36, preferred_tee_id: 1, is_active: true },
+    ],
+    scores: [...scoresFor(311, 4, 5000), ...scoresFor(312, 5, 5100)],
+  };
+}
+
+describe("loadRoundsList — net ranking (gross ≠ net negative control)", () => {
+  beforeEach(() => {
+    fakeRef.current = new FakeSupabase(grossNetSeed());
+  });
+
+  it("ranks by NET (not gross) and agrees with loadRoundResults team-for-team", async () => {
+    const list = (await loadRoundsList()).find(i => i.roundId === 10)!;
+    const detail = await loadRoundResults(10);
+    expect(detail.status).toBe("ok");
+    if (detail.status !== "ok") return;
+
+    // Gross winner is Team 1 (72 < 90). NET winner is Team 2 (2 strokes/hole).
+    expect(list.teams[0].teamNumber).toBe(2); // net winner ranks 1st...
+    expect(list.teams[0].teamNumber).not.toBe(1); // ...NOT the lower-gross team
+
+    // Projection == canonical: same rank + same total string, per team.
+    const detailByTeam = new Map(
+      detail.data.teams.map(t => [t.id, { rank: t.rank, label: t.totalLabel }]),
+    );
+    for (const t of list.teams) {
+      expect(t.rank).toBe(detailByTeam.get(t.teamNumber)!.rank);
+      expect(t.totalLabel).toBe(detailByTeam.get(t.teamNumber)!.label);
+    }
+
+    // Strongly negative net delta proves handicaps were applied — NOT the
+    // near-E the truncated (scoreless) loader produced.
+    expect(list.teams[0].total).toBeLessThan(-10);
+  });
+});

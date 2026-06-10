@@ -21,6 +21,7 @@ function player(
 ): PlayerRow {
   return {
     rpId,
+    playerId: rpId,
     displayName,
     grossTotal: 0,
     netValue: 0,

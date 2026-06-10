@@ -41,6 +41,7 @@ function makeTeam(
     players: [
       {
         rpId: id * 10,
+        playerId: id * 100,
         displayName: "Player A",
         grossTotal: 72,
         netValue: -2,

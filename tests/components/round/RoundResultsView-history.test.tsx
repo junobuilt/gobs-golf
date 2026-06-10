@@ -27,6 +27,7 @@ const PAR_18 = Array(18).fill(4);
 
 function player(over: Partial<PlayerRow> & { rpId: number; displayName: string }): PlayerRow {
   return {
+    playerId: over.rpId,
     grossTotal: 80,
     netValue: -2,
     netTotal: 70,

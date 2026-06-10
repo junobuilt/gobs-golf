@@ -470,3 +470,13 @@ When a spec says "player X is hardcoded to do Y" (default tee, default format, d
 ### 5. Mid-round CH-affecting edits must recompute CH in their own handler
 
 Any edit that changes a player's Course Handicap mid-round (HI edit → D2.6 `saveEditHi`; tee change → I14 `confirmChangeTee`/`updatePlayerTee`) must recompute `course_handicap = computeCourseHandicap(...)` **explicitly inside its handler** and write it to the row + local state. The LT1 self-heal (`scorecard/page.tsx` load) that reconciles stored vs computed CH only fires **on mount**, not on a data change — so relying on it to fix a stale CH after an in-session edit silently leaves the wrong value until the next reload. Display CH/dots via `getPlayingCourseHandicap` (never a raw `course_handicap` read when an allowance < 100 is in effect).
+
+### 6. Single source of truth for derived values
+
+No surface (History list, summary, leaderboard, player profile, payouts) **recomputes** a value another surface owns — it **reads the canonical engine output**: team scores/rankings from `loadRoundResults` / `results.ts` (whose internals live in `teamTotals.ts` + `rankAndFormatTeams`), payouts from `round_payouts`. If you find yourself computing a score / handicap / payout that already exists elsewhere, **stop — read it**.
+
+This includes the **data fetch**, not just the math. A surface that re-runs the canonical engine but feeds it its *own* differently-shaped query can still diverge — that is exactly how the F.1 History list shipped wrong winners (2026-06-09): it reused the engine but batch-fetched all scores in one `.in()`, which hit Supabase's **1000-row API cap** (5k+ score rows in prod) and silently dropped the newest rounds' scores. The fix made the list a **projection of `loadRoundResults` per round** (each round's fetch is small + complete). Performance is solved by **selecting LESS of the canonical result** (e.g. a future `teamsOnly` mode), NEVER by a parallel calculation or a parallel fetch. Mind Supabase's default 1000-row response cap on ANY un-paginated `.in()`/`.select()` over a large table.
+
+### 7. Cross-surface agreement tests
+
+Any value shown in two or more places gets a test asserting the surfaces are **equal**, not merely that each renders. "A number rendered" is not a passing bar — "the number matches the canonical source" is. And the fixture must be at **realistic scale / shape**: the F.1 cross-loader parity test passed while prod was broken because it seeded ~144 score rows — far under the 1000-row cap that caused the bug. Seed enough (or structure the test) so the failure mode can actually occur.

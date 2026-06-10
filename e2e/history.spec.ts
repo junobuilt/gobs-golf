@@ -84,6 +84,30 @@ test("History lists finalized rounds newest-first and taps through to the right 
   await expect(page.getByText("Team 2").first()).toBeVisible();
 });
 
+test("History list crowns the SAME winner as the summary (right team, net scores applied)", async ({ page, db }) => {
+  // Round 700: Team 1 (Adam + Betty) beats Team 2 (Carl + Dora) on net. The
+  // truncation regression showed the wrong winner + flat E scores; this guards
+  // that the list ranks the right team with real (sub-par) net totals, matching
+  // the summary.
+  seed(db, historySeed());
+  await page.goto("/history");
+
+  const row = page.locator('a[href="/round/700/summary"]');
+  const rowText = await row.innerText();
+  // Team 1's player is listed ABOVE Team 2's (rank 1 before rank 2).
+  expect(rowText.indexOf("Adam")).toBeGreaterThanOrEqual(0);
+  expect(rowText.indexOf("Adam")).toBeLessThan(rowText.indexOf("Carl"));
+  // A sub-par minus total proves net scores were applied — not the all-E a
+  // scoreless/truncated loader produced (U+2212 minus).
+  expect(rowText).toContain("−");
+
+  // The summary agrees on the winner: Team 1 (Adam) leads Team 2 (Carl).
+  await row.click();
+  await expect(page).toHaveURL(/\/round\/700\/summary/);
+  const summaryText = await page.locator("body").innerText();
+  expect(summaryText.indexOf("Adam")).toBeLessThan(summaryText.indexOf("Carl"));
+});
+
 test("History bottom-nav tab is reachable from the home page", async ({ page, db }) => {
   seed(db, historySeed());
   await page.goto("/");
