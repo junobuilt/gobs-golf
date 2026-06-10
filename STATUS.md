@@ -2,8 +2,46 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (CH · PH display split — introduce Playing Handicap term)
-**Session purpose:** Stop collapsing Course Handicap + the allowance-adjusted number into one — show **both** explicitly as `CH {raw} · PH {playing}`, introducing **Playing Handicap (PH)** as an official term (HI/CH → HI/CH/PH). New shared `ChPh` component is the single source for the format + the "accent PH orange when ≠ CH" rule, used on the scorecard (meta row + tee-setup card), the History drill-in (RoundResultsView expanded row), and profile round-history rows. The "Course Handicap at N%" caption → "Player Allowance at N%" (still hidden at 100%, per Jonathan). **No scoring change** — PH (`getPlayingCourseHandicap`) still drives dots/net; this only exposes CH alongside it. Golden-literal + e2e tests updated; live-verified.
+**Last updated:** 2026-06-09 (Handicap allowance selector — 5% steps, was 10%)
+**Session purpose:** Dad's ask — the Round Setup handicap-allowance picker now steps in **5%** (100 / 95 / 90 / 85 … / 10) instead of 10%. Same floor/ceiling + 100% default; one-line list change (`ALLOWANCE_OPTIONS`). No schema/scoring change — `format_config.handicap_allowance` already stores an integer and PH = `round(CH × allowance%)` already handles the half-steps. Golden tests pin the new values + the half-up boundary (CH 10 @ 95% = 9.5 → 10); e2e asserts the 5% options render.
+
+---
+
+## 2026-06-09 (Handicap allowance — 5% steps)
+
+### Where we left off
+
+**The admin handicap-allowance selector offers 5% increments.** A one-line change to the `ALLOWANCE_OPTIONS` list in `src/app/admin/tabs/RoundSetup.tsx` — `[100, 90, 80, … 10]` → `[100, 95, 90, 85, … 15, 10]` (19 options, same 100→10 range, default 100). Everything downstream already handled arbitrary integer allowances:
+
+- **No schema change** — `format_config.handicap_allowance` is already an integer; 95/85/etc. persist as-is.
+- **No scoring change** — PH = `getPlayingStrokes` = `Math.round((CH × allowance)/100)`; `Math.round` is half-up, so the 5%-step values (and the extra `.5` boundaries they create) round correctly. `getHandicapAllowance` clamps [10, 100] so the new values are all in-range.
+- **Single selector confirmed** — `FormatPicker.tsx` only *preserves* the existing allowance (its `step={1}` input is the GOBS Stableford point values, not allowance).
+
+**Files:** MODIFIED `src/app/admin/tabs/RoundSetup.tsx` (the list + comment), `tests/lib/format/helpers.test.ts` (+3 goldens), `e2e/handicapAllowanceModal.spec.ts` (+1 test), `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(admin): handicap-allowance selector steps in 5% (was 10%)
+
+### DB changes (today)
+
+- **None.** UI option list only; the column already stores any integer.
+
+### Tests / verification
+
+- **744/744 vitest** (+3 goldens in `helpers.test.ts`: CH 13 @ 95% → 12 (round 12.35), CH 13 @ 85% → 11 (round 11.05), and the half-up boundary CH 10 @ 95% = 9.5 → **10**). **32/32 Playwright** (+1 in `handicapAllowanceModal.spec.ts`: 95/85/15 options render, a non-5 value `93` + a `0` floor are absent, 100 still default, selecting 85% persists through the mid-round danger modal). `tsc --noEmit` + `npm run build` clean.
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **TD34** — History `teamsOnly` perf mode if it lags on a real phone.
+
+### Considered but not changed (confession)
+
+- **Range/floor unchanged** — only the step (10 → 5); still 100→10, no 0% (gross is the basis toggle's job), default 100. Per spec.
+- **No preview screenshot** — the e2e drives the real RoundSetup render and asserts the 5% options + persistence (the project's TD29 display-verification path); a visual dropdown check adds nothing the e2e doesn't already pin.
+- **Out of scope (untouched):** scoring/dots/net (PH math unchanged), the CH·PH display work (already merged), migrations; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 

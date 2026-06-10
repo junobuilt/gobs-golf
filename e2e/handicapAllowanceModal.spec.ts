@@ -78,3 +78,29 @@ test("mid-round allowance change is gated by the danger modal; Cancel reverts, C
   await expect(select).toHaveValue("80");
   expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBe(80);
 });
+
+test("the allowance selector offers 5% steps (95 / 85 selectable; non-5 absent; 100 default)", async ({ page, db }) => {
+  seed(db, seedLockedRoundToday());
+  await page.goto("/admin");
+
+  const select = page.getByLabel("Handicap allowance percent");
+  await expect(select).toBeVisible();
+  await expect(select).toHaveValue("100"); // default still 100
+
+  // 5% options render across the SAME 100→10 range...
+  await expect(select.locator('option[value="95"]')).toHaveCount(1);
+  await expect(select.locator('option[value="85"]')).toHaveCount(1);
+  await expect(select.locator('option[value="15"]')).toHaveCount(1);
+  // ...and a non-5 value does NOT (proves the step is 5, not 1) — nor a 0% floor.
+  await expect(select.locator('option[value="93"]')).toHaveCount(0);
+  await expect(select.locator('option[value="0"]')).toHaveCount(0);
+
+  // A 5%-step value selects + persists (through the same mid-round danger modal).
+  await select.selectOption("85");
+  await expect(page.getByText("Change handicap allowance mid-round?")).toBeVisible();
+  const confirm = page.getByRole("button", { name: "Change allowance" });
+  await expect(confirm).toBeEnabled({ timeout: 4000 });
+  await confirm.click();
+  await expect(select).toHaveValue("85");
+  expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBe(85);
+});

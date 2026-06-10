@@ -289,6 +289,19 @@ describe("getPlayingCourseHandicap", () => {
   it("keeps a null course handicap null", () => {
     expect(getPlayingCourseHandicap(null, { basis: "net", handicap_allowance: 80 })).toBeNull();
   });
+
+  // 5%-step allowances (Dad's 2026-06-09 picker change). Hand-derived literals.
+  it("handles the new 5% steps: CH 13 at 95% → 12 (round(12.35))", () => {
+    expect(getPlayingCourseHandicap(13, { basis: "net", handicap_allowance: 95 })).toBe(12);
+  });
+
+  it("handles the new 5% steps: CH 13 at 85% → 11 (round(11.05))", () => {
+    expect(getPlayingCourseHandicap(13, { basis: "net", handicap_allowance: 85 })).toBe(11);
+  });
+
+  it("pins the half-up boundary 5% steps create: CH 10 at 95% = 9.5 → 10", () => {
+    expect(getPlayingCourseHandicap(10, { basis: "net", handicap_allowance: 95 })).toBe(10);
+  });
 });
 
 describe("stroke-dot allocation distinguishes 80% from 100% (negative control)", () => {

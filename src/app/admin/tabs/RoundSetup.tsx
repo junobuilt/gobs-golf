@@ -33,8 +33,12 @@ const C = {
 };
 
 // Wave 1A: handicap-allowance dropdown choices — 100% down to 10% in steps of
-// 10. No 0% (gross play is the net/gross basis toggle's job). Default 100.
-const ALLOWANCE_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
+// 5 (Dad's 2026-06-09 ask; was 10). Same floor/ceiling, default 100. No 0%
+// (gross play is the net/gross basis toggle's job). PH = round(CH × allowance%)
+// already handles the half-step values (e.g. 95/85) — no other change needed.
+const ALLOWANCE_OPTIONS = [
+  100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10,
+];
 
 type ViewMode = "none" | "active" | "edit";
 type TeamScoreStatus = "not_started" | "in_progress";
