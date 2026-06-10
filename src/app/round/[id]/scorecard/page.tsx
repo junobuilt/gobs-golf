@@ -22,6 +22,7 @@ import { getWriteQueue } from "@/lib/writeQueue";
 import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
+import ChPh from "@/components/handicap/ChPh";
 import type { Player } from "@/app/admin/page";
 import ManageTeamSheet from "@/components/teamFormation/ManageTeamSheet";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
@@ -1429,7 +1430,6 @@ export default function ScorecardPage() {
           // playing CH as every other surface (orange when an allowance < 100
           // is in effect; raw + navy at 100%).
           const setupPlayingCH = getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig);
-          const setupScaled = getHandicapAllowance(roundFormatConfig) < 100;
           return (
             <div key={rp.id} style={{
               background: "white", padding: "20px", borderRadius: "24px",
@@ -1444,10 +1444,11 @@ export default function ScorecardPage() {
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "block" }}>Course Handicap</span>
-                  <span style={{ fontSize: "1.2rem", fontWeight: 900, color: setupScaled ? "#c2410c" : "#0c3057" }}>
-                    {setupPlayingCH !== null ? setupPlayingCH : "?"}
-                  </span>
+                  <ChPh
+                    ch={rp.course_handicap}
+                    ph={setupPlayingCH}
+                    style={{ fontSize: "1.05rem", fontWeight: 900, color: "#0c3057" }}
+                  />
                 </div>
               </div>
 
@@ -1647,7 +1648,7 @@ export default function ScorecardPage() {
             fontSize: "0.75rem", fontWeight: 700, color: "#c2410c",
             letterSpacing: "0.02em", marginBottom: "8px",
           }}>
-            Course Handicap at {getHandicapAllowance(roundFormatConfig)}%
+            Player Allowance at {getHandicapAllowance(roundFormatConfig)}%
           </div>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
@@ -1802,11 +1803,9 @@ export default function ScorecardPage() {
         // Wave 1A: dots reflect the allowance-reduced playing strokes (no-op at
         // 100%). 2026-06-09: dots + the CH number on the meta row below now read
         // the SAME getPlayingCourseHandicap value — single source, no drift.
+        // F.1 follow-up: the meta row below now shows CH (raw) · PH (this
+        // playing value) explicitly via <ChPh>; dots/net still use playingCH.
         const playingCH = getPlayingCourseHandicap(rp.course_handicap, roundFormatConfig);
-        // 2026-06-09: when an allowance < 100 is in effect the CH number is the
-        // SCALED playing value, tinted the same orange as the "Course Handicap
-        // at N%" caption so players link the two. At 100% it stays raw + navy.
-        const allowanceScaled = getHandicapAllowance(roundFormatConfig) < 100;
         const hcpStrokes = holeInfo
           ? getHandicapStrokes(playingCH, holeInfo.stroke_index)
           : 0;
@@ -1940,9 +1939,7 @@ export default function ScorecardPage() {
                   )}
                 </div>
                 <div style={{ fontSize: "0.65rem", fontWeight: "bold", color: "#94a3b8", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "2px" }}>
-                  <span style={allowanceScaled ? { color: "#c2410c", fontWeight: 800 } : undefined}>
-                    Course Handicap: {playingCH ?? "?"}
-                  </span>
+                  <ChPh ch={rp.course_handicap} ph={playingCH} />
                   <span>·</span>
                   {/* H.2.5.7: per-round HI display reads the snapshot, not
                       players.handicap_index. Keeps finalized rounds visually

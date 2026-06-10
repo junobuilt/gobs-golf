@@ -73,7 +73,7 @@ beforeEach(() => {
 describe("RoundResultsView Part 5 — expanded player CH + GHIN Adjusted", () => {
   it("shows the allowance-adjusted PLAYING CH (golden: raw 10 @ 90% → 9), not raw CH", () => {
     // Expand the team, then the player.
-    render(<RoundResultsView data={data({
+    const { container } = render(<RoundResultsView data={data({
       formatConfig: { basis: "net", handicap_allowance: 90 },
       players: [player({ rpId: 1, displayName: "Alice" })],
     })} />);
@@ -81,35 +81,36 @@ describe("RoundResultsView Part 5 — expanded player CH + GHIN Adjusted", () =>
     fireEvent.click(screen.getByLabelText("Expand Team 1"));
     fireEvent.click(screen.getByLabelText("Expand Alice"));
 
-    // Scope to each stat group so the digits don't collide with the hole grid.
-    const chGroup = screen.getByText("Course Handicap").parentElement!;
-    const adjGroup = screen.getByText("GHIN Adjusted").parentElement!;
-    // Golden: 10 * 0.90 = 9 (playing CH), NOT the raw 10.
-    expect(within(chGroup).getByText("9")).toBeInTheDocument();
-    expect(within(chGroup).queryByText("10")).not.toBeInTheDocument();
+    // CH (raw 10) · PH (10 × 0.90 = 9) shown explicitly — both numbers, not the
+    // collapsed single value.
+    expect(container.textContent).toContain("CH 10 · PH 9");
+    // PH is accented (orange) since PH ≠ CH at 90%.
+    const ph = screen.getByText("PH 9");
+    expect(ph).toHaveStyle({ color: "#c2410c" });
     // GHIN Adjusted total = sum of the 18 capped scores (all 4) = 72.
+    const adjGroup = screen.getByText("GHIN Adjusted").parentElement!;
     expect(within(adjGroup).getByText("72")).toBeInTheDocument();
   });
 
-  it("at 100% allowance the playing CH equals the raw CH", () => {
-    render(<RoundResultsView data={data({
+  it("at 100% allowance PH equals CH and is NOT accented", () => {
+    const { container } = render(<RoundResultsView data={data({
       formatConfig: { basis: "net", handicap_allowance: 100 },
       players: [player({ rpId: 1, displayName: "Alice", courseHandicap: 10 })],
     })} />);
     fireEvent.click(screen.getByLabelText("Expand Team 1"));
     fireEvent.click(screen.getByLabelText("Expand Alice"));
-    const chGroup = screen.getByText("Course Handicap").parentElement!;
-    expect(within(chGroup).getByText("10")).toBeInTheDocument();
+    expect(container.textContent).toContain("CH 10 · PH 10");
+    expect(screen.getByText("PH 10")).not.toHaveStyle({ color: "#c2410c" });
   });
 
-  it("OMITS CH + GHIN Adjusted on a dropout row", () => {
+  it("OMITS CH · PH + GHIN Adjusted on a dropout row", () => {
     render(<RoundResultsView data={data({
       players: [player({ rpId: 2, displayName: "Dropout Dan", droppedAfterHole: 9, holesPlayed: 9 })],
     })} />);
     fireEvent.click(screen.getByLabelText("Expand Team 1"));
     fireEvent.click(screen.getByLabelText("Expand Dropout Dan"));
     expect(screen.queryByText("GHIN Adjusted")).not.toBeInTheDocument();
-    expect(screen.queryByText("Course Handicap")).not.toBeInTheDocument();
+    expect(screen.queryByText(/PH \d+/)).not.toBeInTheDocument();
   });
 });
 

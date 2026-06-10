@@ -28,8 +28,9 @@ test("changing a player's tee mid-round recomputes CH + net + dots, keeps gross"
   // Jump to hole 3 (where the gross 6 lives) so the Net + entry dots show.
   await page.getByRole("button", { name: "3", exact: true }).click();
 
-  // BEFORE — Tee A: CH 20, gross 6 → net 5, and 1 stroke dot on SI-3.
-  await expect(page.getByText("Course Handicap: 20")).toBeVisible();
+  // BEFORE — Tee A: CH 20, gross 6 → net 5, and 1 stroke dot on SI-3. At 100%
+  // allowance PH = CH, so the meta row reads "CH 20 · PH 20".
+  await expect(page.getByText("CH 20 · PH 20")).toBeVisible();
   await expect(page.getByText("Net: 5")).toBeVisible();
   await expect(strokeDots(page)).toHaveCount(1);
 
@@ -41,9 +42,10 @@ test("changing a player's tee mid-round recomputes CH + net + dots, keeps gross"
   // "Change tee"); clicking it before then is impossible by name.
   await page.getByRole("button", { name: "Change tee" }).click();
 
-  // AFTER — Tee B: CH recomputes to the hand-derived 25 (not the raw 20).
-  await expect(page.getByText("Course Handicap: 25")).toBeVisible();
-  await expect(page.getByText("Course Handicap: 20")).toHaveCount(0);
+  // AFTER — Tee B: CH recomputes to the hand-derived 25 (not the raw 20); at
+  // 100% PH tracks it, so the meta row reads "CH 25 · PH 25".
+  await expect(page.getByText("CH 25 · PH 25")).toBeVisible();
+  await expect(page.getByText("CH 20 · PH 20")).toHaveCount(0);
 
   // Gross is preserved (still 6 on hole 3) but net recomputes: SI-3 now gets
   // 2 strokes → 6 − 2 = 4 (was 5), and the entry dots go 1 → 2.

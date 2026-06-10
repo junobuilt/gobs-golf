@@ -2,8 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (TD33 — History list wrong-winner fix: scores-fetch truncation)
-**Session purpose:** Fix a HIGH-priority live bug — the F.1 History list showed wrong team scores + winner vs the summary/`round_payouts` (round 171 crowned the last-place team). Root cause was NOT a parallel scoring path (the list already shared the engine): it batch-fetched all 5,256 finalized scores in one un-paginated `.in()`, hitting Supabase's **1000-row cap** → newest rounds lost their scores → engine computed E/garbage. Fix: rewrote `loadRoundsList` as a **per-round projection of `loadRoundResults`** (each fetch small + complete; list can't disagree with summary). Added `PlayerRow.playerId`, a gross≠net negative control, an e2e winner-agreement assertion, and CLAUDE.md principles #6 (single source of truth incl. the fetch) + #7 (cross-surface agreement tests at scale). Live-verified all 21 prod rounds now match the summary.
+**Last updated:** 2026-06-09 (CH · PH display split — introduce Playing Handicap term)
+**Session purpose:** Stop collapsing Course Handicap + the allowance-adjusted number into one — show **both** explicitly as `CH {raw} · PH {playing}`, introducing **Playing Handicap (PH)** as an official term (HI/CH → HI/CH/PH). New shared `ChPh` component is the single source for the format + the "accent PH orange when ≠ CH" rule, used on the scorecard (meta row + tee-setup card), the History drill-in (RoundResultsView expanded row), and profile round-history rows. The "Course Handicap at N%" caption → "Player Allowance at N%" (still hidden at 100%, per Jonathan). **No scoring change** — PH (`getPlayingCourseHandicap`) still drives dots/net; this only exposes CH alongside it. Golden-literal + e2e tests updated; live-verified.
+
+---
+
+## 2026-06-09 (CH · PH display split)
+
+### Where we left off
+
+**Course Handicap and Playing Handicap now render as two explicit numbers everywhere a per-round handicap is shown** — `CH {raw} · PH {playing}`, with PH accented orange (`#c2410c`) only when PH ≠ CH (allowance < 100). At 100% both are plain (`CH 13 · PH 13`). Live-verified on round 171's summary drill-in (`CH 19 · PH 19`, both plain) and via the e2e render specs (`CH 20 · PH 16` at 80%). This reverses the prior fix's collapse-into-one-orange-number; **no scoring changed** (PH still drives dots/net via `getPlayingCourseHandicap`).
+
+- **Shared `ChPh` component (NEW `src/components/handicap/ChPh.tsx`).** Renders `CH {ch} · PH {ph}`, accents the PH portion when `ph !== ch`, inherits parent typography via an optional `style` prop. THE single source for the CH·PH literal + accent rule so the 5 surfaces can't drift (CLAUDE.md handicap-display note).
+- **PH definition baked in.** PH = CH × `format_config.handicap_allowance`, rounded (`getPlayingCourseHandicap`); PH = CH at 100%. Display-only here — CH is raw `round_players.course_handicap`.
+- **Scorecard (`scorecard/page.tsx`).** Meta row under the name: `Course Handicap: {PH}` → `<ChPh ch={raw} ph={PH} />`. Tee-setup "confirm tees" card: label + single number → `<ChPh>`. Caption under the format chip: `Course Handicap at {N}%` → `Player Allowance at {N}%` (kept the hidden-at-100% gate per Jonathan's call). Removed the now-dead `allowanceScaled`/`setupScaled` flags (ChPh owns the accent).
+- **History drill-in (`RoundResultsView.tsx`).** The F.1 Part 5 expanded-player "Course Handicap" stat (was showing PH only) → `<ChPh ch={player.courseHandicap} ph={PH} />`; GHIN Adjusted stat unchanged. **History list-row team scores untouched** (those are net deltas, not handicaps — explicitly out of scope).
+- **Profile (`player/[id]/page.tsx`).** Added `format_config` to the `rounds!inner` embed + `RoundResult.playing_handicap` (computed via `getPlayingCourseHandicap`); the round-history meta `· Course Handicap: {raw}` → `· <ChPh ch={raw} ph={playing} />`.
+- **Terminology.** ROADMAP Decisions Locked > Terminology gains a **Playing Handicap (PH)** entry + the display rule now lists HI/CH/PH; CLAUDE.md gains a handicap-display locked note (use `ChPh`; PH = `getPlayingCourseHandicap`).
+
+**Files:** NEW `src/components/handicap/ChPh.tsx`, `tests/components/handicap/ChPh.test.tsx`. MODIFIED `src/app/round/[id]/scorecard/page.tsx`, `src/components/round/RoundResultsView.tsx`, `src/app/player/[id]/page.tsx`, `tests/components/round/RoundResultsView-history.test.tsx`, `tests/components/scorecard-hi-snapshot.test.tsx`, `e2e/allowance.spec.ts`, `e2e/handicapAllowance.spec.ts`, `e2e/changeTee.spec.ts`, `e2e/history.spec.ts` (hardened a pre-existing race), `ROADMAP.md`, `CLAUDE.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(scorecard): show CH · PH explicitly (introduce Playing Handicap term) across scorecard + History drill-in + profile
+
+### DB changes (today)
+
+- **None.** Display-only; no migration, no prod write. (`format_config` added to a profile READ query only.)
+
+### Tests / verification
+
+- **741/741 vitest** (+ NEW `ChPh.test.tsx` golden literals: `CH 13 · PH 10` accented at 80%, `CH 13 · PH 13` plain at 100%, gross≠net-style negative control, null → `CH — · PH —`; updated the RoundResultsView drill-in test to the two-number format + accent assertions; fixed `scorecard-hi-snapshot` to expect `CH 16 · PH 16`). **31/31 Playwright** (allowance/handicapAllowance/changeTee inverted to the two-number + "Player Allowance" strings; hardened a racy history winner-agreement assertion). `tsc --noEmit` + `npm run build` clean.
+- **Live preview:** round 171 summary drill-in shows `CH 19 · PH 19` (real data, 100% → both plain).
+
+### Tomorrow's priority
+
+1. **Reconcile Q13** (tournament handicap %-vs-relative) before the Tournament/Ryder Cup build.
+2. **G2 S5** — leaderboard + round-summary payout pills (unblocked).
+3. **TD34** — History `teamsOnly` perf mode if it lags on a real phone.
+
+### Considered but not changed (confession)
+
+- **Caption hidden at 100%** (not always-shown) — Jonathan chose "only when < 100%" over the spec's draft golden that implied an always-visible "Player Allowance at 100%". So the 100% e2e asserts the caption is ABSENT + the meta shows `CH · PH`; the spec's 100%-caption-visible golden was intentionally dropped.
+- **PH accent = orange when ≠ CH** (Jonathan's pick over "both flat"). Reuses `#c2410c` (the allowance accent / GHIN-adjusted orange) — same hue appears on the GHIN-adjusted number in the same drill-in row, but they never share a span and the meaning (allowance-scaled) is consistent with the scorecard caption.
+- **History LIST-ROW team scores untouched** — those are net deltas, not handicaps (explicitly out of scope). Only the drill-in + profile per-round handicaps changed.
+- **`getPlayingCourseHandicap` NOT renamed** — it conceptually returns PH; renaming was explicitly out of scope.
+- **Modal prose** ("recalculates their Course Handicap…") left as-is — it references the concept, not the CH/PH display.
+- **Out of scope (untouched):** scoring engine / dots / net math (PH still drives them, same numbers), payouts, migrations; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 

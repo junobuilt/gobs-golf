@@ -104,7 +104,12 @@ test("History list crowns the SAME winner as the summary (right team, net scores
   // The summary agrees on the winner: Team 1 (Adam) leads Team 2 (Carl).
   await row.click();
   await expect(page).toHaveURL(/\/round\/700\/summary/);
+  // Wait for the summary's async load to render team cards before reading text
+  // (otherwise indexOf races an empty body and both return -1).
+  await expect(page.getByText("Team 1").first()).toBeVisible();
+  await expect(page.getByText("Team 2").first()).toBeVisible();
   const summaryText = await page.locator("body").innerText();
+  expect(summaryText.indexOf("Adam")).toBeGreaterThanOrEqual(0);
   expect(summaryText.indexOf("Adam")).toBeLessThan(summaryText.indexOf("Carl"));
 });
 

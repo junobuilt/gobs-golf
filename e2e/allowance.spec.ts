@@ -18,7 +18,7 @@ import { test, expect, seed, seedNetRoundWithHoles } from "./support/fixtures";
 const strokeDots = (page: import("@playwright/test").Page) =>
   page.locator('span[style*="width: 5px"][style*="rgb(30, 64, 175)"]');
 
-test("scorecard scales strokes + net AND shows the scaled Course Handicap number", async ({ page, db }) => {
+test("scorecard scales strokes + net AND shows CH (raw) · PH (scaled) explicitly", async ({ page, db }) => {
   seed(db, seedNetRoundWithHoles({ roundId: 700, allowance: 80 }));
   await page.goto("/round/700/scorecard?team=1");
 
@@ -29,15 +29,15 @@ test("scorecard scales strokes + net AND shows the scaled Course Handicap number
   // 1. Reduced stroke dots — hole 1 shows the SCALED 1 stroke, not the raw 2.
   await expect(strokeDots(page)).toHaveCount(1);
 
-  // 2. Golden displayed-number: the Course Handicap reads the SCALED playing
-  // value 16 (hand-derived: round(20 × 0.8)), NOT the raw 20. The literal 16
-  // is typed by hand here — not read from the app's handicap function — so a
-  // bug in that function can't make this assertion pass with the wrong number.
-  await expect(page.getByText("Course Handicap: 16")).toBeVisible();
-  await expect(page.getByText("Course Handicap: 20")).toHaveCount(0);
+  // 2. Golden displayed literal: BOTH numbers, CH 20 (raw) · PH 16 (scaled,
+  // hand-derived round(20 × 0.8)). The literals are typed by hand — not read
+  // from the app's handicap function — so a bug there can't make this pass.
+  await expect(page.getByText("CH 20 · PH 16")).toBeVisible();
+  // The prior collapsed single-number format must be gone.
+  await expect(page.getByText("Course Handicap: 16")).toHaveCount(0);
 
-  // 3. The round-level allowance caption renders (relabeled "Course Handicap").
-  await expect(page.getByText("Course Handicap at 80%")).toBeVisible();
+  // 3. The round-level allowance caption renders (relabeled "Player Allowance").
+  await expect(page.getByText("Player Allowance at 80%")).toBeVisible();
 
   // 4. Net reflects the SCALED strokes: 10 − 1 = 9 (raw would be 10 − 2 = 8).
   await expect(page.getByText("Net: 9")).toBeVisible();

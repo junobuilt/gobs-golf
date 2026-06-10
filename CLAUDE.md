@@ -404,6 +404,26 @@ parity test in `tests/lib/round/loadRoundsList.test.ts` is the guard.
 
 ---
 
+### Handicap display: HI / CH / PH and the `ChPh` component
+
+Three distinct numbers — keep them straight:
+- **HI** (Handicap Index) — portable, `players.handicap_index` (per-round snapshot
+  `round_players.handicap_index_snapshot`).
+- **CH** (Course Handicap) — raw, allowance-independent, `round_players.course_handicap`.
+- **PH** (Playing Handicap) — `CH × allowance%`, rounded, via
+  `getPlayingCourseHandicap(course_handicap, formatConfig)`. **PH = CH at 100%.**
+  PH is the number that drives stroke dots + net (always has). CH is the reference.
+
+When showing CH and PH together (scorecard meta row + tee-setup card, History
+drill-in expanded player row, profile round-history rows) render
+**`src/components/handicap/ChPh.tsx`** — the single source for the `CH {raw} ·
+PH {playing}` literal + the "accent PH orange (`#c2410c`) when PH ≠ CH" rule.
+Don't hand-roll the format per surface (it drifted before; that's why ChPh
+exists). The "Player Allowance at N%" caption under the format chip is hidden at
+100% by design (allowance only matters when reduced).
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

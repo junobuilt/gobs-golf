@@ -27,6 +27,7 @@ import { sumAdjusted } from "@/lib/scoring";
 import type { Format, FormatConfig } from "@/lib/scoring";
 import FormatChip from "@/components/format/FormatChip";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
+import ChPh from "@/components/handicap/ChPh";
 import type {
   LoadedRoundResults,
   PlayerRow,
@@ -607,12 +608,11 @@ function PlayerSection({
 
       {expanded && (
         <div style={{ padding: "0 14px 12px" }}>
-          {/* F.1 Part 5: per-round Course Handicap + GHIN Adjusted total for
-              real players (skip blind-draw fills/dropouts and team-card roster
-              rows, mirroring the Individual Rankings exclusion). CH is the
-              allowance-adjusted PLAYING handicap so it matches the scorecard on
-              allowance rounds; GHIN Adjusted is the NDB-capped total players
-              post to GHIN. */}
+          {/* F.1 Part 5 + CH/PH split: per-round CH (raw) · PH (allowance-adjusted
+              playing) + GHIN Adjusted total, for real players (skip blind-draw
+              fills/dropouts and team-card roster rows, mirroring the Individual
+              Rankings exclusion). PH matches the scorecard's scoring number;
+              GHIN Adjusted is the NDB-capped total players post to GHIN. */}
           {player.holesPlayed > 0
             && player.droppedAfterHole == null
             && !dropoutFill
@@ -621,17 +621,10 @@ function PlayerSection({
               const adjTotal = sumAdjusted(player.adjScores);
               return (
                 <div style={{
-                  display: "flex", gap: 18, flexWrap: "wrap",
+                  display: "flex", gap: 18, flexWrap: "wrap", alignItems: "baseline",
                   padding: "10px 0 4px", fontSize: 12.5, color: C.textSecondary,
                 }}>
-                  <span>
-                    <span style={{ fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.3px", fontSize: 10, marginRight: 6 }}>
-                      Course Handicap
-                    </span>
-                    <span style={{ fontWeight: 700, color: C.textPrimary }}>
-                      {playingCH ?? "—"}
-                    </span>
-                  </span>
+                  <ChPh ch={player.courseHandicap} ph={playingCH} style={{ fontWeight: 700, color: C.textPrimary }} />
                   <span>
                     <span style={{ fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.3px", fontSize: 10, marginRight: 6 }}>
                       GHIN Adjusted

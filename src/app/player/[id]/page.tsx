@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
-import { excludedFromIndividualStats } from "@/lib/format/helpers";
+import { excludedFromIndividualStats, getPlayingCourseHandicap } from "@/lib/format/helpers";
 import { getActiveSeason, type Season } from "@/lib/seasons";
 import {
   loadPlayedWith as loadPlayedWithBuckets,
@@ -13,6 +13,7 @@ import {
   type NeverPlayed,
 } from "@/lib/playedWith/compute";
 import PlayedWithPanel from "@/components/playedWith/PlayedWithPanel";
+import ChPh from "@/components/handicap/ChPh";
 import SeasonToggle, { type SeasonFilter } from "@/components/season/SeasonToggle";
 import { computeAdjustedHoleScores, sumAdjusted } from "@/lib/scoring";
 
@@ -29,6 +30,9 @@ type RoundResult = {
   tee_color: string;
   total_strokes: number;
   course_handicap: number | null;
+  // CH/PH split: PH = CH × this round's allowance, rounded (getPlayingCourseHandicap).
+  // Equals course_handicap at 100% allowance. Display-only.
+  playing_handicap: number | null;
   // Wave 1A: GHIN Adjusted (Net Double Bogey) round total at 100% handicap.
   // null when hole-level data is unavailable for the round's tee.
   adj_total: number | null;
@@ -87,7 +91,7 @@ export default function PlayerProfilePage() {
             tee_id,
             course_handicap,
             tees ( color ),
-            rounds!inner ( played_on, is_complete, format ),
+            rounds!inner ( played_on, is_complete, format, format_config ),
             scores ( hole_number, strokes )
           `)
           .eq("player_id", playerId)
@@ -153,6 +157,7 @@ export default function PlayerProfilePage() {
                 tee_color: rp.tees?.color || "?",
                 total_strokes,
                 course_handicap: rp.course_handicap,
+                playing_handicap: getPlayingCourseHandicap(rp.course_handicap, rp.rounds?.format_config ?? null),
                 adj_total: sumAdjusted(adj),
               };
             });
@@ -324,8 +329,12 @@ export default function PlayerProfilePage() {
                   <div className="player-name">{formatDate(round.played_on)}</div>
                   <div className="player-meta">
                     {round.tee_color} tees
-                    {round.course_handicap !== null &&
-                      ` · Course Handicap: ${round.course_handicap}`}
+                    {round.course_handicap !== null && (
+                      <>
+                        {" · "}
+                        <ChPh ch={round.course_handicap} ph={round.playing_handicap} />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>

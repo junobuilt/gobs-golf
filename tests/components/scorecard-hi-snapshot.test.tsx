@@ -238,9 +238,11 @@ describe("H.2.5.7 — per-round HI display reads from snapshot", () => {
     // current HI, this assertion would catch it (current HI of 10.0
     // would yield a CH of ~8, not 16).
     fakeRef.current = new MiniFake(buildSeed());
-    render(<ScorecardPage />);
+    const { container } = render(<ScorecardPage />);
     await act(async () => { await flush(50); });
 
-    expect(screen.getByText(/Course Handicap:\s*16/)).toBeInTheDocument();
+    // Meta row now shows CH (raw) · PH (playing). At 100% allowance PH = CH,
+    // so the snapshot-derived 16 appears as "CH 16 · PH 16".
+    expect(container.textContent).toContain("CH 16 · PH 16");
   });
 });
