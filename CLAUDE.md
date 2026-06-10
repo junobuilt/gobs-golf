@@ -189,6 +189,39 @@ Keys in use: `show_leaderboard`, `show_weekly_winners`, `two_ball_scoring`,
 
 ---
 
+## Database backup procedure
+
+`npm run db:backup` (`scripts/backup-db.ps1`, PowerShell) is the on-demand,
+free-tier production snapshot. It is **read-only** against prod (`pg_dump` only
+SELECTs — never restores or writes) and prompts for the Session Pooler
+connection string as a SecureString (held in memory, never logged). It produces
+**two distinct artifacts in one run**:
+
+1. **`backups/gobs_<timestamp>.dump`** — the full schema **+ data** snapshot
+   (`pg_dump --format=custom`). **Gitignored** (data must not enter the repo).
+   This is the *operational snapshot* — **copy it off the laptop to Google
+   Drive** (see `docs/BACKUP_RESTORE.md`) so a restore is possible if the laptop
+   or the free-tier project is lost.
+2. **`supabase/schema.sql`** — schema-only, regenerated from that same dump
+   (`pg_restore --schema-only`, no second prod hit). This is the *recovery
+   artifact* and the **only one committed to git**. It captures structure
+   (tables, functions, RLS, constraints) — no rows.
+
+**When to re-run:** re-backup **only when prod has actually changed.**
+- A **migration applied to prod** (new/changed function, table, column,
+  constraint) → re-run so `schema.sql` reflects it, then commit `schema.sql`.
+  (Migrations applied via the Supabase MCP don't auto-update `schema.sql`; it
+  lags until the next backup — hence folds like the 019/020/021 catch-ups.)
+- **Prod data changed** in a way worth a restore point → re-run for a fresh
+  `.dump` to Google Drive (the committed `schema.sql` won't change if only data
+  moved).
+- Don't re-run for app-code/test changes — they don't touch the DB.
+
+Verify a dump restores with `npm run db:restore-test` (`scripts/restore-test.ps1`).
+Full runbook: `docs/BACKUP_RESTORE.md`.
+
+---
+
 ## Design system
 
 ### Colors
