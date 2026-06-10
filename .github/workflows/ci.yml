@@ -2,10 +2,11 @@ name: CI
 
 # Runs on every push to master (the deploy branch) and on PRs targeting it.
 # The `test` job (tsc + vitest, incl. the scoring golden-master / cross-surface
-# / invariant suites) is the gate the Vercel "Ignored Build Step" keys on — see
-# scripts/vercel-ignored-build-step.mjs. The `e2e` job runs for visibility but
-# does NOT block the deploy by default (Playwright drives a dev server and can
-# flake); widen the gate to require it once it proves rock-solid in CI.
+# / invariant suites) posts a COMMIT STATUS `ci/test` (success/failure) at the
+# end — the Vercel "Ignored Build Step" gate reads that status (it needs only a
+# "Commit statuses" token, not "Checks"). See scripts/vercel-ignored-build-step.mjs.
+# The `e2e` job runs for visibility but does NOT post a status / block the deploy
+# (Playwright drives a dev server and can flake); widen the gate later if wanted.
 
 on:
   push:
@@ -17,6 +18,9 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write   # post the ci/test commit status the deploy gate reads
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,6 +32,29 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests (vitest)
         run: npm test
+
+      # Mirror this job's result into a commit status the Vercel deploy gate
+      # reads (GitHub Actions otherwise only exposes results as check runs).
+      - name: Post ci/test status — success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d '{"state":"success","context":"ci/test","description":"tsc + vitest passed"}'
+      - name: Post ci/test status — failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d '{"state":"failure","context":"ci/test","description":"tsc + vitest failed"}'
 
   e2e:
     name: e2e
