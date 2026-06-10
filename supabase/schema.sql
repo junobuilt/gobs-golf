@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict FudSynQiBvZdiQP4ymphe9lWh55I0Y12B1fQLszoWDaZxPqcZsUK6gQcyA0LU52
+\restrict yondieXvwNzBzJSkmmT6fLEAmf0Fo2ehH0IsK7aWn2sqpvTynfgdzbgXF1ki3Rv
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10
@@ -115,6 +115,54 @@ BEGIN
   END IF;
 
   -- No blind draw for relaxed close — short teams play short.
+  UPDATE rounds SET is_complete = true WHERE id = p_round_id;
+  RETURN 'finalized';
+END;
+$$;
+
+
+--
+-- Name: finalize_round_team_card(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalize_round_team_card(p_round_id bigint) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_is_complete boolean;
+BEGIN
+  SELECT COALESCE(r.is_complete, false) INTO v_is_complete
+    FROM rounds r
+    WHERE r.id = p_round_id
+    FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'round_not_found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_is_complete THEN
+    RETURN 'already_complete';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (
+      SELECT DISTINCT team_number
+        FROM round_players
+        WHERE round_id = p_round_id AND team_number > 0
+    ) teams
+    CROSS JOIN generate_series(1, 18) AS h(hole)
+    WHERE NOT EXISTS (
+      SELECT 1
+        FROM team_scores ts
+        WHERE ts.round_id = p_round_id
+          AND ts.team_number = teams.team_number
+          AND ts.hole_number = h.hole
+    )
+  ) THEN
+    RETURN 'not_yet';
+  END IF;
+
   UPDATE rounds SET is_complete = true WHERE id = p_round_id;
   RETURN 'finalized';
 END;
@@ -862,7 +910,7 @@ CREATE TABLE public.rounds (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     was_finalized boolean DEFAULT false NOT NULL,
     season_id integer,
-    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text])))
+    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text, 'texas_scramble'::text, 'alternate_shot'::text])))
 );
 
 
@@ -1557,5 +1605,5 @@ ALTER TABLE public.tees ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict FudSynQiBvZdiQP4ymphe9lWh55I0Y12B1fQLszoWDaZxPqcZsUK6gQcyA0LU52
+\unrestrict yondieXvwNzBzJSkmmT6fLEAmf0Fo2ehH0IsK7aWn2sqpvTynfgdzbgXF1ki3Rv
 
