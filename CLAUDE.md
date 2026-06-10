@@ -424,6 +424,28 @@ exists). The "Player Allowance at N%" caption under the format chip is hidden at
 
 ---
 
+### Golden-master the scoring engine
+
+`tests/lib/round/goldenMaster.test.ts` freezes the canonical `loadRoundResults`
+output for a set of real finalized prod rounds (`tests/fixtures/goldenRounds/`),
+spanning the engine paths (2-Ball best-2, Best Ball best-1, GOBS Stableford,
+blind draw, override holes, mixed tees). Each round is **independently anchored**
+before its snapshot is trusted: every player's gross total is reconstructed from
+the raw fixture scores (pure summation, no engine — the check the History list
+lacked when TD33 shipped), and round 171's net ranking is anchored to its locked
+`round_payouts`.
+
+**Any change touching the scoring engine** (`src/lib/round/results.ts`,
+`src/lib/round/teamTotals.ts`, `src/lib/scoring/*`, `src/lib/leaderboard/rank*`)
+**must run these goldens and, if a known round's snapshot legitimately changes,
+regenerate it (`vitest -u`) AND explain in the commit message WHY that known
+round changed.** A silently-updated golden defeats the purpose. If the change is
+supposed to be display-only / refactor-only, the goldens must stay byte-for-byte
+identical. Fixtures were exported read-only from prod via the Supabase MCP; CI
+never touches prod.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

@@ -22,6 +22,11 @@ export interface FakeData {
   // seeds. execute() reads `(data as any)[table]`, so an absent key simply
   // returns [] for a `from("team_scores")` select.
   team_scores?: any[];
+  // D.1 / golden-master — blind-draw fills. Optional; absent on non-blind-draw
+  // seeds (then a `from("blind_draws")` select returns []). loadRoundResults'
+  // drawn-player NAME falls back to the round_players lookup when the
+  // `players(...)` embed doesn't resolve, so no embed support is needed here.
+  blind_draws?: any[];
 }
 
 export type WriteOp =
