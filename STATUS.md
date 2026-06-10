@@ -2,8 +2,8 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Scoring test-hardening — golden-master + cross-surface + invariants; Parts 1–3 of 4)
-**Session purpose:** Make the bug class that bit twice (allowance display; TD33 History scores — "same value computed in two places, copies disagree") impossible to ship green, for the score/handicap/payout family. **Part 1:** golden-master `loadRoundResults` on 4 real prod rounds (frozen snapshots, each independently anchored to gross-from-scores + locked payouts). **Part 2:** cross-surface agreement (History list == summary == payouts; drill-in CH == scorecard CH). **Part 3:** engine invariants + negative controls. **PAUSED before Part 4 (CI deploy-gate)** — it needs Jonathan's GitHub/Vercel settings (see TD36 + the report below). 786/786 vitest, tsc clean.
+**Last updated:** 2026-06-09 (Scoring test-hardening — golden-master + cross-surface + invariants + CI gate)
+**Session purpose:** Make the bug class that bit twice (allowance display; TD33 History scores — "same value computed in two places, copies disagree") impossible to ship green, for the score/handicap/payout family. **Part 1:** golden-master `loadRoundResults` on 4 real prod rounds (frozen snapshots, each independently anchored to gross-from-scores + locked payouts). **Part 2:** cross-surface agreement (History list == summary == payouts; drill-in CH == scorecard CH). **Part 3:** engine invariants + negative controls. **Part 4 CODE LANDED:** `.github/workflows/ci.yml` (tsc + vitest gate, + e2e visibility job) + `scripts/vercel-ignored-build-step.mjs` (Option (a) deploy gate) — **Jonathan still wires the Vercel settings field + a `GITHUB_TOKEN` env var** (see TD36). 786/786 vitest, tsc clean.
 
 ---
 
@@ -35,19 +35,16 @@
 
 - **786/786 vitest** (+42 across the 3 new suites). `tsc --noEmit` clean. Snapshots verified against the gross/payout anchors + hand-derived spot values (171 winner Team 3 −17; 161 winner −28 cross-validates the live History preview from the TD33 session).
 
-### Tomorrow's priority — **Part 4 (CI gate) needs Jonathan**
+### Part 4 (CI gate) — code landed; Jonathan wires the Vercel settings
 
-See the **handoff report** (below / in chat) + TD36. Decisions/actions Jonathan owns:
-1. Pick the deploy-gate approach: (a) Vercel **Ignored Build Step** that checks the commit's CI status; (b) deploy-on-green via a GitHub Action + Vercel deploy hook (`VERCEL_TOKEN` secret, disable Vercel auto-deploy); (c) branch protection (gates PRs only — weak for direct pushes to master).
-2. Approve adding `.github/workflows/ci.yml` (vitest + `tsc`; Playwright as an optional heavier job that runs `npx playwright install`).
-3. Then the gate gets wired.
+Decision: **Option (a)** Vercel Ignored Build Step (Jonathan's call). Shipped: `.github/workflows/ci.yml` (`test` job = tsc + vitest incl. the scoring suites — the gate; `e2e` job = Playwright, visibility only) + `scripts/vercel-ignored-build-step.mjs` (polls the GitHub Checks API for the `test` check on the deploying commit; exit 1 = build / exit 0 = skip; fail-OPEN if the gate can't run) + Playwright `retries: 2` on CI. **Remaining (Jonathan, in Vercel → Project → Settings → Git):** (1) set *Ignored Build Step* command to `node scripts/vercel-ignored-build-step.mjs`; (2) add a project env var `GITHUB_TOKEN` = a fine-grained PAT with READ-ONLY Checks + Commit-statuses on this repo. e2e isn't in the gate by default (can flake) — add `"e2e"` to `GATE_CHECKS` once it's solid in CI. Other priorities: Q13 tournament handicap; G2 S5 payout pills.
 
 ### Considered but not changed (confession)
 
 - **Payout anchor only on round 171.** Prod has `round_payouts` for exactly one finalized round (S3 backfill skipped). Rather than fabricate anchors, the other 3 rounds use the engine-independent **gross-from-scores** anchor + invariants — which is the check that actually catches the TD33 missing-scores class. Surfaced, not hidden.
 - **No real Shambles / Texas Scramble / Alternate Shot round exists in prod** (those formats shipped after the last real round), so no golden for them — they stay covered by their hand-derived engine unit tests (`engine-shambles`, `teamHandicap`, `results-teamcard-net`). Noted in the fixtures index.
 - **Snapshot is a projection** (teams: rank/total/roster/F9/B9; players: gross/net; blind-draw fills) — deliberately omits the 18-length per-hole arrays (huge + redundant with gross/net + leg totals). Captures scoring correctness, stays human-readable.
-- **Part 4 NOT attempted headless** per the spec — no `.github/` or Vercel config committed; reported instead.
+- **Part 4 deploy GATING not wired headless** per the spec — the CI workflow + the gate script ARE committed (low-risk, no prod effect on their own), but the Vercel *Ignored Build Step* settings field + the `GITHUB_TOKEN` env var are Jonathan's to set. The gate fails OPEN (a broken gate never wedges deploys; a genuinely red `test` check still blocks).
 - **Out of scope (untouched):** all app code (test-only session), migrations, the existing tests; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---

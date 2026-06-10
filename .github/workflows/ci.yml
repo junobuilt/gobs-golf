@@ -1,0 +1,45 @@
+name: CI
+
+# Runs on every push to master (the deploy branch) and on PRs targeting it.
+# The `test` job (tsc + vitest, incl. the scoring golden-master / cross-surface
+# / invariant suites) is the gate the Vercel "Ignored Build Step" keys on — see
+# scripts/vercel-ignored-build-step.mjs. The `e2e` job runs for visibility but
+# does NOT block the deploy by default (Playwright drives a dev server and can
+# flake); widen the gate to require it once it proves rock-solid in CI.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests (vitest)
+        run: npm test
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: E2E (Playwright)
+        run: npm run e2e

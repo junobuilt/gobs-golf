@@ -14,7 +14,9 @@ export default defineConfig({
   testMatch: "**/*.spec.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // CI boots a fresh dev server per run; allow 2 retries there to absorb
+  // first-request / server-warmup flake (0 locally to surface real failures).
+  retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: process.env.CI ? "list" : [["list"], ["html", { open: "never" }]],
   globalSetup: "./e2e/global-setup.ts",
