@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOBS — Flights: Round Setup Mockup</title>
+<style>
+  :root{
+    --navy:#042C53; --navy-soft:#0d3d6b; --bg:#f5f7fa; --card:#ffffff;
+    --line:#e2e8f0; --muted:#64748b; --muted2:#94a3b8;
+    --blue-hl:#dbeafe; --orange:#d97706; --gold:#b08900; --green:#15803d;
+    --danger:#b91c1c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  body{background:#e9edf2;padding:28px 20px 60px;color:#0f172a;}
+  h1{font-size:20px;color:var(--navy);margin-bottom:4px;}
+  .sub{font-size:13px;color:var(--muted);margin-bottom:28px;max-width:760px;line-height:1.5;}
+  .frames{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;}
+  .frame-wrap{width:392px;}
+  .frame-label{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px;}
+  .frame-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px;}
+  .frame-note b{color:var(--navy);}
+  .phone{width:392px;background:var(--bg);border:1px solid #cbd5e1;border-radius:22px;overflow:hidden;box-shadow:0 6px 18px rgba(4,44,83,.10);}
+  .appbar{background:var(--navy);color:#fff;padding:14px 16px;font-size:15px;font-weight:600;display:flex;justify-content:space-between;align-items:center;}
+  .appbar .pill{font-size:11px;font-weight:500;background:rgba(255,255,255,.16);padding:3px 9px;border-radius:99px;}
+  .content{padding:14px 14px 22px;}
+  .section-title{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin:14px 2px 8px;}
+
+  /* flight card */
+  .flight{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px;}
+  .flight-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .flight-name{font-size:16px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:6px;}
+  .flight-name .edit{font-size:11px;color:var(--muted2);font-weight:400;}
+  .flight-menu{color:var(--muted2);font-size:18px;line-height:1;padding:2px 6px;}
+  .fmt-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+  .chip{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:5px 11px;font-size:12px;font-weight:600;}
+  .chip.format{background:var(--navy);color:#fff;}
+  .chip.format.unset{background:#fff;color:var(--navy);border:1.5px dashed var(--navy);}
+  .chip.allow{background:#fef3c7;color:var(--orange);}
+  .chip.pot{background:#ecfdf5;color:var(--green);}
+  .teams{border-top:1px solid var(--line);padding-top:8px;}
+  .team-row{display:flex;align-items:center;justify-content:space-between;padding:8px 2px;border-bottom:1px solid #f1f5f9;}
+  .team-row:last-child{border-bottom:none;}
+  .team-left{font-size:13px;}
+  .team-left .tname{font-weight:700;color:var(--navy);font-size:13px;}
+  .team-left .roster{color:var(--muted);font-size:12px;margin-top:2px;}
+  .team-flightchip{font-size:11px;font-weight:600;color:var(--navy);background:#eef2f7;border:1px solid var(--line);border-radius:8px;padding:4px 8px;white-space:nowrap;}
+  .team-flightchip .car{color:var(--muted2);}
+  .addteam{font-size:13px;font-weight:600;color:var(--navy);padding:9px 2px 2px;}
+  .empty-flight{font-size:12.5px;color:var(--muted2);padding:10px 2px;font-style:italic;}
+
+  .add-flight{display:block;width:100%;text-align:center;border:1.5px dashed var(--muted2);color:var(--navy);font-weight:600;font-size:13.5px;border-radius:12px;padding:11px;background:transparent;margin-top:2px;}
+
+  /* sheet overlay (state 3) */
+  .sheet-dim{background:rgba(15,23,42,.45);padding:130px 18px 0;min-height:560px;}
+  .sheet{background:#fff;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);}
+  .sheet h3{font-size:15px;color:var(--navy);margin-bottom:2px;}
+  .sheet .s-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px;}
+  .opt{display:flex;justify-content:space-between;align-items:center;border:1.5px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;font-size:14px;font-weight:600;color:var(--navy);}
+  .opt.sel{border-color:var(--navy);background:#eef4fb;}
+  .opt .meta{font-size:11.5px;font-weight:400;color:var(--muted);}
+  .opt .check{color:var(--green);font-weight:700;}
+  .sheet .cancel{text-align:center;font-size:13.5px;color:var(--muted);padding:10px 0 2px;}
+
+  .footnote{margin-top:26px;font-size:12.5px;color:var(--muted);max-width:780px;line-height:1.6;}
+  .footnote b{color:var(--navy);}
+</style>
+</head>
+<body>
+
+<h1>Round Setup — Flights</h1>
+<p class="sub">Three states. State 1 is the everyday case — one flight, visually almost identical to today's Round Setup. State 2 is Friday's split-field case. State 3 shows how a team moves between flights.</p>
+
+<div class="frames">
+
+  <!-- ============ STATE 1 ============ -->
+  <div class="frame-wrap">
+    <div class="frame-label">State 1 — Default (one flight, normal weekly round)</div>
+    <div class="phone">
+      <div class="appbar">Round Setup <span class="pill">Fri Jun 12</span></div>
+      <div class="content">
+        <div class="section-title">Flights</div>
+
+        <div class="flight">
+          <div class="flight-head">
+            <div class="flight-name">Flight A <span class="edit">✎</span></div>
+            <div class="flight-menu">⋯</div>
+          </div>
+          <div class="fmt-row">
+            <span class="chip format">2-Ball · Net</span>
+            <span class="chip allow">Allowance 100%</span>
+            <span class="chip pot">Pot $250 · 25 players</span>
+          </div>
+          <div class="teams">
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 1</div><div class="roster">Wayne H · Bill · Tom · Gary</div></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 2</div><div class="roster">Dale · Ron · Jim P · Stu</div></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 3</div><div class="roster">Larry · Mike · Don · Pete</div></div>
+            </div>
+            <div class="addteam">+ Edit Teams</div>
+          </div>
+        </div>
+
+        <button class="add-flight">+ Add Flight</button>
+      </div>
+    </div>
+    <p class="frame-note"><b>What changed vs today:</b> format + allowance moved inside the flight card. With one flight, no per-team flight chips render — zero new noise on a normal week. Pot chip is read-only (buy-ins × players in this flight).</p>
+  </div>
+
+  <!-- ============ STATE 2 ============ -->
+  <div class="frame-wrap">
+    <div class="frame-label">State 2 — Split field (Friday's 25-player case)</div>
+    <div class="phone">
+      <div class="appbar">Round Setup <span class="pill">Fri Jun 12</span></div>
+      <div class="content">
+        <div class="section-title">Flights</div>
+
+        <div class="flight">
+          <div class="flight-head">
+            <div class="flight-name">3-Man <span class="edit">✎</span></div>
+            <div class="flight-menu">⋯</div>
+          </div>
+          <div class="fmt-row">
+            <span class="chip format">2-Ball · Net</span>
+            <span class="chip allow">Allowance 80%</span>
+            <span class="chip pot">Pot $90 · 9 players</span>
+          </div>
+          <div class="teams">
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 1</div><div class="roster">Wayne H · Bill · Tom</div></div>
+              <div class="team-flightchip">3-Man <span class="car">▾</span></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 2</div><div class="roster">Dale · Ron · Jim P</div></div>
+              <div class="team-flightchip">3-Man <span class="car">▾</span></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 3</div><div class="roster">Larry · Mike · Don</div></div>
+              <div class="team-flightchip">3-Man <span class="car">▾</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flight">
+          <div class="flight-head">
+            <div class="flight-name">4-Man <span class="edit">✎</span></div>
+            <div class="flight-menu">⋯</div>
+          </div>
+          <div class="fmt-row">
+            <span class="chip format">Shambles · Net</span>
+            <span class="chip allow">Allowance 70%</span>
+            <span class="chip pot">Pot $160 · 16 players</span>
+          </div>
+          <div class="teams">
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 4</div><div class="roster">Stu · Pete · Hank · Joe</div></div>
+              <div class="team-flightchip">4-Man <span class="car">▾</span></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 5</div><div class="roster">Carl · Fred · Walt · Sam</div></div>
+              <div class="team-flightchip">4-Man <span class="car">▾</span></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 6</div><div class="roster">Ray · Ed · Norm · Vic</div></div>
+              <div class="team-flightchip">4-Man <span class="car">▾</span></div>
+            </div>
+            <div class="team-row">
+              <div class="team-left"><div class="tname">Team 7</div><div class="roster">Art · Lou · Hal · Gus</div></div>
+              <div class="team-flightchip">4-Man <span class="car">▾</span></div>
+            </div>
+          </div>
+        </div>
+
+        <button class="add-flight">+ Add Flight</button>
+      </div>
+    </div>
+    <p class="frame-note"><b>Once 2+ flights exist:</b> a flight chip appears on every team row. Tap a flight name's ✎ to rename ("Flight B" → "4-Man"). Each flight has its own format chip — tapping it opens the existing FormatPicker, scoped to that flight. Different formats, different allowances, separate pots.</p>
+  </div>
+
+  <!-- ============ STATE 3 ============ -->
+  <div class="frame-wrap">
+    <div class="frame-label">State 3 — Moving a team (tapped Team 3's flight chip)</div>
+    <div class="phone">
+      <div class="sheet-dim">
+        <div class="sheet">
+          <h3>Move Team 3 to…</h3>
+          <p class="s-sub">Larry · Mike · Don</p>
+          <div class="opt sel">
+            <div>3-Man <div class="meta">2-Ball · 80% · 3 teams</div></div>
+            <div class="check">✓</div>
+          </div>
+          <div class="opt">
+            <div>4-Man <div class="meta">Shambles · 70% · 4 teams</div></div>
+          </div>
+          <div class="opt">
+            <div>+ New flight <div class="meta">Creates Flight C</div></div>
+          </div>
+          <div class="cancel">Cancel</div>
+        </div>
+      </div>
+    </div>
+    <p class="frame-note"><b>Move = one tap on the chip, one tap on the destination.</b> No drag-and-drop (hostile to this demographic). "+ New flight" inside the picker covers the create-and-move case. If a flight's format has locked (first score entered), moving teams in/out of it routes through the existing DangerModal recalc warning.</p>
+  </div>
+
+</div>
+
+<p class="footnote">
+<b>Rules baked into this design:</b> new teams default into the first flight (one-flight rounds behave exactly like today) · flight rename is cosmetic only · the ⋯ flight menu holds "Delete flight" (blocked unless its teams are moved out first) · format lock is per-flight — Flight B's format stays editable after Flight A starts scoring · pot chip is informational here; payout math runs per flight at finalize, exactly as the engine does today per round.
+</p>
+
+</body>
+</html>
