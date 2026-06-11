@@ -2,8 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-09 (Scorecard handicap-display tweaks — caption rename + HI·CH·PH order)
-**Session purpose:** Display-only scorecard polish. (1) The above-holes allowance caption "Player Allowance at N%" → "**Handicap Allowance at N%**" (still hidden at 100%). (2) The meta row under the player name reordered to **HI · CH · PH** with HI abbreviated (`HI 23.9 · CH 21 · PH 21`) — same middle-dot separators, PH still orange when ≠ CH; HI is the per-round `handicap_index_snapshot` (no recompute). Two edit points in `scorecard/page.tsx`; caption + meta-row order covered by e2e + the jsdom scorecard render test. No scoring/dots/net change. 786/786 vitest, 33/33 Playwright, tsc clean.
+**Last updated:** 2026-05-26 (Flights Session 1 — foundation: format ownership moved to flights, ZERO behavior change)
+**Session purpose:** Introduce "flights" (sub-competitions within a round). Foundation only: migration 022 adds `flights` + `flight_teams`, backfills one Flight A per round, and ALL format/format_config/format_lock/allowance reads+writes move from `rounds` to the round's primary flight behind `src/lib/flights/resolve.ts` — every round has exactly one flight so the app behaves identically. `submitted_teams` stays round-level. Migration applied + verified on prod (23 rounds → 23 Flight A, 0 mismatches). 798/798 vitest, tsc clean. Sessions 2–4 (admin UX, read-surface sectioning, flight-aware finalize) NOT built.
+
+*(Note: this Flights work was executed in a 2026-05-26 Dispatch session; it lands chronologically after the 2026-06-09 entries below in repo time — the session date is preserved here to match the commit + migration headers.)*
+
+---
+
+## 2026-05-26 (Flights Session 1 — foundation)
+
+### Where we left off
+
+**Format ownership now lives on a per-round flight; the round is a container. Zero behavior change — every round has exactly one flight ("Flight A").** Plan-first investigation audited every `rounds.format` / `format_config` / `format_locked_at` read+write site, then moved them all behind one resolution helper.
+
+- **Migration `022_flights_foundation.sql` (applied + verified on prod).** `flights` (round_id FK, name, sort_order, format [8-format CHECK + NULL], format_config jsonb, format_locked_at; UNIQUE round_id+sort_order) + `flight_teams` (flight_id, round_id, team_number; UNIQUE round_id+team_number — a team is in ≤1 flight). RLS allow-all mirroring `rounds`. Backfill: one Flight A per round **incl. format=null**, copying `format_config - 'submitted_teams'`; DO-block asserts every round has exactly one sort_order=1 flight. **Verified on prod via Claude chat's Supabase MCP: 23 rounds → 23 Flight A, flight_teams = 0, full-equality on format/config(minus submitted_teams)/lock across all 23 = 0 mismatches.** Frozen `rounds.*` columns NOT dropped (later cleanup migration after Sessions 2–4).
+- **`src/lib/flights/resolve.ts` is the single source of truth.** `getFlightsForRound`, `getPrimaryFlightForRound`, `getFlightForTeam` (CANONICAL DEFAULT RULE — no `flight_teams` row → the round's first flight, documented + living only here), `getPrimaryFlightByRound` batch, `ensurePrimaryFlight` (idempotent Flight-A shell at round creation).
+- **Reads moved:** `results.ts` (canonical loader → covers History list + summary + leaderboard downstream), both scorecard surfaces, RoundSetup, leaderboard gate, and the four batch readers (`player/[id]`, `season`, `playerStats`, `playedWith`) via `getPrimaryFlightByRound`, plus homepage routing. **Writes moved:** FormatPicker save, format-lock stamping (both surfaces), allowance save (immediate + post-lock modal), `ensureRoundShell` (all 3 paths create Flight A). `submitted_teams` reads/writes stay on `rounds`.
+- **The single allowance accessor** (`getHandicapAllowance`/`getPlayingCourseHandicap`) is unchanged — the flight only supplies its `FormatConfig`.
+
+**Files:** NEW `supabase/migrations/022_flights_foundation.sql`, `src/lib/flights/resolve.ts`, `tests/lib/flights/{resolve,crossSurface}.test.ts`. MODIFIED `src/lib/round/{results,ensureRoundShell}.ts`, `src/lib/{playerStats,playedWith/compute}.ts`, `src/app/round/[id]/{scorecard,team-card}/page.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `src/app/{leaderboard,season,page,player/[id]}` pages, `src/components/format/FormatPicker.tsx`, 6 test files + `tests/components/fake-supabase.ts`, `ROADMAP.md`, `CLAUDE.md`, `STATUS.md`.
+
+### Today's commits
+
+- `ee54a7f` feat(flights): Session 1 foundation — move format ownership to flights (zero behavior change)
+- (trailing) chore: update STATUS.md
+
+### DB changes (today)
+
+- **Migration 022 applied to prod** via Claude chat's Supabase MCP after a transaction→ROLLBACK dry-run. Purely additive (two new tables + RLS + one Flight A per round); no table/column/data change to existing tables, no `rounds` rows modified. Post-apply verified (23 = 23, flight_teams = 0, 0 mismatches). `schema.sql` will pick up the new tables on the next `npm run db:backup`.
+
+### Tests / verification
+
+- **798/798 vitest** (+13: flights resolve default-rule with WRONG-state fixtures; cross-surface format-resolution equality; allowance-reads-off-flight; negative control mutating frozen `rounds.format`; ensureRoundShell Flight-A upsert). `FakeSupabase` auto-derives a Flight A per seeded round (+ `.limit()`) so all existing goldens pass untouched; 5 bespoke mocks updated to serve `flights`. `tsc --noEmit` clean.
+
+### Tomorrow's priority
+
+1. **Flights.2** — admin UX: create/name/order flights + `flight_teams` write paths (RoundSetup goToTeams, homepage smartJoin, ManageTeamSheet) + per-flight FormatPicker/allowance.
+2. **Flights.3** — read-surface sectioning; **must revisit** the four batch-stats readers (they use `getPrimaryFlightByRound` as a one-flight equivalence helper — multi-flight needs per-flight aggregation or a rollup decision).
+3. **Reconcile Q13** (tournament handicap) + **G2 S5** payout pills remain open from prior sessions.
+
+### Considered but not changed (confession)
+
+- **"Exactly one allowance accessor" interpreted as "one implementation."** Kept `getHandicapAllowance`/`getPlayingCourseHandicap` in `format/helpers.ts`; the flight supplies their config rather than adding a parallel flight-allowance function. Flagged for review.
+- **`results.ts` uses the round's primary flight for the whole round** — correct under the one-flight Session-1 invariant; Sessions 2–4 make it per-flight. Flagged in-code + ROADMAP.
+- **Test-infra change beyond pure data:** `FakeSupabase` flight auto-derivation + `.limit()`, and 5 bespoke-mock updates — the test-side mirror of the backfill. No production behavior depends on it.
+- **Out of scope (untouched):** engine/`results.ts` math, payouts/`round_payouts`, finalize RPC internals, team-creation paths, UI; the frozen `rounds.*` columns (not dropped); pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged — `.claude/settings.local.json` deliberately excluded from the commit per instruction.
 
 ---
 
