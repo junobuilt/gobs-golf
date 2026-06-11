@@ -2,10 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-05-26 (Flights Session 1 — foundation: format ownership moved to flights, ZERO behavior change)
-**Session purpose:** Introduce "flights" (sub-competitions within a round). Foundation only: migration 022 adds `flights` + `flight_teams`, backfills one Flight A per round, and ALL format/format_config/format_lock/allowance reads+writes move from `rounds` to the round's primary flight behind `src/lib/flights/resolve.ts` — every round has exactly one flight so the app behaves identically. `submitted_teams` stays round-level. Migration applied + verified on prod (23 rounds → 23 Flight A, 0 mismatches). 798/798 vitest, tsc clean. Sessions 2–4 (admin UX, read-surface sectioning, flight-aware finalize) NOT built.
+**Last updated:** 2026-05-26 (Flights Session 2 — admin flights UX + per-team scoring resolution + finalize guard)
+**Session purpose:** Make flights usable. (a) Admin Round Setup rebuilt as per-flight cards (create/rename/delete flights, per-flight format + allowance, move teams between flights via a tap-tap sheet). (b) NEW `src/lib/flights/mutations.ts` CRUD + `getTeamFlightMap` shared resolver. (c) Scorecard + team-card resolve format/config/allowance/lock per-TEAM via `getFlightForTeam` (was primary flight); routing, dots, PH, lock-stamping all per-team. (d) Temporary `SESSION-4-REMOVE` finalize guard blocks multi-flight finalize. No pot chip (S3), no leaderboard sectioning (S3), no flight-aware finalize (S4). Single-flight rounds look ≈ identical to before. 821/821 vitest, 33/33 Playwright, tsc clean. Also fixed the e2e harness Session 1 left red (auto-derive flights in MockDb).
 
-*(Note: this Flights work was executed in a 2026-05-26 Dispatch session; it lands chronologically after the 2026-06-09 entries below in repo time — the session date is preserved here to match the commit + migration headers.)*
+*(Note: the Flights track is being executed in 2026-05-26 Dispatch sessions; these entries land chronologically after the 2026-06-09 entries below in repo time — the session date is preserved to match commit + migration headers.)*
+
+---
+
+## 2026-05-26 (Flights Session 2 — admin UX + per-team scoring + finalize guard)
+
+### Where we left off
+
+**Flights are now admin-manageable and the scoring surfaces resolve format per-team. Multi-flight rounds can be SET UP and SCORED, but not yet finalized (guarded) or sectioned in read surfaces (S3).** Single-flight rounds are visually ≈ unchanged.
+
+- **Lib (`src/lib/flights/mutations.ts`, NEW):** `createFlight` (sort_order = max+1, letter-named "Flight B/C…"), `renameFlight` (non-blank, trimmed), `deleteFlight` (rejects the round's only flight OR a flight holding resolved teams — incl. the first flight's *implicit* default-rule teams), `moveTeamToFlight` (upserts `flight_teams` on round_id+team_number; writes an explicit row even when moving to the first flight). `getTeamFlightMap(roundId)` added to `resolve.ts` — THE shared per-round team→flight resolver used by the admin grouping, the delete-empty check, and the finalize guard. `resolve.ts` stays read-only; `FLIGHT_COLUMNS`/`rowToFlight` now exported.
+- **Round Setup active view (`admin/tabs/RoundSetup.tsx`):** per-flight cards — header (name + ✎ `RenameFlightModal` + Delete, disabled w/ reason when not deletable), format chip → `FormatPicker` scoped to THAT flight (new `flightId` prop targets the flight; falls back to primary), per-flight allowance select (mid-flight change → DangerModal scoped to that flight's teams), and the flight's teams grouped via `getTeamFlightMap`. Single flight ⇒ no per-team chips. 2+ flights ⇒ each team row gains a "FlightName ▾" chip → `MoveTeamSheet` (NEW `src/components/flights/`) — tap chip, tap destination, or "+ New flight" (create + move). Moving into/out of a LOCKED flight → recalc DangerModal first. "+ Add Flight" button. Edit Teams stays round-level; new teams land in the first flight implicitly (those paths UNTOUCHED).
+- **Per-team scoring resolution (`scorecard` + `team-card` pages):** format/config/lock now from `getFlightForTeam(roundId, teamFilter)` not the primary flight. Per-team: format chip, allowance caption + PH/dots, engine config, first-score format-lock stamping (stamps THAT team's flight), `scorecardHref` routing (a team in a team-card-format flight → `/team-card`, else `/scorecard`), and the per-flight "waiting for format" unlock. Teamless admin overview: if non-empty flights share one format → behaves as today; if they DIFFER → suppresses the aggregate net/dots preview and shows per-team links + a "mixed-format round — open a team to score" note (a flight-B team under flight-A math would be a wrong number).
+- **Finalize guard (`src/lib/flights/finalizeGuard.ts`, NEW, `SESSION-4-REMOVE`):** `roundHasMultipleNonEmptyFlights` blocks both Submit Final Scores buttons (scorecard + team-card) on 2+ non-empty-flight rounds with "Multi-flight rounds can't be finalized yet — coming soon." Delete the file + its callers in Session 4.
+- **Test harnesses:** BOTH `tests/components/fake-supabase.ts` (unit) and `e2e/support/supabaseMock.ts` (Playwright) now auto-derive a Flight A per seeded round (the test-side migration-022 backfill) so format resolves off the flight without each fixture re-declaring it; added `.limit()` + `delete()` (unit) and `order`/`limit` + `flights`/`flight_teams` tables (e2e). **This fixed the e2e specs Session 1 left red** (the scorecard/allowance specs read format from `flights`, which the e2e mock hadn't seeded).
+
+**Files:** NEW `src/lib/flights/{mutations,finalizeGuard}.ts`, `src/components/flights/{MoveTeamSheet,RenameFlightModal}.tsx`, `tests/lib/flights/{mutations,perTeamResolution}.test.ts`, `tests/components/flights/{MoveTeamSheet,RenameFlightModal}.test.tsx`, `e2e/flights.spec.ts`. MODIFIED `src/lib/flights/resolve.ts`, `src/app/admin/tabs/RoundSetup.tsx`, `src/components/format/FormatPicker.tsx`, `src/app/round/[id]/{scorecard,team-card}/page.tsx`, `tests/components/fake-supabase.ts`, `e2e/support/supabaseMock.ts`, `e2e/{shambles,handicapAllowanceModal}.spec.ts`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(flights): Session 2 — admin flights UX + per-team scoring resolution + finalize guard
+- (trailing) chore: update STATUS.md
+
+### DB changes (today)
+
+- **None.** No migration — `flights`/`flight_teams` (migration 022) already exist; all CRUD is INSERT/UPDATE/DELETE on them. No prod write this session.
+
+### Tests / verification
+
+- **821/821 vitest** (+23: flight CRUD validations with wrong-state fixtures incl. delete-blocked cases + move-to-first-flight-writes-explicit-row; `getTeamFlightMap` default rule; the `SESSION-4` guard; `MoveTeamSheet`/`RenameFlightModal` components; per-team format/allowance + routing cross-surface). **33/33 Playwright** (+1 flight lifecycle: add → rename → move team → pick format; fixed shambles + handicapAllowanceModal specs for the per-flight UI + flight-targeted allowance write). `tsc --noEmit` clean.
+
+### Tomorrow's priority
+
+1. **Flights.3** — read-surface sectioning (results/leaderboard/summary/history by flight) + the per-flight **pot/payout display** (the pot chip deferred this session) + **revisit the four batch-stats readers** (they still assume one flight per round via `getPrimaryFlightByRound`).
+2. **Flights.4** — flight-aware finalize + per-flight payouts; **remove the `SESSION-4-REMOVE` finalize guard**.
+
+### Considered but not changed (confession)
+
+- **Component test for RoundSetup itself = covered by Playwright, not jsdom.** RoundSetup has no existing jsdom render harness (it's heavily coupled — season modals, mobile, many table loads); the project's pattern is to drive it via Playwright. So the single-flight-no-chips / multi-flight-chips / move-flow / format-pick are covered by `e2e/flights.spec.ts`, and the delete-disabled + move-upsert LOGIC by the lib unit tests. The cleanly-extracted sub-components got jsdom tests.
+- **FormatPicker's Alt-Shot team-size guard is still round-wide**, not per-flight — it loads all teams in the round, so selecting Alternate Shot for one flight could be over-restricted by a non-2 team in another flight. Rare (Alt-Shot is 2-only); flagged, not reworked (out of the core per-team scope).
+- **Teamless mixed-format overview degrades to per-team links** (not a per-row multi-format engine render) — approved refinement (A): a flight-B team under flight-A aggregate math is a wrong number, so the aggregate is suppressed entirely in the mixed case. Same-format teamless is unchanged.
+- **`getPrimaryFlightForRound` retained** (used by the teamless fallback + FormatPicker's no-flightId fallback); not removed.
+- **Test-harness changes beyond pure data** (auto-derive flights + `.limit`/`delete`/`order` in both mocks) — the test-side mirror of the migration backfill; no production behavior depends on them. They also repaired the e2e Session 1 left red.
+- **Out of scope (untouched):** leaderboard/summary/RoundResultsView/history sectioning, payout engine/pots/`round_payouts`, finalize RPCs + blind-draw internals, the four batch-stats readers, engine math/`teamHandicap`/`results.ts` ranking, new-team paths; no migration; pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged.
 
 ---
 
