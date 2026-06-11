@@ -118,6 +118,13 @@ function buildSeed() {
       { id: 101, played_on: "2026-04-01", is_complete: true, season_id: 1, format: "best_ball" },
       { id: 200, played_on: "2026-06-06", is_complete: false, season_id: 1, format: "2_ball" }, // "today"
     ],
+    // Flights (Session 1): the Pair Lookup format label now resolves off each
+    // round's primary flight, not rounds.format.
+    flights: [
+      { id: 9100, round_id: 100, name: "Flight A", sort_order: 1, format: "2_ball", format_config: { basis: "net" }, format_locked_at: null },
+      { id: 9101, round_id: 101, name: "Flight A", sort_order: 1, format: "best_ball", format_config: { basis: "net" }, format_locked_at: null },
+      { id: 9200, round_id: 200, name: "Flight A", sort_order: 1, format: "2_ball", format_config: { basis: "net" }, format_locked_at: null },
+    ],
     round_players: [
       { id: 1, round_id: 100, player_id: 1, team_number: 1 }, // Bill
       { id: 2, round_id: 100, player_id: 2, team_number: 1 }, // Pat

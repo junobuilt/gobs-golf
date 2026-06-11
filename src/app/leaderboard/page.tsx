@@ -16,13 +16,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
-import type { Format } from "@/lib/scoring";
 import { todayLocal } from "@/lib/date";
 import RoundResultsView from "@/components/round/RoundResultsView";
 import {
   loadRoundResults,
   type LoadedRoundResults,
 } from "@/lib/round/results";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 
 type LeaderboardState =
   | { kind: "loading" }
@@ -59,7 +59,7 @@ export default function LeaderboardPage() {
 
     const { data: rounds } = await supabase
       .from("rounds")
-      .select("id, format, format_config")
+      .select("id")
       .eq("played_on", today)
       .order("played_on", { ascending: false })
       .limit(1);
@@ -69,9 +69,11 @@ export default function LeaderboardPage() {
       return;
     }
 
-    const round = rounds[0] as { id: number; format: Format | null; format_config: unknown };
+    const round = rounds[0] as { id: number };
 
-    if (round.format === null || round.format_config === null) {
+    // Format ownership lives on the round's primary flight (Session 1).
+    const flight = await getPrimaryFlightForRound(round.id);
+    if (!flight || flight.format === null || flight.format_config === null) {
       setState({ kind: "no_format", today });
       return;
     }

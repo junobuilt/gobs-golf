@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { getHandicapStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
 import { getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 import {
   holesCompleteForTeam,
   isStablefordFormat,
@@ -152,14 +153,20 @@ export async function loadRoundResults(
 ): Promise<LoadRoundResultsOutcome> {
   const { data: round } = await supabase
     .from("rounds")
-    .select("id, played_on, is_complete, format, format_config, format_locked_at")
+    .select("id, played_on, is_complete")
     .eq("id", roundId)
     .single();
 
   if (!round) return { status: "missing_round" };
 
-  const format = (round.format ?? null) as Format | null;
-  const formatConfig = (round.format_config ?? null) as FormatConfig | null;
+  // Format ownership moved to flights (Session 1). Read format / config / lock
+  // from the round's primary flight, NOT the frozen rounds.* columns. Session 1
+  // has exactly one flight per round, so the primary flight drives the whole
+  // round; Sessions 2–4 make this surface flight-aware.
+  const flight = await getPrimaryFlightForRound(roundId);
+  const format = (flight?.format ?? null) as Format | null;
+  const formatConfig = (flight?.format_config ?? null) as FormatConfig | null;
+  const formatLockedAt = flight?.format_locked_at ?? null;
   if (!format || !formatConfig) return { status: "missing_format" };
 
   const { data: rps } = await supabase
@@ -181,7 +188,7 @@ export async function loadRoundResults(
         roundId,
         format,
         formatConfig,
-        formatLocked: round.format_locked_at != null,
+        formatLocked: formatLockedAt != null,
         teams: [],
         maxThru: 0,
       },
@@ -355,7 +362,7 @@ export async function loadRoundResults(
         roundId,
         format,
         formatConfig,
-        formatLocked: round.format_locked_at != null,
+        formatLocked: formatLockedAt != null,
         teams: ranked,
         maxThru,
       },
@@ -579,7 +586,7 @@ export async function loadRoundResults(
       roundId,
       format,
       formatConfig,
-      formatLocked: round.format_locked_at != null,
+      formatLocked: formatLockedAt != null,
       teams: ranked,
       maxThru,
     },

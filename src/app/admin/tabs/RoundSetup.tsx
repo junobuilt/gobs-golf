@@ -9,6 +9,7 @@ import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import { getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
@@ -187,7 +188,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
       const { data: rounds } = await supabase
-        .from("rounds").select("id, is_complete, was_finalized, format, format_config, format_locked_at").eq("played_on", date)
+        .from("rounds").select("id, is_complete, was_finalized").eq("played_on", date)
         .order("played_on", { ascending: false }).limit(1);
 
       if (!rounds || rounds.length === 0) return;
@@ -196,9 +197,11 @@ export default function RoundSetup({ allPlayers }: Props) {
       setExistingRoundId(round.id);
       setIsRoundComplete(round.is_complete);
       setWasFinalized(!!(round as any).was_finalized);
-      setRoundFormat((round.format ?? null) as Format | null);
-      setRoundFormatConfig(((round as any).format_config ?? null) as FormatConfig | null);
-      setRoundFormatLockedAt((round.format_locked_at ?? null) as string | null);
+      // Format / config / lock live on the round's primary flight (Session 1).
+      const flight = await getPrimaryFlightForRound(round.id);
+      setRoundFormat((flight?.format ?? null) as Format | null);
+      setRoundFormatConfig((flight?.format_config ?? null) as FormatConfig | null);
+      setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
 
       // Phase D.2: count blind_draws for this round so the Edit Round
       // confirmation modal can warn the admin about preserved-but-stale
@@ -481,14 +484,23 @@ export default function RoundSetup({ allPlayers }: Props) {
   const writeAllowance = useCallback(async (value: number) => {
     if (!existingRoundId) return;
     setSaving(true);
+    // handicap_allowance is a FLIGHT-level key (Session 1). Merge onto the
+    // flight's config (roundFormatConfig is sourced from the flight at load)
+    // and write to the round's primary flight, not rounds.format_config.
+    const flight = await getPrimaryFlightForRound(existingRoundId);
+    if (!flight) {
+      setSaving(false);
+      alert("Couldn't save handicap allowance: round has no flight.");
+      return;
+    }
     const nextConfig = {
       ...(roundFormatConfig ?? {}),
       handicap_allowance: value,
     } as FormatConfig;
     const { error } = await supabase
-      .from("rounds")
+      .from("flights")
       .update({ format_config: nextConfig })
-      .eq("id", existingRoundId);
+      .eq("id", flight.id);
     setSaving(false);
     if (error) {
       alert("Couldn't save handicap allowance: " + error.message);

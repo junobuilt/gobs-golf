@@ -7,6 +7,7 @@ import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 import { FORMAT_ORDER, FORMAT_LABELS } from "@/lib/format/copy";
 import { defaultConfigFor, getScoringBasis, getOverrideHoles, getTeamBallCount } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 import DangerModal from "@/app/admin/components/DangerModal";
 
 // GOBS Stableford editable point-value rows. Order is best-result-first so
@@ -267,10 +268,19 @@ export default function FormatPicker({
       nextConfig.handicap_allowance = currentConfig.handicap_allowance;
     }
 
+    // Format ownership lives on the round's primary flight (Session 1).
+    // nextConfig holds only flight-level keys — submitted_teams stays on the
+    // round, so writing the whole config to the flight is correct.
+    const flight = await getPrimaryFlightForRound(roundId);
+    if (!flight) {
+      setSaving(false);
+      setErrorMessage("Couldn't find the round's flight. Tap Save to retry.");
+      return;
+    }
     const { error } = await supabase
-      .from("rounds")
+      .from("flights")
       .update({ format: selectedFormat, format_config: nextConfig })
-      .eq("id", roundId);
+      .eq("id", flight.id);
 
     if (error) {
       setSaving(false);

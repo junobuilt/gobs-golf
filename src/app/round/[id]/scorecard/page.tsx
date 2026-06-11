@@ -16,6 +16,7 @@ import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput }
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCourseHandicap, allowsIncompleteClose } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 import { formatTeamTotal } from "@/lib/format/copy";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
@@ -367,22 +368,28 @@ export default function ScorecardPage() {
     setTeamFilter(urlParams.get("team"));
 
     async function load() {
+      // Format / config / lock now live on the round's primary flight
+      // (Session 1). The round row supplies only lifecycle (is_complete,
+      // played_on) and the ROUND-level submitted_teams gate.
       const { data: roundRow } = await supabase
         .from("rounds")
-        .select("format, format_config, format_locked_at, is_complete, played_on")
+        .select("format_config, is_complete, played_on")
         .eq("id", roundId)
         .maybeSingle();
+      const flight = await getPrimaryFlightForRound(Number(roundId));
       const roundIsComplete = !!roundRow?.is_complete;
       if (roundRow) {
-        const cfg = (roundRow.format_config ?? null) as FormatConfig | null;
-        setRoundFormat((roundRow.format ?? null) as Format | null);
-        setRoundFormatConfig(cfg);
-        setRoundFormatLockedAt((roundRow.format_locked_at ?? null) as string | null);
+        const roundCfg = (roundRow.format_config ?? null) as FormatConfig | null;
+        const flightCfg = (flight?.format_config ?? null) as FormatConfig | null;
+        setRoundFormat((flight?.format ?? null) as Format | null);
+        setRoundFormatConfig(flightCfg);
+        setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
         setIsRoundComplete(roundIsComplete);
         setRoundPlayedOn((roundRow.played_on ?? null) as string | null);
-        // D.1 hotfix: read the team-submission gate. Undefined on rounds
-        // created before the hotfix → treated as [] (no one submitted yet).
-        setSubmittedTeams(Array.isArray(cfg?.submitted_teams) ? cfg!.submitted_teams! : []);
+        // D.1 hotfix: read the team-submission gate. submitted_teams stays
+        // ROUND-level (frozen rounds.format_config), NOT the flight. Undefined
+        // on rounds created before the hotfix → treated as [] (none submitted).
+        setSubmittedTeams(Array.isArray(roundCfg?.submitted_teams) ? roundCfg!.submitted_teams! : []);
       }
 
       // D.1 hotfix: load every team_number in the round so we can compute
@@ -675,10 +682,14 @@ export default function ScorecardPage() {
 
   const ensureFormatLocked = async () => {
     if (roundFormatLockedAt !== null) return;
+    // Format lock now lives on the round's primary flight (Session 1). Stamp it
+    // there, guarded by WHERE format_locked_at IS NULL (idempotent, race-safe).
+    const flight = await getPrimaryFlightForRound(Number(roundId));
+    if (!flight) return;
     const { data } = await supabase
-      .from("rounds")
+      .from("flights")
       .update({ format_locked_at: new Date().toISOString() })
-      .eq("id", roundId)
+      .eq("id", flight.id)
       .is("format_locked_at", null)
       .select("format_locked_at")
       .maybeSingle();
@@ -890,13 +901,10 @@ export default function ScorecardPage() {
     }
 
     // Scoring basis decides whether the drawn player's CH is zeroed (gross).
-    // Re-read it rather than trust possibly-stale roundFormatConfig state.
-    const { data: roundRow } = await supabase
-      .from("rounds")
-      .select("format_config")
-      .eq("id", roundId)
-      .maybeSingle();
-    const cfg = (roundRow?.format_config ?? null) as FormatConfig | null;
+    // Re-read the flight config rather than trust possibly-stale state
+    // (scoring_basis + handicap_allowance are flight-level keys, Session 1).
+    const flight = await getPrimaryFlightForRound(Number(roundId));
+    const cfg = (flight?.format_config ?? null) as FormatConfig | null;
     const useGross = getScoringBasis(cfg) === "gross";
 
     // The drawn player is on another team — look up their round_players row

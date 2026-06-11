@@ -35,6 +35,7 @@ class MiniFake {
 
 class MiniBuilder {
   private _eqs: Array<[string, any]> = [];
+  private _ins: Array<[string, any[]]> = [];
   private _gts: Array<[string, any]> = [];
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
@@ -43,6 +44,7 @@ class MiniBuilder {
 
   select(str?: string) { this._selectStr = str ?? "*"; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
+  in(col: string, vals: any[]) { this._ins.push([col, vals]); return this; }
   gt(col: string, val: any) { this._gts.push([col, val]); return this; }
   order(column: string, opts?: any) {
     this._order = { column, ascending: opts?.ascending ?? true, referencedTable: opts?.referencedTable };
@@ -85,6 +87,7 @@ class MiniBuilder {
         rows = rows.filter((r) => this.looseEq(r[c], v));
       }
     }
+    for (const [c, vs] of this._ins) rows = rows.filter((r) => vs.some((v) => this.looseEq(r[c], v)));
     for (const [c, v] of this._gts) rows = rows.filter((r) => (r[c] ?? 0) > v);
 
     if (this._order && !this._order.referencedTable) {

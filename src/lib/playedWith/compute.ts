@@ -15,6 +15,7 @@
 // view (full_name-keyed, unverified freshness post-H.5; dropped in E6).
 
 import { supabase } from "@/lib/supabase";
+import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 export type Partner = {
@@ -166,7 +167,7 @@ export async function fetchPairRounds(
 
   let q = supabase
     .from("round_players")
-    .select("round_id, team_number, player_id, rounds!inner ( played_on, format, is_complete, season_id )")
+    .select("round_id, team_number, player_id, rounds!inner ( played_on, is_complete, season_id )")
     .in("player_id", [aId, bId])
     .eq("rounds.is_complete", true)
     .gt("team_number", 0);
@@ -177,6 +178,13 @@ export async function fetchPairRounds(
   const { data, error } = await q;
   if (error) throw error;
   const rows = (data ?? []) as any[];
+
+  // Format moved to the round's primary flight (Session 1); resolve it for the
+  // shared rounds so the Pair Lookup row label reads off the flight, not
+  // rounds.format. Session 3 must revisit for true multi-flight rounds.
+  const flightByRound = await getPrimaryFlightByRound(
+    rows.map((r) => r.round_id as number),
+  );
 
   // Group by round+team; a partnership exists only when BOTH ids share the
   // same round+team slot.
@@ -194,7 +202,7 @@ export async function fetchPairRounds(
         round_id: r.round_id,
         team_number: r.team_number,
         played_on: rnd.played_on,
-        format: rnd.format ?? null,
+        format: flightByRound.get(r.round_id)?.format ?? null,
         ids: new Set<number>(),
       };
       byRoundTeam.set(key, entry);

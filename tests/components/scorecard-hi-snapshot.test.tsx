@@ -168,6 +168,18 @@ function buildSeed() {
       format_locked_at: "2026-05-20T00:00:00Z",
       created_at: "2026-05-20T00:00:00Z",
     }],
+    // Flights (Session 1): format/config/lock now resolve off the round's
+    // primary flight. Mirrors the migration-022 backfill (submitted_teams stays
+    // round-level, so it's absent here).
+    flights: [{
+      id: 9001,
+      round_id: 1,
+      name: "Flight A",
+      sort_order: 1,
+      format: "2_ball",
+      format_config: { basis: "net", best_n: 2, override_holes: [] },
+      format_locked_at: "2026-05-20T00:00:00Z",
+    }],
     tees: [
       { id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 },
     ],

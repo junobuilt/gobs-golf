@@ -14,24 +14,43 @@
 import { describe, it, expect, vi } from "vitest";
 
 const rowsRef = vi.hoisted(() => ({ current: [] as any[] }));
+// Flights (Session 1): format moved off rounds.format onto the round's primary
+// flight. fetchPlayerStats now resolves format via getPrimaryFlightByRound, so
+// the mock must serve a `flights` table keyed by round_id.
+const flightsRef = vi.hoisted(() => ({ current: [] as any[] }));
 
 vi.mock("@/lib/supabase", () => {
-  const builder: any = {
-    select: () => builder,
-    eq: () => builder,
-    gte: () => builder,
-    lte: () => builder,
-    then: (onF: any) => Promise.resolve({ data: rowsRef.current, error: null }).then(onF),
-  };
-  return { supabase: { from: () => builder } };
+  function makeBuilder(table: string): any {
+    const b: any = {
+      select: () => b,
+      eq: () => b,
+      gte: () => b,
+      lte: () => b,
+      in: () => b,
+      order: () => b,
+      then: (onF: any) => {
+        const data = table === "flights" ? flightsRef.current : rowsRef.current;
+        return Promise.resolve({ data, error: null }).then(onF);
+      },
+    };
+    return b;
+  }
+  return { supabase: { from: (t: string) => makeBuilder(t) } };
 });
 
 import { fetchPlayerStats } from "@/lib/playerStats";
+
+// One primary flight per round, carrying the format the round used to hold.
+const flight = (round_id: number, format: string) => ({
+  id: 9000 + round_id, round_id, name: "Flight A", sort_order: 1,
+  format, format_config: { basis: "net" }, format_locked_at: null,
+});
 
 const scores = (strokes: number) => Array.from({ length: 18 }, () => ({ strokes }));
 
 describe("fetchPlayerStats — team-card exclusion", () => {
   it("excludes a Shambles round even when it carries per-player score rows", async () => {
+    flightsRef.current = [flight(1, "2_ball"), flight(2, "shambles")];
     rowsRef.current = [
       // Individual round: 18×5 = 90.
       {
@@ -61,6 +80,7 @@ describe("fetchPlayerStats — team-card exclusion", () => {
   });
 
   it("a player who only ever played Shambles has empty stats", async () => {
+    flightsRef.current = [flight(2, "shambles")];
     rowsRef.current = [
       {
         round_id: 2,

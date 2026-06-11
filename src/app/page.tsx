@@ -12,6 +12,7 @@ import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { scorecardHref } from "@/lib/round/scorecardHref";
+import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
 import type { Format } from "@/lib/scoring/types";
 import type { Player } from "@/app/admin/page";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
@@ -121,16 +122,22 @@ export default function HomePage() {
 
     const { data: rounds } = await supabase
       .from("rounds")
-      .select("id, played_on, is_complete, format")
+      .select("id, played_on, is_complete")
       .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
       .order("played_on", { ascending: false });
 
     if (rounds) {
+      // Format lives on each round's primary flight (Session 1). Resolve for
+      // the (≤2) rounds shown so routing reads the flight format, not rounds.*.
+      const flightByRound = await getPrimaryFlightByRound(
+        rounds.map((r: any) => r.id as number),
+      );
+
       // Find today's round for team formation
       const todayRound = rounds.find((r: any) => r.played_on === today);
       if (todayRound) {
         setTodayRoundId(todayRound.id);
-        setTodayRoundFormat((todayRound.format ?? null) as Format | null);
+        setTodayRoundFormat((flightByRound.get(todayRound.id)?.format ?? null) as Format | null);
         await loadTodayRoundPlayers(todayRound.id);
       } else {
         setTodayRoundId(null);
@@ -181,6 +188,9 @@ export default function HomePage() {
 
           return {
             ...round,
+            // format now comes from the round's primary flight (Session 1),
+            // not the dropped rounds.format column. Consumed by scorecardHref.
+            format: (flightByRound.get(round.id)?.format ?? null) as Format | null,
             isYesterday: round.played_on === yesterday,
             teams: teamList,
             hasAnyScores,

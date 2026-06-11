@@ -27,6 +27,13 @@ export interface FakeData {
   // drawn-player NAME falls back to the round_players lookup when the
   // `players(...)` embed doesn't resolve, so no embed support is needed here.
   blind_draws?: any[];
+  // Flights (Session 1) — format ownership moved here from `rounds`. Optional:
+  // when absent, the constructor synthesizes one Flight A per round (mirroring
+  // migration 022's backfill) so existing fixtures resolve format/config/lock
+  // off the flight without re-declaring it. Seed explicitly to exercise
+  // multi-flight / flight_teams routing.
+  flights?: any[];
+  flight_teams?: any[];
 }
 
 export type WriteOp =
@@ -59,8 +66,35 @@ export class FakeSupabase {
 
   constructor(seed: FakeData) {
     this.data = seed;
-    for (const t of Object.keys(seed)) {
-      const rows = (seed as any)[t] as any[];
+    // Flights (Session 1): synthesize one primary Flight A per round when the
+    // seed doesn't declare flights — the test-side equivalent of migration
+    // 022's backfill. format/lock copy verbatim; format_config copies all keys
+    // EXCEPT submitted_teams (the only round-level key). Copied by value so a
+    // later mutation of rounds.* does NOT leak into the flight (this is what
+    // the negative-control test relies on to prove reads moved off rounds.*).
+    const anySeed = this.data as any;
+    if (!anySeed.flights) {
+      anySeed.flights = (seed.rounds ?? []).map((r: any, i: number) => {
+        let cfg: any = null;
+        if (r.format_config && typeof r.format_config === "object") {
+          cfg = { ...r.format_config };
+          delete cfg.submitted_teams;
+        }
+        return {
+          id: 900001 + i,
+          round_id: r.id,
+          name: "Flight A",
+          sort_order: 1,
+          format: r.format ?? null,
+          format_config: cfg,
+          format_locked_at: r.format_locked_at ?? null,
+        };
+      });
+    }
+    if (!anySeed.flight_teams) anySeed.flight_teams = [];
+
+    for (const t of Object.keys(this.data)) {
+      const rows = (this.data as any)[t] as any[];
       const maxId = rows.reduce((m, r) => (typeof r.id === "number" && r.id > m ? r.id : m), 0);
       this.nextIds[t] = maxId + 1;
     }
@@ -118,6 +152,7 @@ class QueryBuilder<Row = any> {
   private isFilter: [string, any] | null = null;
   private gtFilters: Array<[string, any]> = [];
   private orderField: string | null = null;
+  private limitN: number | null = null;
   private insertPayload: any[] = [];
   private updatePayload: any = null;
   private upsertPayload: any[] = [];
@@ -166,6 +201,10 @@ class QueryBuilder<Row = any> {
   }
   order(col: string) {
     this.orderField = col;
+    return this;
+  }
+  limit(n: number) {
+    this.limitN = n;
     return this;
   }
   /**
@@ -311,6 +350,7 @@ class QueryBuilder<Row = any> {
         return av < bv ? -1 : 1;
       });
     }
+    if (this.limitN != null) rows = rows.slice(0, this.limitN);
 
     // Handle relational select: e.g. select(`id, players(name, ...)`)
     // For the scorecard's round_players load, the join is to `players`.

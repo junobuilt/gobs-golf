@@ -446,6 +446,29 @@ never touches prod.
 
 ---
 
+### Format / config / allowance ownership = the flight, via `src/lib/flights/resolve.ts`
+
+As of the Flights track (migration `022`, 2026-05-26) a round's **format**,
+**format-behavior config keys** (`scoring_basis`, `basis`, `best_n`,
+`point_values`, `override_holes`, `handicap_allowance`, `team_ball_count`), and
+**format lock** live on the round's **flight**, not on `rounds`. The round is a
+container; `submitted_teams` is the only config key that stays round-level.
+
+**Never read `rounds.format` / the flight-level `format_config` keys /
+`rounds.format_locked_at`.** They are frozen legacy columns (a later cleanup
+migration drops them). Resolve through `src/lib/flights/resolve.ts`:
+`getPrimaryFlightForRound(roundId)` for single-round surfaces,
+`getPrimaryFlightByRound(roundIds)` for batch readers, `getFlightForTeam` when a
+team's flight matters (its module-header default rule: no `flight_teams` row →
+the round's first flight). Writes target the flight too (FormatPicker save,
+format-lock stamping, allowance save); `ensureRoundShell` creates the primary
+Flight A so every round has exactly one flight. The single allowance accessor is
+still `getPlayingCourseHandicap` / `getHandicapAllowance` (`format/helpers.ts`) —
+the flight only supplies the `FormatConfig` they read; do not add a second
+allowance computation.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { isTeamCardFormat, getTeamBallCount } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
 import { computeTeamHandicap } from "@/lib/scoring/teamHandicap";
 import {
   buildTeamScoreMap,
@@ -82,19 +83,24 @@ export default function TeamCardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       setTeamFilter(team);
 
+      // Format / config / lock live on the round's primary flight (Session 1);
+      // the round row supplies lifecycle + the ROUND-level submitted_teams gate.
       const { data: roundRow } = await supabase
         .from("rounds")
-        .select("format, format_config, format_locked_at, is_complete")
+        .select("format_config, is_complete")
         .eq("id", roundId)
         .maybeSingle();
+      const flight = await getPrimaryFlightForRound(Number(roundId));
 
-      const fmt = (roundRow?.format ?? null) as Format | null;
-      const cfg = (roundRow?.format_config ?? null) as FormatConfig | null;
+      const roundCfg = (roundRow?.format_config ?? null) as FormatConfig | null;
+      const fmt = (flight?.format ?? null) as Format | null;
+      const cfg = (flight?.format_config ?? null) as FormatConfig | null;
       setRoundFormat(fmt);
       setRoundFormatConfig(cfg);
-      setRoundFormatLockedAt((roundRow?.format_locked_at ?? null) as string | null);
+      setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
       setIsRoundComplete(!!roundRow?.is_complete);
-      setSubmittedTeams(Array.isArray(cfg?.submitted_teams) ? cfg!.submitted_teams! : []);
+      // submitted_teams stays ROUND-level (frozen rounds.format_config).
+      setSubmittedTeams(Array.isArray(roundCfg?.submitted_teams) ? roundCfg!.submitted_teams! : []);
 
       // All assigned team numbers in this round — the finalize gate needs every
       // team to have submitted, not just this one.
@@ -239,10 +245,13 @@ export default function TeamCardPage() {
 
   const ensureFormatLocked = async () => {
     if (roundFormatLockedAt !== null) return;
+    // Format lock lives on the round's primary flight (Session 1).
+    const flight = await getPrimaryFlightForRound(Number(roundId));
+    if (!flight) return;
     const { data } = await supabase
-      .from("rounds")
+      .from("flights")
       .update({ format_locked_at: new Date().toISOString() })
-      .eq("id", roundId)
+      .eq("id", flight.id)
       .is("format_locked_at", null)
       .select("format_locked_at")
       .maybeSingle();

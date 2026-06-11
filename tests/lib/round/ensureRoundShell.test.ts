@@ -14,14 +14,23 @@ import { ensureRoundShell } from "@/lib/round/ensureRoundShell";
 // the end of any method chain. Every fluent method returns `this`.
 function makeChain(result: unknown) {
   const chain: Record<string, unknown> = {};
-  const methods = ["select", "eq", "order", "limit", "maybeSingle", "insert", "single"];
+  const methods = ["select", "eq", "order", "limit", "maybeSingle", "insert", "single", "upsert"];
   methods.forEach(m => {
     chain[m] = vi.fn(() => {
       if (m === "maybeSingle" || m === "single") return Promise.resolve(result);
+      // ensurePrimaryFlight awaits the upsert directly and reads { error }.
+      if (m === "upsert") return Promise.resolve({ error: null });
       return chain;
     });
   });
   return chain;
+}
+
+// Flights (Session 1): each success path ends with a from("flights").upsert to
+// ensure the round's primary Flight A exists. Tests that reach a return append
+// this chain to their from() sequence.
+function makeFlightChain() {
+  return makeChain({ data: null, error: null });
 }
 
 beforeEach(() => {
@@ -41,17 +50,50 @@ describe("ensureRoundShell", () => {
   });
 
   it("inserts and returns new id when no round exists", async () => {
-    // First call: SELECT returns nothing; second call: INSERT returns new id.
+    // First call: SELECT returns nothing; second: INSERT returns new id; third:
+    // flights upsert (ensurePrimaryFlight).
     const selectChain = makeChain({ data: null, error: null });
     const insertChain = makeChain({ data: { id: 99 }, error: null });
 
     fromMock
       .mockReturnValueOnce(selectChain) // SELECT
-      .mockReturnValueOnce(insertChain); // INSERT
+      .mockReturnValueOnce(insertChain) // INSERT
+      .mockReturnValueOnce(makeFlightChain()); // flights upsert
 
     const id = await ensureRoundShell("2026-05-21");
 
     expect(id).toBe(99);
+  });
+
+  it("ensures a primary Flight A for the round (idempotent upsert on round_id,sort_order)", async () => {
+    // Existing round → returns its id, then upserts Flight A. Capture the
+    // flights upsert payload + onConflict to assert the invariant write.
+    const selectChain = makeChain({ data: { id: 42 }, error: null });
+
+    let upsertPayload: any = null;
+    let upsertOpts: any = null;
+    const flightChain: Record<string, unknown> = {
+      upsert: vi.fn((row: unknown, opts: unknown) => {
+        upsertPayload = row;
+        upsertOpts = opts;
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    fromMock
+      .mockReturnValueOnce(selectChain) // SELECT rounds
+      .mockReturnValueOnce(flightChain); // flights upsert
+
+    const id = await ensureRoundShell("2026-05-25");
+
+    expect(id).toBe(42);
+    expect(upsertPayload).toMatchObject({
+      round_id: 42,
+      name: "Flight A",
+      sort_order: 1,
+      format: null,
+    });
+    expect(upsertOpts).toMatchObject({ onConflict: "round_id,sort_order", ignoreDuplicates: true });
   });
 
   it("insert payload includes format: null and DEFAULT_FORMAT_CONFIG_SHELL", async () => {
@@ -70,7 +112,8 @@ describe("ensureRoundShell", () => {
 
     fromMock
       .mockReturnValueOnce(selectChain)
-      .mockReturnValueOnce(insertChain);
+      .mockReturnValueOnce(insertChain)
+      .mockReturnValueOnce(makeFlightChain()); // flights upsert
 
     await ensureRoundShell("2026-05-22");
 
@@ -89,7 +132,8 @@ describe("ensureRoundShell", () => {
     fromMock
       .mockReturnValueOnce(selectChain)  // initial SELECT
       .mockReturnValueOnce(insertChain)  // INSERT → 23505
-      .mockReturnValueOnce(refetchChain); // re-SELECT after race
+      .mockReturnValueOnce(refetchChain) // re-SELECT after race
+      .mockReturnValueOnce(makeFlightChain()); // flights upsert
 
     const id = await ensureRoundShell("2026-05-23");
 

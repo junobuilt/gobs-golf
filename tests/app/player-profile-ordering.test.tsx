@@ -60,6 +60,7 @@ class MiniFake {
 class MiniBuilder {
   private _op = "select";
   private _eqs: Array<[string, any]> = [];
+  private _ins: Array<[string, any[]]> = [];
   private _gts: Array<[string, any]> = [];
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
@@ -69,6 +70,7 @@ class MiniBuilder {
 
   select(str?: string) { this._selectStr = str ?? "*"; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
+  in(col: string, vals: any[]) { this._ins.push([col, vals]); return this; }
   gt(col: string, val: any) { this._gts.push([col, val]); return this; }
   gte(_c: string, _v: any) { return this; }
   lte(_c: string, _v: any) { return this; }
@@ -126,6 +128,10 @@ class MiniBuilder {
       } else {
         rows = rows.filter((r) => this.looseEq(r[c], v));
       }
+    }
+    // .in() — flights resolution (getPrimaryFlightByRound) filters by round_id.
+    for (const [c, vs] of this._ins) {
+      rows = rows.filter((r) => vs.some((v) => this.looseEq(r[c], v)));
     }
     // .gt() — closes the prior "`.gt` is not a function" mock gap so the
     // profile's played-with query runs instead of throwing-and-swallowing.

@@ -243,6 +243,21 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 ---
 
+## Flights — sub-competitions within a round
+
+*Added 2026-05-26. "Flights" make a round a CONTAINER (date / course / season) and move format ownership to a per-flight row: a flight owns format, format_config (the format-behavior keys), the format lock, the handicap allowance, and — later — its own payout run. Foundation-first: Session 1 is schema + an ownership move behind a single resolution helper with ZERO behavior change (every round gets exactly one flight); Sessions 2–4 add the admin UX, read-surface sectioning, and flight-aware finalize. Spec lives in this track + Decisions Locked > Flights.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| Flights.1 | Foundation — schema + ownership move (ZERO behavior change) | ✅ (2026-05-26) | Migration `022_flights_foundation.sql` (additive, reversible): `flights` (round_id FK, name, sort_order, format [same CHECK set as rounds.format, plus NULL], format_config jsonb, format_locked_at; UNIQUE round_id+sort_order) + `flight_teams` (flight_id, round_id, team_number; UNIQUE round_id+team_number so a team is in ≤1 flight). RLS mirrors `rounds` (allow-all). Backfill: one **Flight A** per round for **every** round incl. format=null (format/lock copied verbatim; config copies all keys EXCEPT round-level `submitted_teams`); DO-block asserts every round has exactly one sort_order=1 flight. NEW `src/lib/flights/resolve.ts` is the single source of truth: `getFlightsForRound`, `getPrimaryFlightForRound`, `getFlightForTeam` (CANONICAL DEFAULT RULE — no `flight_teams` row → the round's first flight, documented in the module header and living ONLY there), `getPrimaryFlightByRound` batch, `ensurePrimaryFlight` (idempotent Flight-A shell at round creation). ALL reads + writes of `rounds.format` / flight-level `format_config` keys / `rounds.format_locked_at` moved to the flight (FormatPicker save, format-lock stamping at first score on both scorecard surfaces, allowance save, ensureRoundShell). `submitted_teams` stays ROUND-level. The frozen legacy columns are NOT dropped (later cleanup migration once Sessions 2–4 are stable). Tests: resolve default-rule (wrong-state fixtures), cross-surface format-resolution equality, allowance agreement, negative control (mutating frozen `rounds.format` changes nothing). 798/798 green; `tsc --noEmit` clean. |
+| Flights.2 | Admin UX — create/name/order flights, assign teams to flights | 📋 | Not started. Adds the `flight_teams` write paths (RoundSetup goToTeams, homepage smartJoin, ManageTeamSheet) + per-flight FormatPicker/allowance. Do not build ahead. |
+| Flights.3 | Read-surface sectioning — section results/leaderboard/stats by flight | 📋 | Not started. **Must revisit the four batch-stats readers** (`player/[id]/page.tsx`, `season/page.tsx`, `playerStats.ts`, `leaderboard/page.tsx`) — they use `getPrimaryFlightByRound` as a Session-1 equivalence helper, well-defined ONLY because every round has exactly one flight. True multi-flight rounds need per-flight aggregation or a documented rollup decision here. Individual Rankings stay round-wide (ranked by net strokes). |
+| Flights.4 | Flight-aware finalize + payouts | 📋 | Not started. Blind draw pools round-wide EXCLUDING team-card-format flight players, no cross-flight collision; fill scores computed under the RECEIVING flight's format + allowance; per-flight payout run. Do not build ahead. |
+
+**Flights.1 exit criteria:** every round has exactly one flight; format/config/allowance/lock read + written exclusively through `src/lib/flights/resolve.ts`; no surface reads `rounds.format`; app behaves IDENTICALLY to before the move; migration 022 dry-run-validated then applied (additive + reversible); full suite + `tsc --noEmit` green.
+
+---
+
 ## Phase C — Leaderboard Rework
 
 *Depends on Phase B for format-aware display.*
@@ -535,6 +550,19 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 - **Course Handicap (CH):** Slope-adjusted strokes received on a specific tee, stored in the `course_handicap` column of `round_players`. Round attribute, computed via `computeCourseHandicap` from the player's per-round HI (`round_players.handicap_index_snapshot` as of H.2.5) plus the round's selected tee slope/rating/par. Recomputed on scorecard load (LT1 fix, 2026-05-09) so admin edits to HI on active rounds flow through to the displayed CH without manual intervention; downstream consumers (summary, leaderboard, season) read the value the scorecard wrote back. **Self-heal reads from `round_players.handicap_index_snapshot` and only fires on rounds where `is_complete = false`** (H.2.5.4, 2026-05-21). (The earlier May 8 entry referenced a `player_course_handicaps` table — that table does not exist; `round_players.course_handicap` is the actual storage.)
 - **Playing Handicap (PH):** The allowance-adjusted CH that actually scores a round — `PH = CH × handicap_allowance%`, rounded (`getPlayingCourseHandicap` in `src/lib/format/helpers.ts`). **At 100% allowance PH = CH.** PH is what drives stroke dots and net (it always has, since Wave 1A); CH is the raw, allowance-independent reference. Added as an official term 2026-06-09 when the scorecard/History/profile surfaces stopped collapsing the two and now show **both** (`CH {raw} · PH {playing}` via the shared `src/components/handicap/ChPh.tsx`). Not a stored column — derived from `round_players.course_handicap` + the round's `format_config.handicap_allowance`.
 - **Display rule:** UI never uses bare "Strokes" or "Handicap" alone. Always qualified as **Handicap Index / HI**, **Course Handicap / CH**, or **Playing Handicap / PH**. Where CH and PH are shown together, use the `ChPh` component (single source for the `CH x · PH y` format + the PH-accent-when-≠-CH rule). On the scorecard meta row all three render as the abbreviations in **HI · CH · PH** order (`HI 23.9 · CH 21 · PH 21`, middle-dot separators). Database column names (`handicap_index`, `course_handicap`) are already correct and stay as-is.
+
+### Flights (locked 2026-05-26)
+
+*Settled at the start of the Flights track. Foundation shipped as Flights.1; Sessions 2–4 build on these without relitigating.*
+
+- **Ownership:** A flight owns format + format_config (format-behavior keys) + handicap allowance + format lock + (later) its own payout pot. The round is a container (date / course / season). The single source of truth is `src/lib/flights/resolve.ts`; **no surface reads `rounds.format` / flight-level `format_config` keys / `rounds.format_locked_at`** — those columns are frozen legacy pending a later cleanup migration.
+- **Config key split:** FLIGHT-level = `scoring_basis`, `basis`, `best_n`, `point_values`, `override_holes`, `handicap_allowance`, `team_ball_count`. ROUND-level = `submitted_teams` (stays on `rounds.format_config`).
+- **Invariant (NO format qualifier):** every round has exactly one flight, including format-null shells. `ensureRoundShell` creates the primary Flight A at round creation; migration 022 backfilled it for all existing rounds.
+- **Default rule:** a team with no `flight_teams` row belongs to the round's first flight (lowest sort_order). This rule lives ONLY in `getFlightForTeam`.
+- **Free groupings:** flights are free groupings of teams — no team-size enforcement.
+- **Blind draw:** pools round-wide EXCLUDING team-card-format flight players; no-collision across flights (a player fills at most one team); fill scores computed under the RECEIVING flight's format + allowance.
+- **Individual Rankings:** stay round-wide, ranked by net strokes (the universal metric) when flights have different formats.
+- **Session-3 caveat:** the four batch-stats readers (`player/[id]/page.tsx`, `season/page.tsx`, `playerStats.ts`, `leaderboard/page.tsx`) use `getPrimaryFlightByRound` as a Session-1 equivalence helper — correct ONLY while every round has one flight. Multi-flight rounds require per-flight aggregation or a documented rollup decision (Flights.3).
 
 ### Other locked decisions
 

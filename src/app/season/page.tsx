@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { computePlayerRoundTotal } from "@/lib/scoring";
 import { excludedFromIndividualStats } from "@/lib/format/helpers";
+import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface PlayerStats {
@@ -58,7 +59,7 @@ export default function LeaderboardPage() {
       // Get all completed rounds
       const { data: rounds } = await supabase
         .from("rounds")
-        .select("id, format")
+        .select("id")
         .eq("is_complete", true);
 
       if (!rounds || rounds.length === 0) {
@@ -71,8 +72,15 @@ export default function LeaderboardPage() {
       // per-player scores exist but aren't authoritative: picked-up balls,
       // relaxed close). The format filter is now the load-bearing exclusion for
       // Shambles since it DOES carry `scores` rows.
+      //
+      // Format now lives on each round's primary flight (Session 1); batch-
+      // resolve and read it off the flight. Session 3 must revisit for true
+      // multi-flight rounds.
+      const flightByRound = await getPrimaryFlightByRound(
+        rounds.map((r: any) => r.id as number),
+      );
       const roundIds = rounds
-        .filter((r: any) => !excludedFromIndividualStats(r.format ?? null))
+        .filter((r: any) => !excludedFromIndividualStats(flightByRound.get(r.id)?.format ?? null))
         .map(r => r.id);
 
       if (roundIds.length === 0) {
