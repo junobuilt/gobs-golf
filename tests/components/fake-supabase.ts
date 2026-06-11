@@ -140,7 +140,7 @@ export class FakeSupabase {
   }
 }
 
-type Op = "select" | "insert" | "update" | "upsert";
+type Op = "select" | "insert" | "update" | "upsert" | "delete";
 type Terminal = "list" | "maybeSingle" | "single";
 
 class QueryBuilder<Row = any> {
@@ -175,6 +175,10 @@ class QueryBuilder<Row = any> {
   update(payload: any) {
     this.op = "update";
     this.updatePayload = payload;
+    return this;
+  }
+  delete() {
+    this.op = "delete";
     return this;
   }
   upsert(row: any | any[], opts?: { onConflict?: string }) {
@@ -297,6 +301,38 @@ class QueryBuilder<Row = any> {
       if (this.terminal === "maybeSingle") return { data: updated[0] ?? null, error: null };
       if (this.terminal === "single") return { data: updated[0] ?? null, error: null };
       return { data: updated, error: null };
+    }
+
+    if (this.op === "delete") {
+      await this.maybeDelay();
+      const toRemove = this.applyFilters(tableRows);
+      const op: WriteOp = {
+        type: "update",
+        table: this.table,
+        filters: [...this.eqFilters],
+        payload: { __deleted: true },
+      };
+      const idx = this.fake._nextWriteCall();
+      this.fake.writes.push(op);
+      if (this.fake.options.failWrite?.(op, idx)) {
+        return { data: null, error: { message: "fake write failure" } };
+      }
+      const removeSet = new Set(toRemove);
+      // Cascade: child rows referencing a deleted flight by flight_id go too,
+      // matching the ON DELETE CASCADE on flight_teams.flight_id.
+      if (this.table === "flights") {
+        const ftRows: any[] = (this.fake.data as any).flight_teams;
+        if (Array.isArray(ftRows)) {
+          const deadIds = new Set(toRemove.map((r: any) => r.id));
+          for (let i = ftRows.length - 1; i >= 0; i--) {
+            if (deadIds.has(ftRows[i].flight_id)) ftRows.splice(i, 1);
+          }
+        }
+      }
+      for (let i = tableRows.length - 1; i >= 0; i--) {
+        if (removeSet.has(tableRows[i])) tableRows.splice(i, 1);
+      }
+      return { data: null, error: null };
     }
 
     if (this.op === "upsert") {

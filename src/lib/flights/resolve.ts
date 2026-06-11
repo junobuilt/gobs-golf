@@ -40,10 +40,10 @@ export type Flight = {
   format_locked_at: string | null;
 };
 
-const FLIGHT_COLUMNS =
+export const FLIGHT_COLUMNS =
   "id, round_id, name, sort_order, format, format_config, format_locked_at";
 
-function rowToFlight(row: Record<string, unknown>): Flight {
+export function rowToFlight(row: Record<string, unknown>): Flight {
   return {
     id: row.id as number,
     round_id: row.round_id as number,
@@ -110,6 +110,47 @@ export async function getFlightForTeam(
 
   // Default rule: lowest sort_order. flights is already sorted ascending.
   return flights[0];
+}
+
+// Resolve EVERY assigned team in a round to its flight, as a
+// Map<teamNumber, Flight>. THE shared per-round resolver (Session 2): the admin
+// Round Setup flight grouping, the delete-empty-flight check, and the
+// multi-flight finalize guard all read from this so they agree on the same
+// default rule. Applies the canonical rule (no flight_teams row → the round's
+// first flight) once, in bulk, rather than N getFlightForTeam round-trips.
+export async function getTeamFlightMap(
+  roundId: number,
+): Promise<Map<number, Flight>> {
+  const map = new Map<number, Flight>();
+  const flights = await getFlightsForRound(roundId);
+  if (flights.length === 0) return map;
+
+  const primary = flights[0]; // lowest sort_order (default-rule target)
+  const byId = new Map(flights.map(f => [f.id, f]));
+
+  const { data: rps } = await supabase
+    .from("round_players")
+    .select("team_number")
+    .eq("round_id", roundId)
+    .gt("team_number", 0);
+  const teamNumbers = [
+    ...new Set(((rps ?? []) as { team_number: number }[]).map(r => r.team_number)),
+  ];
+
+  const { data: ft } = await supabase
+    .from("flight_teams")
+    .select("team_number, flight_id")
+    .eq("round_id", roundId);
+  const explicit = new Map<number, number>();
+  ((ft ?? []) as { team_number: number; flight_id: number }[]).forEach(r =>
+    explicit.set(r.team_number, r.flight_id),
+  );
+
+  for (const tn of teamNumbers) {
+    const fid = explicit.get(tn);
+    map.set(tn, (fid != null ? byId.get(fid) : undefined) ?? primary);
+  }
+  return map;
 }
 
 // Batch accessor: the PRIMARY flight for each of many rounds, as a

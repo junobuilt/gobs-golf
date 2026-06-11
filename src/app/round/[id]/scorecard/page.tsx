@@ -16,8 +16,11 @@ import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput }
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
 import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCourseHandicap, allowsIncompleteClose } from "@/lib/format/helpers";
-import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
-import { formatTeamTotal } from "@/lib/format/copy";
+import { getPrimaryFlightForRound, getFlightForTeam, getFlightsForRound, getTeamFlightMap, type Flight } from "@/lib/flights/resolve";
+import { formatTeamTotal, FORMAT_LABELS } from "@/lib/format/copy";
+import { scorecardHref } from "@/lib/round/scorecardHref";
+// SESSION-4-REMOVE
+import { MULTI_FLIGHT_FINALIZE_NOTICE } from "@/lib/flights/finalizeGuard";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
 import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
@@ -243,6 +246,15 @@ export default function ScorecardPage() {
   const isRoundEditMode = useIsRoundEditMode();
 
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
+  // Session 2 (Flights): teamless admin overview only. `mixedFormatRound` ⇒ the
+  // round's non-empty flights don't share a format/config, so an aggregate
+  // net/dots preview under one flight's math would be wrong — suppress it and
+  // show per-team links instead. `teamFlightMap` powers those links + chips.
+  const [mixedFormatRound, setMixedFormatRound] = useState(false);
+  const [teamFlightMap, setTeamFlightMap] = useState<Map<number, Flight>>(new Map());
+  // SESSION-4-REMOVE: blocks Submit on rounds with 2+ non-empty flights (the
+  // round-wide finalize RPCs can't score multiple flights yet — Session 4).
+  const [multiFlightFinalizeBlocked, setMultiFlightFinalizeBlocked] = useState(false);
   const [roundPlayers, setRoundPlayers] = useState<RoundPlayer[]>([]);
   // Full active roster — the disambiguation universe for player short names.
   // Loaded once on mount so the per-player rows match every other surface.
@@ -376,7 +388,37 @@ export default function ScorecardPage() {
         .select("format_config, is_complete, played_on")
         .eq("id", roundId)
         .maybeSingle();
-      const flight = await getPrimaryFlightForRound(Number(roundId));
+
+      // Session 2 (Flights): resolve format/config/lock per TEAM (its flight),
+      // not the round's primary flight. Player paths always carry ?team=N. The
+      // teamless admin overview uses the primary flight UNLESS the round's
+      // non-empty flights differ — then it's "mixed" and the aggregate engine
+      // preview is suppressed (a flight-B team under flight-A math is wrong).
+      const teamParam = urlParams.get("team");
+      const tFlightMap = await getTeamFlightMap(Number(roundId));
+      setTeamFlightMap(tFlightMap);
+      let flight: Flight | null;
+      let mixed = false;
+      if (teamParam) {
+        flight = await getFlightForTeam(Number(roundId), parseInt(teamParam, 10));
+      } else {
+        const flights = await getFlightsForRound(Number(roundId));
+        flight = flights[0] ?? null;
+        const nonEmpty = [...new Map([...tFlightMap.values()].map(f => [f.id, f])).values()];
+        mixed =
+          nonEmpty.length > 1 &&
+          !nonEmpty.every(
+            f =>
+              f.format === nonEmpty[0].format &&
+              JSON.stringify(f.format_config ?? null) ===
+                JSON.stringify(nonEmpty[0].format_config ?? null),
+          );
+      }
+      setMixedFormatRound(mixed);
+      // SESSION-4-REMOVE: 2+ non-empty flights → finalize is blocked this session.
+      setMultiFlightFinalizeBlocked(
+        new Set([...tFlightMap.values()].map(f => f.id)).size >= 2,
+      );
       const roundIsComplete = !!roundRow?.is_complete;
       if (roundRow) {
         const roundCfg = (roundRow.format_config ?? null) as FormatConfig | null;
@@ -680,12 +722,22 @@ export default function ScorecardPage() {
     }
   };
 
-  const ensureFormatLocked = async () => {
-    if (roundFormatLockedAt !== null) return;
-    // Format lock now lives on the round's primary flight (Session 1). Stamp it
-    // there, guarded by WHERE format_locked_at IS NULL (idempotent, race-safe).
-    const flight = await getPrimaryFlightForRound(Number(roundId));
+  // Session 2 (Flights): the FIRST score on a team stamps THAT team's flight
+  // lock (format is per-flight). teamNumber comes from the scored player's row;
+  // when absent (shouldn't happen in scoring), falls back to the primary flight.
+  const ensureFormatLocked = async (teamNumber: number | null) => {
+    const flight =
+      teamNumber != null
+        ? await getFlightForTeam(Number(roundId), teamNumber)
+        : await getPrimaryFlightForRound(Number(roundId));
     if (!flight) return;
+    if (flight.format_locked_at != null) {
+      // Keep the displayed lock in sync (the ?team= view tracks its own flight).
+      if (teamFilter && parseInt(teamFilter, 10) === teamNumber) {
+        setRoundFormatLockedAt(flight.format_locked_at);
+      }
+      return;
+    }
     const { data } = await supabase
       .from("flights")
       .update({ format_locked_at: new Date().toISOString() })
@@ -693,7 +745,7 @@ export default function ScorecardPage() {
       .is("format_locked_at", null)
       .select("format_locked_at")
       .maybeSingle();
-    if (data?.format_locked_at) {
+    if (data?.format_locked_at && teamFilter && parseInt(teamFilter, 10) === teamNumber) {
       setRoundFormatLockedAt(data.format_locked_at as string);
     }
   };
@@ -728,10 +780,9 @@ export default function ScorecardPage() {
       },
     );
 
-    // First successful score for this round locks the format. Idempotent:
-    // skipped on subsequent calls via the local short-circuit, and the DB
-    // UPDATE guards with `WHERE format_locked_at IS NULL` as a safety net.
-    void ensureFormatLocked();
+    // First successful score on this team locks ITS flight's format (Session 2).
+    // Idempotent: the DB UPDATE guards with `WHERE format_locked_at IS NULL`.
+    void ensureFormatLocked(player?.team_number ?? (teamFilter ? parseInt(teamFilter, 10) : null));
 
     // D.1 hotfix: refresh submission state so the pre-fire banner picks up
     // another group submitting on another device. Cheap single-row read;
@@ -901,9 +952,11 @@ export default function ScorecardPage() {
     }
 
     // Scoring basis decides whether the drawn player's CH is zeroed (gross).
-    // Re-read the flight config rather than trust possibly-stale state
-    // (scoring_basis + handicap_allowance are flight-level keys, Session 1).
-    const flight = await getPrimaryFlightForRound(Number(roundId));
+    // Re-read THIS team's flight config (Session 2: per-team) rather than trust
+    // possibly-stale state (scoring_basis + handicap_allowance are flight keys).
+    const flight = team
+      ? await getFlightForTeam(Number(roundId), parseInt(team, 10))
+      : await getPrimaryFlightForRound(Number(roundId));
     const cfg = (flight?.format_config ?? null) as FormatConfig | null;
     const useGross = getScoringBasis(cfg) === "gross";
 
@@ -1032,6 +1085,7 @@ export default function ScorecardPage() {
   // changes.
   const submitTeam = async (teamNum: number) => {
     if (submitting) return;
+    if (multiFlightFinalizeBlocked) return; // SESSION-4-REMOVE
     setSubmitting(true);
     try {
       try { await getWriteQueue().drain(); } catch { /* offline; continue */ }
@@ -1401,6 +1455,46 @@ export default function ScorecardPage() {
   // --- LOADING ---
   if (loading) {
     return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Round…</div>;
+  }
+
+  // Session 2 (Flights): teamless admin overview of a MIXED-format round. The
+  // aggregate net/dots preview can't be drawn under one flight's math without
+  // showing wrong numbers for the other flight's teams, so suppress it and hand
+  // off to per-team scorecards (each resolves its own flight). Player paths
+  // always carry ?team=N and never hit this branch.
+  if (!teamFilter && mixedFormatRound) {
+    const sortedTeams = [...teamFlightMap.keys()].sort((a, b) => a - b);
+    return (
+      <div style={{ padding: "24px 20px 100px", maxWidth: "560px", margin: "0 auto", fontFamily: "sans-serif" }}>
+        <p style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0c3057", marginBottom: 4 }}>
+          Mixed-format round
+        </p>
+        <p style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: 18, lineHeight: 1.5 }}>
+          This round has flights with different formats — open a team to score.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {sortedTeams.map(tn => {
+            const f = teamFlightMap.get(tn)!;
+            return (
+              <a
+                key={tn}
+                href={scorecardHref(roundId, tn, f.format)}
+                style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "12px 14px", borderRadius: 10, border: "1px solid #e4e4e4",
+                  background: "#fff", textDecoration: "none", color: "#0c3057",
+                }}
+              >
+                <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Team {tn}</span>
+                <span style={{ fontSize: "0.78rem", color: "#64748b" }}>
+                  {f.name} · {f.format ? FORMAT_LABELS[f.format].title : "No format"} →
+                </span>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   // --- LOCKED: format not yet picked ---
@@ -2189,19 +2283,25 @@ export default function ScorecardPage() {
           <button
             type="button"
             onClick={() => setSubmitModal(true)}
-            disabled={!canSubmit || submitting}
+            disabled={!canSubmit || submitting || multiFlightFinalizeBlocked}
             style={{
               width: "100%", padding: "18px", borderRadius: "12px",
-              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
+              background: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "#15803d" : "#cbd5e1",
               color: "white", border: "none", fontWeight: 900,
               fontSize: "1rem",
-              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
+              cursor: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "pointer" : "not-allowed",
               fontFamily: "sans-serif",
             }}
           >
             {submitting ? "Submitting…" : "Submit Final Scores"}
           </button>
-          {!canSubmit && (
+          {/* SESSION-4-REMOVE: multi-flight finalize guard notice. */}
+          {multiFlightFinalizeBlocked && (
+            <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#b45309" }}>
+              {MULTI_FLIGHT_FINALIZE_NOTICE}
+            </p>
+          )}
+          {!canSubmit && !multiFlightFinalizeBlocked && (
             <p style={{
               margin: "8px 0 0", textAlign: "center",
               fontSize: "0.72rem", color: "#94a3b8",

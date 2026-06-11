@@ -9,7 +9,10 @@ import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import { getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
-import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
+import { getFlightsForRound, getTeamFlightMap, type Flight } from "@/lib/flights/resolve";
+import { createFlight, renameFlight, deleteFlight, moveTeamToFlight } from "@/lib/flights/mutations";
+import MoveTeamSheet from "@/components/flights/MoveTeamSheet";
+import RenameFlightModal from "@/components/flights/RenameFlightModal";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
@@ -85,10 +88,23 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [bottomSheetPlayer, setBottomSheetPlayer] = useState<Player | null>(null);
   const [undoAction, setUndoAction] = useState<{ player: Player; fromTeam: number; toTeam: number } | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
-  // Wave 1A: a pending handicap-allowance change awaiting danger-modal confirm.
-  // Only set when a score already exists (roundFormatLockedAt !== null); a
-  // pre-score change writes immediately. null = no pending change / modal closed.
-  const [pendingAllowance, setPendingAllowance] = useState<number | null>(null);
+  // Session 2 (Flights): all flights for the round + each assigned team's
+  // resolved flight id. Loaded alongside the round. The single-flight case
+  // renders one card with no per-team chips (≈ today); 2+ flights add chips +
+  // the move sheet. The FormatPicker + allowance control are scoped to a flight.
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [teamFlightMap, setTeamFlightMap] = useState<Map<number, number>>(new Map());
+  const [pickerFlight, setPickerFlight] = useState<Flight | null>(null);
+  const [moveTeamFor, setMoveTeamFor] = useState<number | null>(null);
+  const [renameFor, setRenameFor] = useState<Flight | null>(null);
+  const [deleteFlightModal, setDeleteFlightModal] = useState<Flight | null>(null);
+  // Wave 1A / Session 2: a pending handicap-allowance change awaiting danger-
+  // modal confirm, scoped to a flight. Only set when that flight's format is
+  // locked (a score exists); a pre-lock change writes immediately.
+  const [pendingAllowance, setPendingAllowance] = useState<{ value: number; flightId: number } | null>(null);
+  // Session 2: a pending team move into/out of a LOCKED flight, awaiting the
+  // recalc danger-modal confirm. Unlocked moves write immediately.
+  const [pendingMove, setPendingMove] = useState<{ teamNumber: number; flightId: number } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // D.1: per-player round_players row info, used by the active-view ⋯ menu.
   // Keyed by player_id (since loadedTeams uses Player[] from the allPlayers
@@ -197,8 +213,15 @@ export default function RoundSetup({ allPlayers }: Props) {
       setExistingRoundId(round.id);
       setIsRoundComplete(round.is_complete);
       setWasFinalized(!!(round as any).was_finalized);
-      // Format / config / lock live on the round's primary flight (Session 1).
-      const flight = await getPrimaryFlightForRound(round.id);
+      // Session 2 (Flights): load ALL flights + each team's resolved flight.
+      // The primary flight's scalars stay for the single-flight / empty-state
+      // path (and the "none" view's format strip); per-flight cards read from
+      // `flights` + `teamFlightMap`.
+      const roundFlights = await getFlightsForRound(round.id);
+      setFlights(roundFlights);
+      const tfm = await getTeamFlightMap(round.id);
+      setTeamFlightMap(new Map([...tfm.entries()].map(([tn, f]) => [tn, f.id])));
+      const flight = roundFlights[0] ?? null;
       setRoundFormat((flight?.format ?? null) as Format | null);
       setRoundFormatConfig((flight?.format_config ?? null) as FormatConfig | null);
       setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
@@ -439,8 +462,17 @@ export default function RoundSetup({ allPlayers }: Props) {
     const rid = await ensureRoundShell();
     if (!rid) return; // null = error OR the season prompt opened (resumes later)
     setPendingAction(null);
+    // Single-flight default button → scope the picker to the (primary) flight.
+    setPickerFlight(flights[0] ?? null);
     setFormatPickerOpen(true);
-  }, [ensureRoundShell]);
+  }, [ensureRoundShell, flights]);
+
+  // Session 2: open the FormatPicker scoped to a SPECIFIC flight (per-flight
+  // format chip). The picker writes to flight.id and reads its current config.
+  const openFlightFormat = useCallback((flight: Flight) => {
+    setPickerFlight(flight);
+    setFormatPickerOpen(true);
+  }, []);
 
   const openEditTeams = useCallback(async () => {
     setPendingAction("teams");
@@ -477,24 +509,13 @@ export default function RoundSetup({ allPlayers }: Props) {
     }
   }, [selectedDate, pendingAction]);
 
-  // Wave 1A: persist the handicap allowance into format_config, merging onto
-  // whatever config is already there so format/basis/override/point_values are
-  // preserved (allowance and format are independent controls). Open scorecards
-  // pick up the new value on their next load.
-  const writeAllowance = useCallback(async (value: number) => {
-    if (!existingRoundId) return;
+  // Wave 1A / Session 2: persist the handicap allowance onto a FLIGHT's config,
+  // merging so format/basis/override/point_values are preserved. Reloads so the
+  // per-flight cards refresh. Open scorecards pick up the value on next load.
+  const writeAllowance = useCallback(async (flight: Flight, value: number) => {
     setSaving(true);
-    // handicap_allowance is a FLIGHT-level key (Session 1). Merge onto the
-    // flight's config (roundFormatConfig is sourced from the flight at load)
-    // and write to the round's primary flight, not rounds.format_config.
-    const flight = await getPrimaryFlightForRound(existingRoundId);
-    if (!flight) {
-      setSaving(false);
-      alert("Couldn't save handicap allowance: round has no flight.");
-      return;
-    }
     const nextConfig = {
-      ...(roundFormatConfig ?? {}),
+      ...(flight.format_config ?? {}),
       handicap_allowance: value,
     } as FormatConfig;
     const { error } = await supabase
@@ -506,20 +527,106 @@ export default function RoundSetup({ allPlayers }: Props) {
       alert("Couldn't save handicap allowance: " + error.message);
       return;
     }
-    setRoundFormatConfig(nextConfig);
-  }, [existingRoundId, roundFormatConfig]);
+    await loadRoundForDate(selectedDate);
+  }, [selectedDate, loadRoundForDate]);
 
-  // A no-op when unchanged. If a score already exists the change routes through
-  // the existing dangerous-action modal (net recalculates); otherwise it writes
-  // immediately.
-  const onAllowanceChange = useCallback((value: number) => {
-    if (value === getHandicapAllowance(roundFormatConfig)) return;
-    if (roundFormatLockedAt !== null) {
-      setPendingAllowance(value);
+  // A no-op when unchanged. If THIS flight's format is locked (a score exists)
+  // the change routes through the danger modal (net recalculates for its teams);
+  // otherwise it writes immediately.
+  const onAllowanceChange = useCallback((flight: Flight, value: number) => {
+    if (value === getHandicapAllowance(flight.format_config)) return;
+    if (flight.format_locked_at !== null) {
+      setPendingAllowance({ value, flightId: flight.id });
     } else {
-      void writeAllowance(value);
+      void writeAllowance(flight, value);
     }
-  }, [roundFormatConfig, roundFormatLockedAt, writeAllowance]);
+  }, [writeAllowance]);
+
+  // ── Session 2: flight CRUD handlers (all reload after the write) ───────────
+  const handleCreateFlight = useCallback(async () => {
+    if (!existingRoundId) return;
+    setSaving(true);
+    try {
+      await createFlight(existingRoundId);
+      await loadRoundForDate(selectedDate);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [existingRoundId, selectedDate, loadRoundForDate]);
+
+  const handleRenameFlight = useCallback(async (flightId: number, name: string) => {
+    setSaving(true);
+    try {
+      await renameFlight(flightId, name);
+      await loadRoundForDate(selectedDate);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+      setRenameFor(null);
+    }
+  }, [selectedDate, loadRoundForDate]);
+
+  const handleDeleteFlight = useCallback(async (flight: Flight) => {
+    setSaving(true);
+    try {
+      await deleteFlight(flight.id);
+      await loadRoundForDate(selectedDate);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+      setDeleteFlightModal(null);
+    }
+  }, [selectedDate, loadRoundForDate]);
+
+  const doMoveTeam = useCallback(async (teamNumber: number, flightId: number) => {
+    if (!existingRoundId) return;
+    setSaving(true);
+    try {
+      await moveTeamToFlight(existingRoundId, teamNumber, flightId);
+      await loadRoundForDate(selectedDate);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+      setMoveTeamFor(null);
+      setPendingMove(null);
+    }
+  }, [existingRoundId, selectedDate, loadRoundForDate]);
+
+  // Move requested from the sheet. If the source OR destination flight is
+  // format-locked (a score is in), route through the recalc DangerModal first.
+  const requestMoveTeam = useCallback((teamNumber: number, flightId: number) => {
+    const sourceId = teamFlightMap.get(teamNumber);
+    const sourceLocked = flights.find(f => f.id === sourceId)?.format_locked_at != null;
+    const targetLocked = flights.find(f => f.id === flightId)?.format_locked_at != null;
+    setMoveTeamFor(null);
+    if (sourceLocked || targetLocked) {
+      setPendingMove({ teamNumber, flightId });
+    } else {
+      void doMoveTeam(teamNumber, flightId);
+    }
+  }, [teamFlightMap, flights, doMoveTeam]);
+
+  // "+ New flight" inside the move sheet: create a flight, then move the team
+  // into it. A brand-new flight is never locked, so no danger modal.
+  const createAndMoveTeam = useCallback(async (teamNumber: number) => {
+    if (!existingRoundId) return;
+    setSaving(true);
+    try {
+      const f = await createFlight(existingRoundId);
+      await moveTeamToFlight(existingRoundId, teamNumber, f.id);
+      await loadRoundForDate(selectedDate);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+      setMoveTeamFor(null);
+    }
+  }, [existingRoundId, selectedDate, loadRoundForDate]);
 
   // ── Mobile: transition checkin → teams ────────────────────────────────────
   // TD4 fix (2026-05-10): diff-based reconciliation instead of delete-all +
@@ -876,8 +983,8 @@ export default function RoundSetup({ allPlayers }: Props) {
           <select
             aria-label="Handicap allowance percent"
             value={getHandicapAllowance(roundFormatConfig)}
-            disabled={saving || initialLoading || isRoundComplete || isTeamCardFormat(roundFormat)}
-            onChange={e => onAllowanceChange(Number(e.target.value))}
+            disabled={saving || initialLoading || isRoundComplete || isTeamCardFormat(roundFormat) || flights.length === 0}
+            onChange={e => { if (flights[0]) onAllowanceChange(flights[0], Number(e.target.value)); }}
             style={{
               padding: "8px 10px", borderRadius: "8px",
               border: `1px solid #cbd5e1`, background: "#fff",
@@ -914,33 +1021,55 @@ export default function RoundSetup({ allPlayers }: Props) {
     </div>
   );
 
-  // Wave 1A: mid-round allowance change confirmation (reuses the shared danger
-  // modal, same pattern as a post-lock format_config change in FormatPicker).
+  // Wave 1A / Session 2: mid-round allowance change confirmation, scoped to the
+  // pending flight (only the teams in that flight recalculate).
   const allowanceDangerModal = pendingAllowance !== null && (
     <DangerModal
       title="Change handicap allowance mid-round?"
-      description={`Net scores will recalculate at ${pendingAllowance}% handicaps. Gross scores are unchanged.`}
+      description={`Net scores will recalculate at ${pendingAllowance.value}% handicaps for this flight's teams. Gross scores are unchanged.`}
       cannotBeUndone={false}
       confirmLabel="Change allowance"
       onConfirm={() => {
-        const v = pendingAllowance;
+        const p = pendingAllowance;
         setPendingAllowance(null);
-        void writeAllowance(v);
+        const flight = flights.find(f => f.id === p.flightId);
+        if (flight) void writeAllowance(flight, p.value);
       }}
       onCancel={() => setPendingAllowance(null)}
     />
   );
 
+  // Session 2: moving a team into/out of a LOCKED flight recalculates that
+  // team's net under the destination flight's format/allowance — confirm first.
+  const moveDangerModal = pendingMove !== null && (
+    <DangerModal
+      title={`Move Team ${pendingMove.teamNumber} to another flight?`}
+      description="A score is already entered in one of these flights. This team's net scores will recalculate under the destination flight's format and allowance. Gross scores are unchanged."
+      cannotBeUndone={false}
+      confirmLabel="Move team"
+      onConfirm={() => {
+        const p = pendingMove;
+        void doMoveTeam(p.teamNumber, p.flightId);
+      }}
+      onCancel={() => setPendingMove(null)}
+    />
+  );
+
+  // Session 2: FormatPicker is scoped to the flight chosen via the format chip
+  // (pickerFlight). Writes target that flight; current format/config/lock read
+  // from it. Falls back to the primary flight scalars if not set.
   const formatPicker = (
     <FormatPicker
       open={formatPickerOpen}
       roundId={existingRoundId ?? 0}
-      currentFormat={roundFormat}
-      currentConfig={roundFormatConfig}
-      formatLocked={roundFormatLockedAt !== null}
-      onClose={() => setFormatPickerOpen(false)}
+      flightId={pickerFlight?.id}
+      currentFormat={pickerFlight ? pickerFlight.format : roundFormat}
+      currentConfig={pickerFlight ? pickerFlight.format_config : roundFormatConfig}
+      formatLocked={(pickerFlight ? pickerFlight.format_locked_at : roundFormatLockedAt) !== null}
+      onClose={() => { setFormatPickerOpen(false); setPickerFlight(null); }}
       onSaved={() => {
         setFormatPickerOpen(false);
+        setPickerFlight(null);
         loadRoundForDate(selectedDate);
       }}
     />
@@ -953,6 +1082,212 @@ export default function RoundSetup({ allPlayers }: Props) {
       onCancel={() => { setSeasonPromptOpen(false); setPendingAction(null); }}
     />
   ) : null;
+
+  // ── Session 2: render one team card (optionally with a flight chip) ─────────
+  const renderTeamCard = (num: string, players: Player[], flight: Flight | null, multi: boolean) => {
+    const tn = parseInt(num);
+    const tc = getTeamColor(tn);
+    const combinedHC = players.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
+    const rawStatus = isRoundComplete ? "complete" : (teamScoreStatus[tn] ?? "not_started");
+    const statusLabel = rawStatus === "complete" ? "Complete" : rawStatus === "in_progress" ? "In progress" : "Not started";
+    const statusBg = rawStatus === "complete" ? "#e9f5ee" : rawStatus === "in_progress" ? "#fef3c7" : "#f1f5f9";
+    const statusColor = rawStatus === "complete" ? "#276e34" : rawStatus === "in_progress" ? "#92400e" : "#64748b";
+    return (
+      <div key={num} style={{
+        background: tc.bg, borderRadius: "12px", marginBottom: "10px", overflow: "hidden",
+        border: `1px solid ${tc.border}`, borderLeft: `4px solid ${tc.border}`,
+      }}>
+        <div style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <span style={{
+                background: tc.pillBg, color: tc.pillText,
+                fontSize: "0.62rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em",
+                padding: "2px 8px", borderRadius: "999px",
+              }}>
+                Team {tn}
+              </span>
+              <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
+              {/* Session 2: flight chip — only once 2+ flights exist. Tap → move sheet. */}
+              {multi && (
+                <button
+                  type="button"
+                  aria-label={`Move Team ${tn} (currently ${flight?.name ?? "unassigned"})`}
+                  onClick={() => setMoveTeamFor(tn)}
+                  disabled={saving || isRoundComplete}
+                  style={{
+                    marginLeft: "auto", fontSize: "0.68rem", fontWeight: 600, color: C.navy,
+                    background: "#eef2f7", border: `1px solid #e4e4e4`, borderRadius: "8px",
+                    padding: "3px 8px", cursor: saving || isRoundComplete ? "default" : "pointer",
+                    fontFamily: C.font, whiteSpace: "nowrap",
+                  }}
+                >
+                  {flight?.name ?? "Flight"} <span style={{ color: "#94a3b8" }}>▾</span>
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              {players.map(p => {
+                const info = playerRpInfo[p.id];
+                const dropped = info?.droppedAfterHole ?? null;
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 24 }}>
+                    <span style={{ fontSize: "0.85rem", fontWeight: 500, color: dropped != null ? "#6b7280" : "#1e293b" }}>
+                      {p.display_name || p.full_name}
+                    </span>
+                    {dropped != null && (
+                      <span style={{ fontSize: "0.7rem", color: "#6b7280", fontStyle: "italic" }}>
+                        left after hole {dropped}
+                      </span>
+                    )}
+                    {info && (
+                      <span style={{ marginLeft: "auto" }}>
+                        <PlayerOverflowMenu
+                          roundPlayerId={info.rpId}
+                          playerName={p.display_name || p.full_name}
+                          droppedAfterHole={dropped}
+                          isRoundComplete={isRoundComplete}
+                          surface="admin"
+                          onChanged={refreshDropoutStates}
+                        />
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px", flexShrink: 0, marginLeft: "12px" }}>
+            <span style={{
+              background: statusBg, color: statusColor,
+              fontSize: "0.62rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
+              padding: "3px 8px", borderRadius: "999px",
+            }}>
+              {statusLabel}
+            </span>
+            {existingRoundId && (() => {
+              const isReopened = wasFinalized && !isRoundComplete;
+              // Session 2: route by THIS team's flight format (per-team, not per-round).
+              const href = scorecardHref(
+                existingRoundId,
+                tn,
+                flight?.format ?? null,
+                isReopened ? { admin: true, edit: true } : undefined,
+              );
+              return (
+                <Link href={href} style={{ fontSize: "0.75rem", fontWeight: 600, color: tc.pillText, textDecoration: "none" }}>
+                  Open scorecard →
+                </Link>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Session 2: render one flight card (header + format/allowance + teams) ───
+  const renderFlightCard = (
+    flight: Flight,
+    flightTeams: [string, Player[]][],
+    deletable: boolean,
+    multi: boolean,
+  ) => {
+    const fmtUnset = flight.format === null;
+    return (
+      <div key={flight.id} style={{
+        background: "#fff", border: `1px solid #e4e4e4`, borderRadius: "12px",
+        padding: "12px", marginBottom: "14px",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "1rem", fontWeight: 700, color: C.navy }}>
+            {flight.name}
+            <button
+              type="button"
+              aria-label={`Rename ${flight.name}`}
+              onClick={() => setRenameFor(flight)}
+              style={{ fontSize: "0.72rem", color: "#94a3b8", background: "none", border: "none", cursor: "pointer", padding: "2px" }}
+            >
+              ✎
+            </button>
+          </div>
+          <button
+            type="button"
+            aria-label={`Delete ${flight.name}`}
+            disabled={!deletable || saving}
+            title={deletable ? "Delete flight" : "Move its teams out first (and a round needs at least one flight)"}
+            onClick={() => deletable && setDeleteFlightModal(flight)}
+            style={{
+              color: deletable ? C.red : "#cbd5e1", fontSize: "0.8rem", fontWeight: 600,
+              background: "none", border: "none", cursor: deletable && !saving ? "pointer" : "default",
+              padding: "2px 6px", fontFamily: C.font,
+            }}
+          >
+            Delete
+          </button>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "10px" }}>
+          <button
+            type="button"
+            aria-label={`${fmtUnset ? "Pick" : "Change"} format for ${flight.name}`}
+            onClick={() => openFlightFormat(flight)}
+            disabled={saving || initialLoading}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              borderRadius: "999px", padding: "5px 11px", fontSize: "0.75rem", fontWeight: 600,
+              background: fmtUnset ? "#fff" : C.navy, color: fmtUnset ? C.navy : "#fff",
+              border: fmtUnset ? `1.5px dashed ${C.navy}` : "none",
+              cursor: saving || initialLoading ? "default" : "pointer", fontFamily: C.font,
+            }}
+          >
+            {fmtUnset ? "Pick format" : FORMAT_LABELS[flight.format!].title}
+            {flight.format_locked_at !== null && (
+              <span aria-label="locked" title="Locked — first score entered" style={{ display: "inline-flex" }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </span>
+            )}
+          </button>
+
+          {/* Allowance chip — net formats only. Disabled mid-round routes through
+              the per-flight danger modal (see onAllowanceChange). */}
+          {!isTeamCardFormat(flight.format) && (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              background: "#fef3c7", color: "#b45309", borderRadius: "999px",
+              padding: "3px 6px 3px 11px", fontSize: "0.75rem", fontWeight: 600,
+            }}>
+              Allowance
+              <select
+                aria-label={`Handicap allowance percent for ${flight.name}`}
+                value={getHandicapAllowance(flight.format_config)}
+                disabled={saving || initialLoading || isRoundComplete}
+                onChange={e => onAllowanceChange(flight, Number(e.target.value))}
+                style={{
+                  border: "none", background: "transparent", fontSize: "0.75rem",
+                  fontWeight: 700, color: "#b45309", fontFamily: C.font,
+                  cursor: saving || initialLoading || isRoundComplete ? "default" : "pointer",
+                }}
+              >
+                {ALLOWANCE_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
+              </select>
+            </span>
+          )}
+        </div>
+
+        {flightTeams.length === 0 ? (
+          <div style={{ fontSize: "0.8rem", color: "#94a3b8", fontStyle: "italic", padding: "8px 2px" }}>
+            No teams in this flight yet.
+          </div>
+        ) : (
+          flightTeams.map(([num, players]) => renderTeamCard(num, players, flight, multi))
+        )}
+      </div>
+    );
+  };
 
   // ── STATE 1: No round ──────────────────────────────────────────────────────
   if (viewMode === "none") {
@@ -981,126 +1316,75 @@ export default function RoundSetup({ allPlayers }: Props) {
       .filter(([, ps]) => ps.length > 0)
       .sort(([a], [b]) => parseInt(a) - parseInt(b));
 
+    // Session 2: group teams under their resolved flight. Single-flight rounds
+    // render one card with no per-team chips (≈ today). The default rule (no
+    // flight_teams row → first flight) is already baked into teamFlightMap.
+    const primaryFlightId = flights[0]?.id ?? -1;
+    const teamsByFlight = new Map<number, [string, Player[]][]>();
+    for (const [num, players] of activeTeams) {
+      const fid = teamFlightMap.get(parseInt(num)) ?? primaryFlightId;
+      if (!teamsByFlight.has(fid)) teamsByFlight.set(fid, []);
+      teamsByFlight.get(fid)!.push([num, players]);
+    }
+    const multiFlight = flights.length > 1;
+
     return (
       <div style={{ fontFamily: C.font }}>
         {hero}
         {statsRow}
-        {formatStrip}
 
         <div style={{ padding: "16px", maxWidth: "700px", margin: "0 auto", paddingBottom: "100px" }}>
           <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "14px" }}>
-            Today's scorecards
+            Flights
           </div>
 
-          {activeTeams.map(([num, players]) => {
-            const tn = parseInt(num);
-            const tc = getTeamColor(tn);
-            const combinedHC = players.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
-            const rawStatus = isRoundComplete ? "complete" : (teamScoreStatus[tn] ?? "not_started");
-            const statusLabel = rawStatus === "complete" ? "Complete" : rawStatus === "in_progress" ? "In progress" : "Not started";
-            const statusBg = rawStatus === "complete" ? "#e9f5ee" : rawStatus === "in_progress" ? "#fef3c7" : "#f1f5f9";
-            const statusColor = rawStatus === "complete" ? "#276e34" : rawStatus === "in_progress" ? "#92400e" : "#64748b";
-
-            return (
-              <div key={num} style={{
-                background: tc.bg, borderRadius: "12px", marginBottom: "10px", overflow: "hidden",
-                border: `1px solid ${tc.border}`, borderLeft: `4px solid ${tc.border}`,
-              }}>
-                <div style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                      <span style={{
-                        background: tc.pillBg, color: tc.pillText,
-                        fontSize: "0.62rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em",
-                        padding: "2px 8px", borderRadius: "999px",
-                      }}>
-                        Team {tn}
-                      </span>
-                      <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                      {players.map(p => {
-                        const info = playerRpInfo[p.id];
-                        const dropped = info?.droppedAfterHole ?? null;
-                        return (
-                          <div
-                            key={p.id}
-                            style={{
-                              display: "flex", alignItems: "center", gap: 6,
-                              minHeight: 24,
-                            }}
-                          >
-                            <span style={{
-                              fontSize: "0.85rem", fontWeight: 500,
-                              color: dropped != null ? "#6b7280" : "#1e293b",
-                            }}>
-                              {p.display_name || p.full_name}
-                            </span>
-                            {dropped != null && (
-                              <span style={{
-                                fontSize: "0.7rem", color: "#6b7280",
-                                fontStyle: "italic",
-                              }}>
-                                left after hole {dropped}
-                              </span>
-                            )}
-                            {info && (
-                              <span style={{ marginLeft: "auto" }}>
-                                <PlayerOverflowMenu
-                                  roundPlayerId={info.rpId}
-                                  playerName={p.display_name || p.full_name}
-                                  droppedAfterHole={dropped}
-                                  isRoundComplete={isRoundComplete}
-                                  surface="admin"
-                                  onChanged={refreshDropoutStates}
-                                />
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px", flexShrink: 0, marginLeft: "12px" }}>
-                    <span style={{
-                      background: statusBg, color: statusColor,
-                      fontSize: "0.62rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
-                      padding: "3px 8px", borderRadius: "999px",
-                    }}>
-                      {statusLabel}
-                    </span>
-                    {existingRoundId && (() => {
-                      // Phase D.2: reopened rounds (is_complete=false AND
-                      // was_finalized=true) need ?admin=1&edit=1 on the
-                      // scorecard URL so the EditModeBanner pins and the
-                      // Edit HI affordances render.
-                      const isReopened = wasFinalized && !isRoundComplete;
-                      // Wave 1B: team-card rounds route to the team-card surface.
-                      const href = scorecardHref(
-                        existingRoundId,
-                        tn,
-                        roundFormat,
-                        isReopened ? { admin: true, edit: true } : undefined,
-                      );
-                      return (
-                        <Link href={href} style={{
-                          fontSize: "0.75rem", fontWeight: 600, color: tc.pillText, textDecoration: "none",
-                        }}>
-                          Open scorecard →
-                        </Link>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-            );
+          {flights.map(flight => {
+            const flightTeams = teamsByFlight.get(flight.id) ?? [];
+            // Deletable: not the only flight AND holds no resolved teams.
+            const deletable = flights.length > 1 && flightTeams.length === 0;
+            return renderFlightCard(flight, flightTeams, deletable, multiFlight);
           })}
 
-          {activeTeams.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px", color: "#9ca3af", fontSize: "0.88rem" }}>
-              No teams assigned yet.
+          {activeTeams.length === 0 && flights.every(f => (teamsByFlight.get(f.id) ?? []).length === 0) && (
+            <div style={{ textAlign: "center", padding: "20px", color: "#9ca3af", fontSize: "0.88rem" }}>
+              No teams assigned yet — tap Edit Teams.
             </div>
           )}
+
+          {/* Session 2: add another flight (Friday's split-field case). */}
+          <button
+            type="button"
+            onClick={handleCreateFlight}
+            disabled={saving || initialLoading}
+            style={{
+              display: "block", width: "100%", textAlign: "center",
+              border: `1.5px dashed #94a3b8`, color: C.navy, fontWeight: 600,
+              fontSize: "0.84rem", borderRadius: "12px", padding: "11px",
+              background: "transparent", cursor: saving || initialLoading ? "default" : "pointer",
+              fontFamily: C.font, marginBottom: "16px",
+            }}
+          >
+            + Add Flight
+          </button>
+
+          {/* Round-level team builder (unchanged; new teams land in the first
+              flight implicitly). */}
+          <button
+            onClick={openEditTeams}
+            disabled={saving || initialLoading}
+            style={{
+              width: "100%", padding: "13px 14px", borderRadius: "10px",
+              background: C.gold, border: "none", color: "#1a1a1a",
+              fontSize: "0.95rem", fontWeight: 700,
+              opacity: initialLoading ? 0.5 : 1,
+              cursor: saving || initialLoading ? "default" : "pointer",
+              fontFamily: C.font, textAlign: "left",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}
+          >
+            <span>Edit Teams</span>
+            <span style={{ fontSize: "0.95rem", fontWeight: 700 }}>→</span>
+          </button>
 
           {/* Phase D.2: Edit Round button. Visible on every round
               (active OR finalized), any date. Reopen of an active round
@@ -1130,6 +1414,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         </div>
         {dangerModal}
         {allowanceDangerModal}
+        {moveDangerModal}
         {reopenModal && (
           <DangerModal
             title={isRoundComplete ? "Reopen this round?" : "Reset this round's submissions?"}
@@ -1146,6 +1431,42 @@ export default function RoundSetup({ allPlayers }: Props) {
             onCancel={() => setReopenModal(false)}
           />
         )}
+        {/* Session 2: flight rename / delete / move sheet */}
+        {renameFor && (
+          <RenameFlightModal
+            currentName={renameFor.name}
+            onSave={name => handleRenameFlight(renameFor.id, name)}
+            onCancel={() => setRenameFor(null)}
+          />
+        )}
+        {deleteFlightModal && (
+          <DangerModal
+            title={`Delete ${deleteFlightModal.name}?`}
+            description="This flight has no teams. Deleting it can't be undone."
+            confirmLabel="Delete flight"
+            cannotBeUndone
+            onConfirm={() => handleDeleteFlight(deleteFlightModal)}
+            onCancel={() => setDeleteFlightModal(null)}
+          />
+        )}
+        {moveTeamFor !== null && (() => {
+          const currentFlightId = teamFlightMap.get(moveTeamFor) ?? (flights[0]?.id ?? -1);
+          const counts = new Map<number, number>();
+          for (const f of flights) counts.set(f.id, (teamsByFlight.get(f.id) ?? []).length);
+          const roster = (teams[moveTeamFor] ?? []).map(p => p.display_name || p.full_name).join(" · ");
+          return (
+            <MoveTeamSheet
+              teamNumber={moveTeamFor}
+              teamRoster={roster}
+              flights={flights}
+              currentFlightId={currentFlightId}
+              teamCounts={counts}
+              onMove={fid => requestMoveTeam(moveTeamFor, fid)}
+              onNewFlight={() => void createAndMoveTeam(moveTeamFor)}
+              onCancel={() => setMoveTeamFor(null)}
+            />
+          );
+        })()}
         {formatPicker}
         {seasonModal}
       </div>

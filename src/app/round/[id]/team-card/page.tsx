@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { isTeamCardFormat, getTeamBallCount } from "@/lib/format/helpers";
-import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
+import { getPrimaryFlightForRound, getFlightForTeam, getTeamFlightMap } from "@/lib/flights/resolve";
+// SESSION-4-REMOVE
+import { MULTI_FLIGHT_FINALIZE_NOTICE } from "@/lib/flights/finalizeGuard";
 import { computeTeamHandicap } from "@/lib/scoring/teamHandicap";
 import {
   buildTeamScoreMap,
@@ -70,6 +72,8 @@ export default function TeamCardPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitModal, setSubmitModal] = useState(false);
   const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
+  // SESSION-4-REMOVE: blocks Submit on rounds with 2+ non-empty flights.
+  const [multiFlightFinalizeBlocked, setMultiFlightFinalizeBlocked] = useState(false);
 
   const teamNumber = teamFilter ? parseInt(teamFilter, 10) : null;
   const ballCount = getTeamBallCount(roundFormatConfig);
@@ -83,14 +87,17 @@ export default function TeamCardPage() {
       const team = new URLSearchParams(window.location.search).get("team");
       setTeamFilter(team);
 
-      // Format / config / lock live on the round's primary flight (Session 1);
-      // the round row supplies lifecycle + the ROUND-level submitted_teams gate.
+      // Format / config / lock live on the TEAM's flight (Session 2 — the
+      // team-card surface is always ?team= scoped). The round row supplies
+      // lifecycle + the ROUND-level submitted_teams gate.
       const { data: roundRow } = await supabase
         .from("rounds")
         .select("format_config, is_complete")
         .eq("id", roundId)
         .maybeSingle();
-      const flight = await getPrimaryFlightForRound(Number(roundId));
+      const flight = team
+        ? await getFlightForTeam(Number(roundId), parseInt(team, 10))
+        : await getPrimaryFlightForRound(Number(roundId));
 
       const roundCfg = (roundRow?.format_config ?? null) as FormatConfig | null;
       const fmt = (flight?.format ?? null) as Format | null;
@@ -101,6 +108,12 @@ export default function TeamCardPage() {
       setIsRoundComplete(!!roundRow?.is_complete);
       // submitted_teams stays ROUND-level (frozen rounds.format_config).
       setSubmittedTeams(Array.isArray(roundCfg?.submitted_teams) ? roundCfg!.submitted_teams! : []);
+
+      // SESSION-4-REMOVE: 2+ non-empty flights → finalize blocked this session.
+      const tFlightMap = await getTeamFlightMap(Number(roundId));
+      setMultiFlightFinalizeBlocked(
+        new Set([...tFlightMap.values()].map(f => f.id)).size >= 2,
+      );
 
       // All assigned team numbers in this round — the finalize gate needs every
       // team to have submitted, not just this one.
@@ -178,6 +191,7 @@ export default function TeamCardPage() {
   // league plays in person so submissions are essentially serial).
   const submitTeam = async (teamNum: number) => {
     if (submitting) return;
+    if (multiFlightFinalizeBlocked) return; // SESSION-4-REMOVE
     setSubmitting(true);
     try {
       const { data: row } = await supabase
@@ -245,8 +259,11 @@ export default function TeamCardPage() {
 
   const ensureFormatLocked = async () => {
     if (roundFormatLockedAt !== null) return;
-    // Format lock lives on the round's primary flight (Session 1).
-    const flight = await getPrimaryFlightForRound(Number(roundId));
+    // Format lock lives on THIS team's flight (Session 2). teamNumber is always
+    // set on the team-card surface; fall back to primary defensively.
+    const flight = teamNumber != null
+      ? await getFlightForTeam(Number(roundId), teamNumber)
+      : await getPrimaryFlightForRound(Number(roundId));
     if (!flight) return;
     const { data } = await supabase
       .from("flights")
@@ -520,18 +537,24 @@ export default function TeamCardPage() {
           <button
             type="button"
             onClick={() => setSubmitModal(true)}
-            disabled={!canSubmit || submitting}
+            disabled={!canSubmit || submitting || multiFlightFinalizeBlocked}
             style={{
               width: "100%", padding: "18px", borderRadius: "12px",
-              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
+              background: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "#15803d" : "#cbd5e1",
               color: "white", border: "none", fontWeight: 900, fontSize: "1rem",
-              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
+              cursor: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "pointer" : "not-allowed",
               fontFamily: "sans-serif",
             }}
           >
             {submitting ? "Submitting…" : "Submit Final Scores"}
           </button>
-          {!canSubmit && !altShotBadSize && (
+          {/* SESSION-4-REMOVE: multi-flight finalize guard notice. */}
+          {multiFlightFinalizeBlocked && (
+            <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#b45309" }}>
+              {MULTI_FLIGHT_FINALIZE_NOTICE}
+            </p>
+          )}
+          {!canSubmit && !altShotBadSize && !multiFlightFinalizeBlocked && (
             <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#94a3b8" }}>
               Available once this team has a score on every hole.
             </p>

@@ -57,13 +57,14 @@ test("mid-round allowance change is gated by the danger modal; Cancel reverts, C
   await expect(page.getByText("Change handicap allowance mid-round?")).toBeVisible();
 
   // NEGATIVE CONTROL: the write must not have happened yet (modal still open).
-  expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBeUndefined();
+  // Session 2: allowance lives on the FLIGHT's config, not rounds.format_config.
+  expect((db.tables.flights[0].format_config as any).handicap_allowance).toBeUndefined();
 
   // Cancel → modal closes, controlled select snaps back to 100, no write.
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByText("Change handicap allowance mid-round?")).toHaveCount(0);
   await expect(select).toHaveValue("100");
-  expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBeUndefined();
+  expect((db.tables.flights[0].format_config as any).handicap_allowance).toBeUndefined();
 
   // Re-open and confirm. The DangerModal confirm button is disabled for 1.5s
   // (shared dangerous-action pattern), so it only matches by name once enabled.
@@ -73,10 +74,10 @@ test("mid-round allowance change is gated by the danger modal; Cancel reverts, C
   await expect(confirm).toBeEnabled({ timeout: 4000 });
   await confirm.click();
 
-  // The write lands: format_config.handicap_allowance = 80 and the selector
-  // reflects it.
+  // The write lands on the flight: format_config.handicap_allowance = 80 and
+  // the selector reflects it.
   await expect(select).toHaveValue("80");
-  expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBe(80);
+  expect((db.tables.flights[0].format_config as any).handicap_allowance).toBe(80);
 });
 
 test("the allowance selector offers 5% steps (95 / 85 selectable; non-5 absent; 100 default)", async ({ page, db }) => {
@@ -102,5 +103,5 @@ test("the allowance selector offers 5% steps (95 / 85 selectable; non-5 absent; 
   await expect(confirm).toBeEnabled({ timeout: 4000 });
   await confirm.click();
   await expect(select).toHaveValue("85");
-  expect((db.tables.rounds[0].format_config as any).handicap_allowance).toBe(85);
+  expect((db.tables.flights[0].format_config as any).handicap_allowance).toBe(85);
 });

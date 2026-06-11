@@ -34,6 +34,11 @@ export interface SeedData {
   seasons?: Row[];
   tees?: Row[];
   holes?: Row[];
+  // Flights (Session 1+). Optional: when absent, the constructor synthesizes one
+  // primary Flight A per round (mirroring migration 022's backfill) so existing
+  // fixtures resolve format/config/lock off the flight without re-declaring it.
+  flights?: Row[];
+  flight_teams?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -48,6 +53,9 @@ const KNOWN_TABLES = [
   "seasons",
   "tees",
   "holes",
+  // Flights — format ownership lives here (Session 1+).
+  "flights",
+  "flight_teams",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */
@@ -64,8 +72,34 @@ export class MockDb {
   private nextId: Record<string, number> = {};
 
   constructor(seed: SeedData = {}) {
+    // Flights (Session 1): synthesize one primary Flight A per round when the
+    // seed doesn't declare flights — the e2e mirror of migration 022's backfill.
+    // format/lock copy verbatim; format_config copies all keys EXCEPT the
+    // round-level submitted_teams. Lets every existing fixture resolve format
+    // off the flight without each spec re-declaring it.
+    const effective: SeedData = { ...seed };
+    if (!effective.flights) {
+      effective.flights = (seed.rounds ?? []).map((r, i) => {
+        let cfg: any = null;
+        if (r.format_config && typeof r.format_config === "object") {
+          cfg = { ...r.format_config };
+          delete cfg.submitted_teams;
+        }
+        return {
+          id: 900001 + i,
+          round_id: r.id,
+          name: "Flight A",
+          sort_order: 1,
+          format: r.format ?? null,
+          format_config: cfg,
+          format_locked_at: r.format_locked_at ?? null,
+        };
+      });
+    }
+    if (!effective.flight_teams) effective.flight_teams = [];
+
     for (const t of KNOWN_TABLES) {
-      const rows = (seed as any)[t] ?? [];
+      const rows = (effective as any)[t] ?? [];
       this.tables[t] = rows.map((r: Row) => ({ ...r }));
       const maxId = this.tables[t].reduce(
         (m, r) => (typeof r.id === "number" && r.id > m ? r.id : m),
@@ -301,6 +335,25 @@ async function handleRest(
     result = applyParamFilter(result, k, v);
   }
   result = applyEmbeds(table, select, result, db);
+
+  // order=col.asc/desc — needed by the flights resolver (order=sort_order.asc).
+  const orderRaw = params.get("order");
+  if (orderRaw) {
+    const [col, dir] = orderRaw.split(".");
+    const asc = dir !== "desc";
+    result = [...result].sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (av === bv) return 0;
+      const cmp = av < bv ? -1 : 1;
+      return asc ? cmp : -cmp;
+    });
+  }
+  // limit=N — getPrimaryFlightForRound uses order=sort_order.asc&limit=1.
+  const limitRaw = params.get("limit");
+  if (limitRaw) {
+    const n = parseInt(limitRaw, 10);
+    if (Number.isFinite(n)) result = result.slice(0, n);
+  }
 
   const total = result.length;
   const contentRange = total > 0 ? `0-${total - 1}/${total}` : `*/0`;

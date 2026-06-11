@@ -18,18 +18,18 @@ const teamNetValue = (page: import("@playwright/test").Page) =>
 
 test("FormatPicker: Shambles selectable, net locked, ball-count shown; allowance enabled", async ({ page, db }) => {
   // A Shambles round today (format set, not yet locked) so RoundSetup lands in
-  // its active view with the Today's Format + Handicap Allowance controls.
+  // its active view with the flight card's format + Handicap Allowance controls.
   seed(db, seedShamblesRound({ roundId: 500, ballCount: 1 }));
   await page.goto("/admin");
 
-  // Allowance lives on Round Setup (not the picker) and is ENABLED for Shambles
-  // (Shambles is net, not a gross-only team-card format).
-  const allowance = page.getByLabel("Handicap allowance percent");
+  // Session 2 (Flights): allowance now lives inside the flight card (per-flight)
+  // and is ENABLED for Shambles (net, not a gross-only team-card format).
+  const allowance = page.getByLabel(/Handicap allowance percent/);
   await expect(allowance).toBeVisible();
   await expect(allowance).toBeEnabled();
 
-  // Open the format picker from the Today's Format button.
-  await page.getByRole("button", { name: /Today's Format/ }).click();
+  // Open the format picker from the flight card's format chip.
+  await page.getByRole("button", { name: /Change format for/ }).click();
   const dialog = page.getByRole("dialog", { name: "Choose today's format" });
   await expect(dialog).toBeVisible();
 

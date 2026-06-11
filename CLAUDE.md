@@ -65,6 +65,12 @@ At the end of every plan or implementation, list:
 - Math changes: snapshot test against existing production data
 - UI changes: type-check + manual screenshot
 - Refactors: snapshot test + unit tests
+- **Green means vitest AND Playwright AND `tsc --noEmit` — a session may not
+  report "green" on vitest alone.** (Lesson: a Flights Session-1 change moved
+  format reads to a new table but only the e2e mock lacked the seed, so vitest
+  passed while Playwright was silently red until Session 2 caught it. When a
+  change touches data-layer query shapes or any surface an e2e drives, run the
+  Playwright suite too before claiming green.)
 
 ### STATUS.md maintenance
 At the end of every working session, before signing off, update `STATUS.md`

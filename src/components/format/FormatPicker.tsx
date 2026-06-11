@@ -49,6 +49,11 @@ function readGobsPointValues(config: FormatConfig | null | undefined): Record<Go
 interface FormatPickerProps {
   open: boolean;
   roundId: number;
+  // Session 2 (Flights): the flight this picker writes to. When provided, the
+  // save targets THIS flight; when omitted, it falls back to the round's primary
+  // flight (back-compat). currentFormat/currentConfig/formatLocked must be
+  // sourced from the SAME flight.
+  flightId?: number;
   currentFormat?: Format | null;
   currentConfig?: FormatConfig | null;
   formatLocked?: boolean;
@@ -78,6 +83,7 @@ const STABLEFORD_FORMATS: Format[] = ["stableford_standard", "gobs_stableford"];
 export default function FormatPicker({
   open,
   roundId,
+  flightId,
   currentFormat,
   currentConfig,
   formatLocked = false,
@@ -268,19 +274,23 @@ export default function FormatPicker({
       nextConfig.handicap_allowance = currentConfig.handicap_allowance;
     }
 
-    // Format ownership lives on the round's primary flight (Session 1).
-    // nextConfig holds only flight-level keys — submitted_teams stays on the
-    // round, so writing the whole config to the flight is correct.
-    const flight = await getPrimaryFlightForRound(roundId);
-    if (!flight) {
-      setSaving(false);
-      setErrorMessage("Couldn't find the round's flight. Tap Save to retry.");
-      return;
+    // Format ownership lives on the flight (Session 1). nextConfig holds only
+    // flight-level keys — submitted_teams stays on the round. Session 2: write
+    // to the SPECIFIC flight when given; else the round's primary flight.
+    let targetFlightId = flightId;
+    if (targetFlightId == null) {
+      const flight = await getPrimaryFlightForRound(roundId);
+      if (!flight) {
+        setSaving(false);
+        setErrorMessage("Couldn't find the round's flight. Tap Save to retry.");
+        return;
+      }
+      targetFlightId = flight.id;
     }
     const { error } = await supabase
       .from("flights")
       .update({ format: selectedFormat, format_config: nextConfig })
-      .eq("id", flight.id);
+      .eq("id", targetFlightId);
 
     if (error) {
       setSaving(false);
