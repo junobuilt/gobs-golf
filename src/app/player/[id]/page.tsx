@@ -169,7 +169,9 @@ export default function PlayerProfilePage() {
                 tee_color: rp.tees?.color || "?",
                 total_strokes,
                 course_handicap: rp.course_handicap,
-                playing_handicap: getPlayingCourseHandicap(rp.course_handicap, flightResolver.get(rp.round_id, rp.team_number ?? 0)?.format_config ?? null),
+                // getConfig folds in any per-team allowance override so this
+                // round's PH matches what the team was scored under.
+                playing_handicap: getPlayingCourseHandicap(rp.course_handicap, flightResolver.getConfig(rp.round_id, rp.team_number ?? 0)),
                 adj_total: sumAdjusted(adj),
               };
             });

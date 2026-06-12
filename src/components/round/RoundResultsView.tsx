@@ -402,6 +402,16 @@ function TeamCard({
   );
   const unmatchedSet = new Set<number>(unmatchedPlayers.map(p => p.rpId));
 
+  // Per-team allowance override: the drill-in PH must reflect the % this team was
+  // scored under (results.ts already applied it to nets + dots). Only
+  // handicap_allowance differs from the flight config, so the fill-score copy
+  // (allowance-independent) is unaffected. Undefined effectiveAllowance (legacy /
+  // team-card) → the flight config unchanged.
+  const teamConfig: FormatConfig =
+    team.effectiveAllowance != null
+      ? { ...formatConfig, handicap_allowance: team.effectiveAllowance }
+      : formatConfig;
+
   return (
     <div style={{
       background: "white",
@@ -533,7 +543,7 @@ function TeamCard({
                     key={player.rpId}
                     player={player}
                     format={format}
-                    formatConfig={formatConfig}
+                    formatConfig={teamConfig}
                     expanded={expandedPlayers.has(player.rpId)}
                     isLast={isLastRow}
                     onToggle={() => onTogglePlayer(player.rpId)}
@@ -547,7 +557,7 @@ function TeamCard({
                   key={`bd-fill-${idx}`}
                   fill={fill}
                   format={format}
-                  formatConfig={formatConfig}
+                  formatConfig={teamConfig}
                   isLast={idx === roundStartFills.length - 1}
                 />
               ))}

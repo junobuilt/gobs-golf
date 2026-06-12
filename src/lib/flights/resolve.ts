@@ -1,6 +1,20 @@
 import { supabase } from "@/lib/supabase";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
+import { effectiveTeamConfig } from "@/lib/format/helpers";
+
+// ─── Per-team handicap allowance override ────────────────────────────────────
+// A flight owns one handicap allowance. An admin may OPT-IN to override the
+// allowance for an INDIVIDUAL team (e.g. a no-show shrinks one team). The
+// override is stored on flight_teams.handicap_allowance (nullable; NULL = inherit
+// the flight default). THE rule — a team's EFFECTIVE config is its flight's
+// config with the per-team allowance substituted in when present — lives in
+// `effectiveTeamConfig` (src/lib/format/helpers.ts, the allowance home, kept
+// supabase-free so the pure scoring core can use it). It is re-exported here so
+// the flight surfaces import it alongside the resolvers below. Every surface
+// routes through it (directly or via the accessors below); when no team has an
+// override, the effective config IS the flight config (golden-safe).
+export { effectiveTeamConfig };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flights — the single source of truth for format ownership (Session 1).
@@ -112,6 +126,57 @@ export async function getFlightForTeam(
   return flights[0];
 }
 
+// Single-team EFFECTIVE config: the team's flight (canonical default rule) + its
+// per-team allowance override (if any) folded in via `effectiveTeamConfig`. The
+// per-team scoring surfaces (scorecard, team-card) use this so their PH/dots/net
+// reflect an override without recomputing the rule. `allowanceOverride` is the
+// raw stored value (null = inheriting the flight default), surfaced for display
+// (the override marker).
+export async function getTeamConfig(
+  roundId: number,
+  teamNumber: number,
+): Promise<{
+  flight: Flight | null;
+  config: FormatConfig | null;
+  allowanceOverride: number | null;
+}> {
+  const flight = await getFlightForTeam(roundId, teamNumber);
+  const { data: ft } = await supabase
+    .from("flight_teams")
+    .select("handicap_allowance")
+    .eq("round_id", roundId)
+    .eq("team_number", teamNumber)
+    .maybeSingle();
+  const allowanceOverride =
+    (ft?.handicap_allowance as number | null | undefined) ?? null;
+  return {
+    flight,
+    config: effectiveTeamConfig(flight?.format_config ?? null, allowanceOverride),
+    allowanceOverride,
+  };
+}
+
+// Round-wide map team_number → per-team allowance override (only teams that HAVE
+// an explicit non-null override appear). One small flight_teams read. Used by
+// loadRoundResults (to thread the override through the engine) and RoundSetup (to
+// render each team's effective allowance + marker).
+export async function getTeamAllowanceOverrides(
+  roundId: number,
+): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  const { data } = await supabase
+    .from("flight_teams")
+    .select("team_number, handicap_allowance")
+    .eq("round_id", roundId);
+  for (const r of (data ?? []) as {
+    team_number: number;
+    handicap_allowance: number | null;
+  }[]) {
+    if (r.handicap_allowance != null) map.set(r.team_number, r.handicap_allowance);
+  }
+  return map;
+}
+
 // Resolve EVERY assigned team in a round to its flight, as a
 // Map<teamNumber, Flight>. THE shared per-round resolver (Session 2): the admin
 // Round Setup flight grouping, the delete-empty-flight check, and the
@@ -201,13 +266,18 @@ export async function getPrimaryFlightByRound(
 // teams), so the two `.in()` queries here stay well under the cap.
 export type TeamFlightResolver = {
   get(roundId: number, teamNumber: number): Flight | null;
+  // EFFECTIVE FormatConfig for a (round, team): the team's flight config with its
+  // per-team allowance override folded in (via effectiveTeamConfig). Batch stats
+  // readers (player profile, season, playerStats, playedWith) use this so
+  // per-player PH/stats reflect an override. Null if the round has no flights.
+  getConfig(roundId: number, teamNumber: number): FormatConfig | null;
 };
 
 export async function getTeamFlightsByRounds(
   roundIds: number[],
 ): Promise<TeamFlightResolver> {
   const unique = [...new Set(roundIds)];
-  if (unique.length === 0) return { get: () => null };
+  if (unique.length === 0) return { get: () => null, getConfig: () => null };
 
   const { data: flightRows } = await supabase
     .from("flights")
@@ -227,23 +297,38 @@ export async function getTeamFlightsByRounds(
 
   const { data: ftRows } = await supabase
     .from("flight_teams")
-    .select("round_id, team_number, flight_id")
+    .select("round_id, team_number, flight_id, handicap_allowance")
     .in("round_id", unique);
   const explicit = new Map<string, number>();
-  for (const r of (ftRows ?? []) as { round_id: number; team_number: number; flight_id: number }[]) {
+  const overrideByTeam = new Map<string, number>();
+  for (const r of (ftRows ?? []) as {
+    round_id: number; team_number: number; flight_id: number; handicap_allowance: number | null;
+  }[]) {
     explicit.set(`${r.round_id}:${r.team_number}`, r.flight_id);
+    if (r.handicap_allowance != null) {
+      overrideByTeam.set(`${r.round_id}:${r.team_number}`, r.handicap_allowance);
+    }
+  }
+
+  function get(roundId: number, teamNumber: number): Flight | null {
+    const flights = flightsByRound.get(roundId);
+    if (!flights || flights.length === 0) return null;
+    const fid = explicit.get(`${roundId}:${teamNumber}`);
+    if (fid != null) {
+      const f = flightById.get(fid);
+      if (f && f.round_id === roundId) return f;
+    }
+    return flights[0]; // default rule: lowest sort_order
   }
 
   return {
-    get(roundId: number, teamNumber: number): Flight | null {
-      const flights = flightsByRound.get(roundId);
-      if (!flights || flights.length === 0) return null;
-      const fid = explicit.get(`${roundId}:${teamNumber}`);
-      if (fid != null) {
-        const f = flightById.get(fid);
-        if (f && f.round_id === roundId) return f;
-      }
-      return flights[0]; // default rule: lowest sort_order
+    get,
+    getConfig(roundId: number, teamNumber: number): FormatConfig | null {
+      const flight = get(roundId, teamNumber);
+      return effectiveTeamConfig(
+        flight?.format_config ?? null,
+        overrideByTeam.get(`${roundId}:${teamNumber}`) ?? null,
+      );
     },
   };
 }

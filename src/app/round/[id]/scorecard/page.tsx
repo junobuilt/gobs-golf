@@ -15,8 +15,9 @@ import {
 import type { HoleInfo as EngineHoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
 import ScorecardLockNotice from "@/components/format/ScorecardLockNotice";
 import FormatChip from "@/components/format/FormatChip";
-import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCourseHandicap, allowsIncompleteClose } from "@/lib/format/helpers";
-import { getPrimaryFlightForRound, getFlightForTeam, getFlightsForRound, getTeamFlightMap, type Flight } from "@/lib/flights/resolve";
+import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCourseHandicap, allowsIncompleteClose, isTeamCardFormat, effectiveTeamConfig, ALLOWANCE_OPTIONS } from "@/lib/format/helpers";
+import { getPrimaryFlightForRound, getFlightForTeam, getFlightsForRound, getTeamFlightMap, getTeamAllowanceOverrides, type Flight } from "@/lib/flights/resolve";
+import { setTeamAllowance } from "@/lib/flights/mutations";
 import { formatTeamTotal, FORMAT_LABELS } from "@/lib/format/copy";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
@@ -267,6 +268,13 @@ export default function ScorecardPage() {
   const [roundFormat, setRoundFormat] = useState<Format | null>(null);
   const [roundFormatConfig, setRoundFormatConfig] = useState<FormatConfig | null>(null);
   const [roundFormatLockedAt, setRoundFormatLockedAt] = useState<string | null>(null);
+  // Per-team allowance override for the OPEN team: the stored override % (null =
+  // inheriting the flight default) + the flight's own default % (for the control's
+  // "Flight default (N%)" option + the override marker). roundFormatConfig above
+  // already carries the EFFECTIVE allowance (override folded in via the loader).
+  const [teamAllowanceOverride, setTeamAllowanceOverride] = useState<number | null>(null);
+  const [flightAllowanceDefault, setFlightAllowanceDefault] = useState<number>(100);
+  const [pendingTeamAllowance, setPendingTeamAllowance] = useState<number | null | "clear">(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [removePlayerModal, setRemovePlayerModal] = useState<number | null>(null);
   const [roundPlayedOn, setRoundPlayedOn] = useState<string | null>(null);
@@ -422,8 +430,15 @@ export default function ScorecardPage() {
       if (roundRow) {
         const roundCfg = (roundRow.format_config ?? null) as FormatConfig | null;
         const flightCfg = (flight?.format_config ?? null) as FormatConfig | null;
+        // Per-team allowance override (open team only): fold the override into the
+        // EFFECTIVE config that drives this team's PH/dots. The teamless admin
+        // overview keeps the flight default (no single team to override).
+        const overrides = await getTeamAllowanceOverrides(Number(roundId));
+        const teamOverride = teamParam ? (overrides.get(parseInt(teamParam, 10)) ?? null) : null;
+        setTeamAllowanceOverride(teamOverride);
+        setFlightAllowanceDefault(getHandicapAllowance(flightCfg));
         setRoundFormat((flight?.format ?? null) as Format | null);
-        setRoundFormatConfig(flightCfg);
+        setRoundFormatConfig(effectiveTeamConfig(flightCfg, teamOverride));
         setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
         setIsRoundComplete(roundIsComplete);
         setRoundPlayedOn((roundRow.played_on ?? null) as string | null);
@@ -718,6 +733,41 @@ export default function ScorecardPage() {
       setEditHiValue("");
     } finally {
       setEditHiSaving(false);
+    }
+  };
+
+  // Per-team allowance override (scorecard entry point, admin-only). Writes
+  // flight_teams.handicap_allowance for the OPEN team (null = revert to flight
+  // default), then updates the effective config locally so dots/PH refresh
+  // without a reload. Allowance never touches stored course_handicap (CLAUDE.md
+  // #5 doesn't apply) — only the derived PH changes.
+  const writeScorecardTeamAllowance = async (value: number | null) => {
+    const teamNumber = teamFilter ? parseInt(teamFilter, 10) : null;
+    if (teamNumber == null) return;
+    try {
+      await setTeamAllowance(Number(roundId), teamNumber, value);
+    } catch (e) {
+      alert("Couldn't save the team allowance: " + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    // Reconstruct the flight's RAW config (effective minus the override) so the
+    // new effective config is computed from the flight default, not the prior
+    // override.
+    const rawCfg = {
+      ...(roundFormatConfig ?? {}),
+      handicap_allowance: flightAllowanceDefault,
+    } as FormatConfig;
+    setTeamAllowanceOverride(value);
+    setRoundFormatConfig(effectiveTeamConfig(rawCfg, value));
+  };
+
+  // Gate the mid-round recalc warning on the team's flight lock (a score exists).
+  const onScorecardTeamAllowanceChange = (value: number | null) => {
+    if (value === teamAllowanceOverride) return;
+    if (roundFormatLockedAt !== null) {
+      setPendingTeamAllowance(value === null ? "clear" : value);
+    } else {
+      void writeScorecardTeamAllowance(value);
     }
   };
 
@@ -1758,6 +1808,41 @@ export default function ScorecardPage() {
             letterSpacing: "0.02em", marginBottom: "8px",
           }}>
             Handicap Allowance at {getHandicapAllowance(roundFormatConfig)}%
+            {teamAllowanceOverride != null && " · team override"}
+          </div>
+        )}
+        {/* Per-team allowance OVERRIDE (admin entry point on the scorecard;
+            individual formats only — allowance is inert for team-card formats).
+            Mirrors the Round Setup team-card control: "Flight default" clears it. */}
+        {isAdmin && teamFilter != null && roundFormat != null && !isTeamCardFormat(roundFormat) && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6, marginBottom: "8px",
+          }}>
+            <span style={{
+              fontSize: "0.7rem", fontWeight: 700,
+              color: teamAllowanceOverride != null ? "#c2410c" : "#64748b",
+            }}>
+              Team allowance
+            </span>
+            <select
+              aria-label="Team handicap allowance"
+              value={teamAllowanceOverride == null ? "" : String(teamAllowanceOverride)}
+              disabled={isRoundComplete}
+              onChange={e =>
+                onScorecardTeamAllowanceChange(e.target.value === "" ? null : Number(e.target.value))
+              }
+              style={{
+                border: `1px solid ${teamAllowanceOverride != null ? "#c2410c" : "#cbd5e1"}`,
+                background: "#fff", borderRadius: "8px", padding: "2px 6px",
+                fontSize: "0.72rem", fontWeight: 700,
+                color: teamAllowanceOverride != null ? "#c2410c" : "#475569",
+                fontFamily: "sans-serif",
+                cursor: isRoundComplete ? "default" : "pointer",
+              }}
+            >
+              <option value="">Flight default ({flightAllowanceDefault}%)</option>
+              {ALLOWANCE_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
+            </select>
           </div>
         )}
         <div style={{ fontSize: "2.2rem", fontWeight: 900 }}>Hole {currentHole}</div>
@@ -2331,6 +2416,25 @@ export default function ScorecardPage() {
           confirmLabel="Submit"
           onConfirm={() => void submitTeam(myTeamNum)}
           onCancel={() => setSubmitModal(false)}
+        />
+      )}
+
+      {pendingTeamAllowance !== null && (
+        <DangerModal
+          title="Change handicap allowance for this team?"
+          description={
+            pendingTeamAllowance === "clear"
+              ? "This team's net scores will recalculate at the flight's allowance. Gross scores are unchanged."
+              : `This team's net scores will recalculate at ${pendingTeamAllowance}% handicaps. Gross scores are unchanged.`
+          }
+          cannotBeUndone={false}
+          confirmLabel="Change allowance"
+          onConfirm={() => {
+            const v = pendingTeamAllowance === "clear" ? null : pendingTeamAllowance;
+            setPendingTeamAllowance(null);
+            void writeScorecardTeamAllowance(v);
+          }}
+          onCancel={() => setPendingTeamAllowance(null)}
         />
       )}
 

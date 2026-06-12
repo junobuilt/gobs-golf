@@ -2,10 +2,54 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-11 (Flights — display polish: 4 cosmetic display-only fixes)
-**Session purpose:** Four DISPLAY-ONLY polish fixes from live testing of the Flights track — none touch any scored/ranked/paid value (goldens byte-identical). (1) Blind-draw line on leaderboard/summary/expanded card recolored from faint grey to the existing `#c2410c` accent + weight bump. (2) Admin Round Setup combined-handicap label changed from Σ handicap-index (meaningless) to Σ course-handicap labelled "Team CH" (`"—"` when any CH not yet computed). (3) Winnings "(N-per)" round-header suffix now shows "(mixed)" when team sizes vary across flights. (4) Top-level FORMAT chip shows "Multiple" on multi-flight rounds with differing formats. 845/845 vitest, 37/37 Playwright, tsc clean.
+**Last updated:** 2026-06-11 (Per-team handicap allowance override — migration 026 applied)
+**Session purpose:** Admins can override the handicap allowance for ONE team within a flight (manual, opt-in, admin-only) without splitting the flight's pot or ranking scope. The override changes only that team's NET (so it may reorder the team within its flight — pot SIZE stays fixed). The rule lives once in `effectiveTeamConfig` (`format/helpers.ts`); stored on additive `flight_teams.handicap_allowance` (migration **026, applied + verified in prod**); threaded through the engine (`buildEnginePerTeam`) so the team's player CHs + its received blind-draw fill score under the team-effective allowance; written from the Round Setup team card AND the scorecard header (mid-round change gated by a team-scoped DangerModal). Hidden on team-card formats. 857/857 vitest, 38/38 Playwright, tsc clean.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-11 (Per-team handicap allowance override — migration 026 applied)
+
+### Where we left off
+
+**Per-team allowance override ships end-to-end; migration 026 is applied + verified in prod.** A round with NO overrides is byte-identical to before (goldens green) — the feature is inert until an admin sets one.
+
+- **Resolution (one place).** `effectiveTeamConfig(flightConfig, override)` in `src/lib/format/helpers.ts` (the allowance home, supabase-free so the pure scoring core can use it) is THE rule: `override == null` → the flight config unchanged; else the config with `handicap_allowance` substituted. Re-exported by `src/lib/flights/resolve.ts`, which adds the accessors `getTeamConfig(roundId, team)` (single-team `{flight, config, allowanceOverride}`), `getTeamAllowanceOverrides(roundId)` (round-wide map, only overridden teams), and `getTeamFlightsByRounds().getConfig(roundId, team)` (batch). No surface recomputes the rule.
+- **Storage + write.** Additive nullable `flight_teams.handicap_allowance` (migration `026`, `CHECK 10–100`, NULL = inherit). `setTeamAllowance(roundId, team, value|null)` in `mutations.ts` upserts on `round_id,team_number`, **materializing a row for default-rule teams** by assigning them to their resolved flight (the canonical default → no reassignment for already-explicit teams). `null` clears the override (row stays as the flight assignment).
+- **Engine.** `buildEnginePerTeam` (`teamTotals.ts`) takes `teamAllowanceOverrides`; inside the per-team loop it computes a team-effective config and uses it for (a) each team player's CH and (b) the **receiving** team's blind-draw fill CH (the receiving team is the loop's `teamNum` — so the fill scores under the receiving team's effective allowance, NOT the flight's, NOT the fill player's own team's). `results.ts` loads the overrides once, threads them in, uses the team-effective config for stroke dots, recomputes the cross-flight + overridden same-flight blind-draw DISPLAY value under the receiving team's allowance, and surfaces `TeamRow.effectiveAllowance` + `allowanceOverridden` (additive, per the TeamRow frozen-contract memo). The engine input config at the `computeRoundResult` call is left as the flight config (CH is pre-adjusted → the engine never re-applies allowance), so no double-count.
+- **Write surfaces (admin).** RoundSetup team card + scorecard header gain a free-% picker ("Flight default (N%)" clears it) with an override marker in the `#c2410c` accent; a mid-round change (flight `format_locked_at` set) routes through a DangerModal scoped to the one team. Hidden on team-card formats (allowance inert there — mirrors the flight-level control). `ALLOWANCE_OPTIONS` moved to `helpers.ts` (shared by flight + per-team controls).
+- **Reads.** Batch per-player PH (`player/[id]`) routes through `flightResolver.getConfig`; `RoundResultsView` drill-in PH uses the team's effective allowance. `playerStats`/`season`/`playedWith` read only `.format` (no allowance) → unchanged. Pot/payouts are allowance-independent (proven: pot = headcount × buy-in; distribution by net RANK).
+
+**Files:** NEW `supabase/migrations/026_flight_teams_allowance.sql`, `tests/lib/flights/teamAllowance.test.ts`, `tests/lib/round/results-teamAllowance.test.ts`, `e2e/teamAllowanceOverride.spec.ts`. MODIFIED `src/lib/format/helpers.ts`, `src/lib/flights/{resolve,mutations}.ts`, `src/lib/round/{teamTotals,results}.ts`, `src/components/round/RoundResultsView.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `src/app/round/[id]/scorecard/page.tsx`, `src/app/player/[id]/page.tsx`, `tests/lib/payouts/persistRoundPayouts.test.ts`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(flights): per-team handicap allowance override (migration 026)
+- (trailing) chore: update STATUS.md
+
+### DB changes (today)
+
+- **Migration `026_flight_teams_allowance.sql` APPLIED + verified in prod** (this session, via the Supabase MCP). Additive: one nullable `flight_teams.handicap_allowance integer CHECK (NULL OR 10–100)`. **No backfill, no data rewrite → no backup needed.** A self-checking dry-run (`BEGIN` → ADD COLUMN → assert existing rows NULL, an override persists, a no-value row defaults NULL, the CHECK rejects 5/105 via subtransactions → `ROLLBACK`) passed before the real `apply_migration`; post-apply confirmed the column is nullable, default NULL, prod `flight_teams` had 0 rows (so 0 teams overridden). **`schema.sql` still LAGS** — fold 026 (and the earlier 019/020/021/023/024/025 catch-ups) into it on the next `npm run db:backup`.
+
+### Tests / verification
+
+- **857/857 vitest** (+12 over 845: resolver — effectiveTeamConfig pure + getTeamConfig/getTeamAllowanceOverrides/getConfig with a wrong-state 2nd-team-overridden fixture; net-math through `loadRoundResults` — overridden team's players net at 50% (hand-computed 63/−9), non-overridden team byte-identical, rank follows net; blind-draw fill under the receiving team's effective allowance (override −9 vs inherit −18); pot-invariance — rank-preserving override → byte-identical payload, rank-flipping override → same pot size, winner follows). **38/38 Playwright** (+1: admin sets a per-team override on one team in a 2-team flight via the team-scoped DangerModal — Cancel reverts, Confirm persists `flight_teams.handicap_allowance`, marker shows, the other team untouched). `tsc --noEmit` clean. **Goldens byte-identical** (no-override path unchanged).
+
+### Tomorrow's priority
+
+1. **`npm run db:backup`** to fold migrations 019/020/021/023/024/025/**026** into `schema.sql` (it lags every MCP-applied migration).
+2. **Flights track is CORE COMPLETE + this override extension shipped.** Remaining OPTIONAL: **Flights.6** (homepage team-formation flight targeting) + a cleanup migration to drop the frozen legacy finalize RPCs (008/020/021) and the frozen `rounds.format*` columns.
+
+### Considered but not changed (confession)
+
+- **The override rule lives ONCE** (`effectiveTeamConfig`); every read site routes through it via the resolver accessors. Audited read sites: scorecard (open team → effective config), team-card (team-card formats don't apply allowance → untouched), `results.ts` engine + dots + fill + `TeamRow`, `RoundResultsView` drill-in PH, `player/[id]` PH (`getConfig`). `playerStats`/`season`/`playedWith` read only `.format` (confirmed — no allowance), so they were correctly left unchanged.
+- **`effectiveTeamConfig` placed in `helpers.ts`, not `resolve.ts`** (the plan named resolve.ts): `teamTotals.ts` (the pure scoring core) must fold the override and importing it from the supabase-coupled resolver broke `teamTotals.test.ts` (no supabase env). Moved to the supabase-free allowance home + re-exported from resolve.ts → "one place" preserved, coupling avoided. Flagged.
+- **Blind-draw DISPLAY value:** the same-flight branch stays on the drawn player's own-team engine read when the RECEIVING team has no override (→ goldens byte-identical), and recomputes under the receiving team's effective config only when the receiving team IS overridden. The ENGINE scoring of the fill (what feeds net/rank/total) always uses the receiving team's effective config (line 77). This honors "fill uses the receiving team's allowance, not the fill player's own team's" while keeping every existing golden identical. Flagged as the one place with branch-dependent behavior.
+- **Engine `computeRoundResult` config left as the flight config** (not team-effective) — the per-player `courseHandicap` fed in is already allowance-adjusted (PH), and the engine doesn't re-read `handicap_allowance`, so passing the override there would be a no-op at best / double-count at worst. Verified the existing behavior relies on this.
+- **Migration applied directly via MCP** (not relayed) because this session HAS a working Supabase MCP (unlike the 023/024/025 Code sessions). The dry-run self-check + post-apply verification stand in for the relay's manual step; the migration is trivially additive/reversible (`DROP COLUMN` rolls back). Corrected the stale "025 pending apply" note per instruction — 025 (and 022–024) are live; **026 is now live too**.
+- **`TeamRow.effectiveAllowance` / `allowanceOverridden` are additive** (frozen-contract memo): populated only for individual formats; ranking/payout ignore them (they read the already-scored `total`/`rank`).
+- **Out of scope (untouched):** pot size / payout distribution mechanics / `round_payouts` / finalize RPCs / payout reconciliation; flight-level allowance control behavior; ranking SCOPE (still flight-wide); any size-based/automatic allowance logic; player-facing edit ability (view only). Pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `flights-round-setup-mockup.html`) left unstaged; `.claude/settings.local.json` left dirty per instruction.
 
 ---
 
@@ -37,7 +81,7 @@
 
 ### Tomorrow's priority
 
-1. **Run the migration-025 relay** (still pending from Session 5 — self-checking dry-run + apply), then `npm run db:backup` to fold 023/024/025 into `schema.sql`.
+1. ~~Run the migration-025 relay~~ — **DONE: migration 025 is applied + verified in prod** (corrected 2026-06-11; the relay completed). Still pending: `npm run db:backup` to fold 023/024/025/026 into `schema.sql`.
 2. **Flights track is CORE COMPLETE.** Remaining OPTIONAL: **Flights.6** (homepage team-formation flight targeting) + a **cleanup migration** to drop the frozen legacy finalize RPCs (008/020/021) and the frozen `rounds.format*` columns.
 
 ### Considered but not changed (confession)
@@ -78,7 +122,7 @@
 
 ### Tomorrow's priority
 
-1. **Run the migration-025 relay** (self-checking dry-run + apply), then push, then `npm run db:backup` to fold 023/024/025 into `schema.sql`.
+1. ~~Run the migration-025 relay~~ — **DONE: migration 025 is applied + verified in prod** (corrected 2026-06-11). Still pending: `npm run db:backup` to fold 023/024/025/026 into `schema.sql`.
 2. **Flights track is CORE COMPLETE.** Remaining are OPTIONAL: **Flights.6** (homepage team-formation flight targeting for self-formed teams) + a **cleanup migration** to drop the frozen legacy finalize RPCs (008/020/021) and the frozen `rounds.format*` columns.
 
 ### Considered but not changed (confession)

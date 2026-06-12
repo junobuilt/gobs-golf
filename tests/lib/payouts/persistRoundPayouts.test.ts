@@ -420,3 +420,50 @@ describe("blind-draw higher-of-two reconciliation (S5)", () => {
     }
   });
 });
+
+// ── Per-team allowance override: POT INVARIANCE ──────────────────────────────
+// A per-team allowance override changes only a team's NET `total` (computed in
+// loadRoundResults, mocked here). The pot is headcount × buy-in and distribution
+// is by RANK ORDER, never score magnitude — so an override can shift rank but
+// never the pot SIZE.
+describe("computeAndPersistRoundPayouts — per-team allowance override is pot-neutral", () => {
+  it("rank-PRESERVING override (only magnitudes change) → byte-identical payload", async () => {
+    // Baseline net totals: −10 / −5 / 0 (3 teams, size 2).
+    okResult([team(1, -10, 2), team(2, -5, 2), team(3, 0, 2)], "2_ball");
+    const base = await computeAndPersistRoundPayouts(301);
+    const basePayload = lastPayload();
+
+    // Same teams/headcount; an override nudged Team 1's net (−10 → −8) but the
+    // rank order is unchanged (still 1st/2nd/3rd).
+    okResult([team(1, -8, 2), team(2, -5, 2), team(3, 0, 2)], "2_ball");
+    const after = await computeAndPersistRoundPayouts(301);
+    const afterPayload = lastPayload();
+
+    // Pot size invariant AND the full distribution is byte-identical.
+    if (base.status !== "persisted" || after.status !== "persisted") throw new Error("expected persisted");
+    expect(after.balance).toBe(base.balance);
+    expect(after.placesPaid).toBe(base.placesPaid);
+    expect(afterPayload.p_payload.payouts).toEqual(basePayload.p_payload.payouts);
+    expect(afterPayload.p_payload.funds).toEqual(basePayload.p_payload.funds);
+  });
+
+  it("rank-FLIPPING override → SAME pot size, but the winner follows the new net", async () => {
+    okResult([team(1, -10, 2), team(2, -5, 2), team(3, 0, 2)], "2_ball");
+    const base = await computeAndPersistRoundPayouts(302);
+    const basePayload = lastPayload();
+    expect(payoutByTeam(basePayload, 1)!.place).toBe(1); // Team 1 wins baseline
+
+    // Override worsened Team 1's net (−10 → −2): Team 2 (−5) now wins.
+    okResult([team(1, -2, 2), team(2, -5, 2), team(3, 0, 2)], "2_ball");
+    const after = await computeAndPersistRoundPayouts(302);
+    const afterPayload = lastPayload();
+
+    // Pot SIZE unchanged…
+    if (base.status !== "persisted" || after.status !== "persisted") throw new Error("expected persisted");
+    expect(after.balance).toBe(base.balance);
+    expect(after.placesPaid).toBe(base.placesPaid);
+    // …but the distribution legitimately followed the new rank order.
+    expect(payoutByTeam(afterPayload, 2)!.place).toBe(1); // Team 2 now wins
+    expect(payoutByTeam(afterPayload, 1)!.place).toBe(2);
+  });
+});

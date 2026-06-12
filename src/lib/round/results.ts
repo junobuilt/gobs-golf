@@ -20,8 +20,13 @@ import {
   GOBS_STABLEFORD_POINTS,
 } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
-import { getPlayingCourseHandicap, isTeamCardFormat, getScoringBasis } from "@/lib/format/helpers";
-import { getFlightsForRound, getTeamFlightMap } from "@/lib/flights/resolve";
+import { getPlayingCourseHandicap, getHandicapAllowance, isTeamCardFormat, getScoringBasis } from "@/lib/format/helpers";
+import {
+  getFlightsForRound,
+  getTeamFlightMap,
+  getTeamAllowanceOverrides,
+  effectiveTeamConfig,
+} from "@/lib/flights/resolve";
 import {
   holesCompleteForTeam,
   isStablefordFormat,
@@ -153,6 +158,15 @@ export type TeamRow = {
   // track, which reads `rank` + `players.length`) ignore both fields.
   teamHandicap?: number;
   teamNet?: number;
+  // Per-team allowance override (additive — per the TeamRow frozen-contract
+  // memo): `effectiveAllowance` is the % this team's nets/dots/PH were scored
+  // under (its override if set, else the flight default); `allowanceOverridden`
+  // is true only when an explicit per-team override is in effect. Display
+  // surfaces read these (drill-in PH + override marker); ranking/payout ignore
+  // them (they read the already-scored `total` / `rank`). Present only for
+  // INDIVIDUAL formats (team-card formats don't apply allowance).
+  effectiveAllowance?: number;
+  allowanceOverridden?: boolean;
 };
 
 // Flights S3: one ordered flight section. `teams` are ranked WITHIN the flight
@@ -355,6 +369,12 @@ export async function loadRoundResults(
   // old flat output.
   const teamFlightMap = await getTeamFlightMap(roundId);
 
+  // Per-team handicap-allowance overrides (team_number → %). Threaded into the
+  // engine so an overridden team's nets/dots/fills use its effective allowance,
+  // and surfaced on each TeamRow for display. Empty for rounds with no overrides
+  // → every effective config IS the flight config → byte-identical (golden-safe).
+  const teamAllowanceOverrides = await getTeamAllowanceOverrides(roundId);
+
   // Team-card team scores are scored at the TEAM level in `team_scores`. Load
   // once iff any flight is a team-card format (matches the old single-branch
   // cost — individual-only rounds make no extra query).
@@ -457,11 +477,16 @@ export async function loadRoundResults(
     // loader scores every round through the identical path.
     const enginePerTeam = buildEnginePerTeam({
       format: fmt, formatConfig: cfg, teamMap: subset, holesByTee, scoresByRpId,
-      blindDrawRows, rps: rpsRows, playerLookup,
+      blindDrawRows, rps: rpsRows, playerLookup, teamAllowanceOverrides,
     });
 
     return Object.entries(subset).map(([teamNumStr, teamPlayers]) => {
       const teamNum = parseInt(teamNumStr);
+      // Team-effective config: flight config + this team's allowance override (if
+      // any). Drives this team's stroke dots + the receiving-team blind-draw fill
+      // display. No override → identical to `cfg`.
+      const teamAllowanceOverride = teamAllowanceOverrides.get(teamNum) ?? null;
+      const teamCfg = (effectiveTeamConfig(cfg, teamAllowanceOverride) ?? cfg) as FormatConfig;
       const firstTeeId = teamPlayers[0]?.tee_id as number;
       const teamHoles = holesByTee[firstTeeId] || [];
       const cache = enginePerTeam[teamNum];
@@ -526,8 +551,9 @@ export async function loadRoundResults(
 
         // 2026-06-09: per-hole stroke dots from the allowance-adjusted playing CH
         // (the engine's scoring input) + each hole's stroke index. Holes missing
-        // tee data → 0 dots.
-        const playingCH = getPlayingCourseHandicap(rp.course_handicap, cfg);
+        // tee data → 0 dots. Uses the team-effective config so an overridden
+        // team's dots match its overridden net.
+        const playingCH = getPlayingCourseHandicap(rp.course_handicap, teamCfg);
         const strokeAllocation: number[] = strokeIndexes.map(si =>
           si == null ? 0 : getHandicapStrokes(playingCH, si),
         );
@@ -609,8 +635,15 @@ export async function loadRoundResults(
           // to the short team over the fill range. SAME-FLIGHT draws read the
           // drawn player's OWN-team engine output (their team is in THIS flight's
           // enginePerTeam, scored under this flight's format/allowance).
+          // Per-team allowance override: when the RECEIVING team (teamNum) has an
+          // override, the fill must score under the receiving team's effective
+          // allowance (NOT the drawn player's own team's) — so we fall through to
+          // the self-contained recompute below using teamCfg. With no override the
+          // same-flight engine read is unchanged (golden-safe).
           let drawnPlayerNetValue = 0;
-          const drawnCache = lookup ? enginePerTeam[lookup.teamNumber] : undefined;
+          const drawnCache = (lookup && teamAllowanceOverride == null)
+            ? enginePerTeam[lookup.teamNumber]
+            : undefined;
           if (lookup && drawnCache) {
             const drawnRpIdStr = String(lookup.rpId);
             let scoreSum = 0;
@@ -639,12 +672,14 @@ export async function loadRoundResults(
             // existing (single-flight) golden moves.
             const drawnRp = rpsRows.find(r => r.id === lookup.rpId);
             const drawnHoles = holesByTee[lookup.teeId] || [];
-            const useGross = getScoringBasis(cfg) === "gross";
+            const useGross = getScoringBasis(teamCfg) === "gross";
+            // Receiving team's EFFECTIVE allowance (its override if set, else the
+            // flight default) — NOT the flight's, NOT the fill player's own team's.
             const receivingPlayingCH = useGross
               ? 0
-              : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, cfg);
+              : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, teamCfg);
             const table = fmt === "gobs_stableford"
-              ? mergePointTable(GOBS_STABLEFORD_POINTS, (cfg as any).point_values)
+              ? mergePointTable(GOBS_STABLEFORD_POINTS, (teamCfg as any).point_values)
               : STABLEFORD_STANDARD_POINTS;
             let scoreSum = 0;
             let parSum = 0;
@@ -691,6 +726,8 @@ export async function loadRoundResults(
         blindDraws,
         flightId,
         flightName,
+        effectiveAllowance: getHandicapAllowance(teamCfg),
+        allowanceOverridden: teamAllowanceOverride != null,
       };
     });
   }

@@ -4,6 +4,7 @@ import {
   FLIGHT_COLUMNS,
   rowToFlight,
   getFlightsForRound,
+  getFlightForTeam,
   getTeamFlightMap,
   type Flight,
 } from "./resolve";
@@ -115,4 +116,33 @@ export async function moveTeamToFlight(
       { onConflict: "round_id,team_number" },
     );
   if (error) throw new Error("moveTeamToFlight: " + error.message);
+}
+
+// Set (or clear) a team's per-team handicap-allowance OVERRIDE. `allowance` is a
+// percentage (10–100) to override, or null to revert to inheriting the flight
+// default. Materializes a flight_teams row for default-rule teams (those without
+// one) by assigning them to their RESOLVED flight — the canonical default, so no
+// flight reassignment happens for an already-explicit team (getFlightForTeam
+// returns its current flight). The upsert preserves flight_id and only sets the
+// allowance. THE override-resolution rule lives in resolve.ts (effectiveTeamConfig);
+// this only writes the stored value.
+export async function setTeamAllowance(
+  roundId: number,
+  teamNumber: number,
+  allowance: number | null,
+): Promise<void> {
+  const flight = await getFlightForTeam(roundId, teamNumber);
+  if (!flight) throw new Error("setTeamAllowance: round has no flights");
+  const { error } = await supabase
+    .from("flight_teams")
+    .upsert(
+      {
+        round_id: roundId,
+        team_number: teamNumber,
+        flight_id: flight.id,
+        handicap_allowance: allowance,
+      },
+      { onConflict: "round_id,team_number" },
+    );
+  if (error) throw new Error("setTeamAllowance: " + error.message);
 }

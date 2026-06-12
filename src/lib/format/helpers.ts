@@ -147,6 +147,33 @@ export function getPlayingCourseHandicap(
   return getPlayingStrokes(rawCourseHandicap, getHandicapAllowance(formatConfig));
 }
 
+// The admin handicap-allowance options (5% steps, 100→10). Shared by the
+// flight-level control (RoundSetup flight card) and the per-team override control
+// (RoundSetup team card + scorecard header) so they offer the identical set.
+export const ALLOWANCE_OPTIONS = [
+  100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10,
+];
+
+// Per-team handicap-allowance override — THE rule (lives here, the allowance
+// home; re-exported by src/lib/flights/resolve.ts for the flight surfaces). A
+// team's EFFECTIVE config is its flight's config with the per-team allowance
+// substituted in when one is set; `null`/`undefined` override → the flight config
+// unchanged (so a round with no overrides is byte-identical to before). Kept here
+// (pure, no supabase) so the pure scoring core — teamTotals.ts — can fold an
+// override into its per-team config without importing the supabase-coupled
+// resolver. The override value is the raw % an admin chose; downstream
+// getHandicapAllowance still clamps [10,100].
+export function effectiveTeamConfig(
+  flightConfig: FormatConfig | null,
+  allowanceOverride: number | null | undefined,
+): FormatConfig | null {
+  if (allowanceOverride == null) return flightConfig;
+  return {
+    ...(flightConfig ?? {}),
+    handicap_allowance: allowanceOverride,
+  } as FormatConfig;
+}
+
 // Returns the override-hole list (per-round "all scores count on these
 // holes" admin choice). Null/undefined config returns []. Defensive against
 // non-array shapes in case malformed JSON ever lands in the column.

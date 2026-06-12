@@ -12,7 +12,7 @@
 
 import { computeRoundResult, computeTeamHandicap } from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig, BlindDrawInput } from "@/lib/scoring";
-import { getScoringBasis, getPlayingCourseHandicap } from "@/lib/format/helpers";
+import { getScoringBasis, getPlayingCourseHandicap, effectiveTeamConfig } from "@/lib/format/helpers";
 import {
   getTeamHoleTotal,
   getTeamTotal,
@@ -44,15 +44,33 @@ export function buildEnginePerTeam(args: {
   blindDrawRows: any[] | null;
   rps: any[];
   playerLookup: PlayerLookup;
+  // Per-team handicap-allowance overrides (team_number → %). A team listed here
+  // scores under its override instead of the flight's allowance; absent teams use
+  // the flight default. Undefined/empty → byte-identical to pre-override behavior.
+  // The blind-draw fill on a receiving team uses THAT (receiving) team's override.
+  teamAllowanceOverrides?: Record<number, number | null> | Map<number, number>;
 }): Record<number, TeamEngineCache> {
   const {
     format, formatConfig, teamMap, holesByTee, scoresByRpId, blindDrawRows, rps, playerLookup,
+    teamAllowanceOverrides,
   } = args;
   const useGross = getScoringBasis(formatConfig) === "gross";
   const enginePerTeam: Record<number, TeamEngineCache> = {};
+  const overrideFor = (tn: number): number | null => {
+    if (!teamAllowanceOverrides) return null;
+    const v = teamAllowanceOverrides instanceof Map
+      ? teamAllowanceOverrides.get(tn)
+      : teamAllowanceOverrides[tn];
+    return v ?? null;
+  };
 
   Object.entries(teamMap).forEach(([teamNumStr, teamPlayers]) => {
     const teamNum = parseInt(teamNumStr);
+    // Team-effective config: the flight config with this team's allowance
+    // override folded in (no-op when absent). Drives this team's player CHs AND
+    // the fill CH for any blind draw THIS team receives (receiving-team rule).
+    const teamCfg = (effectiveTeamConfig(formatConfig, overrideFor(teamNum)) ??
+      formatConfig) as FormatConfig;
     const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
     const teamHoles = holesByTee[firstTeeId] || [];
     const parByHole: Record<number, number> = {};
@@ -60,7 +78,7 @@ export function buildEnginePerTeam(args: {
 
     const playersForEngine = (teamPlayers as any[]).map((rp: any) => ({
       playerId: String(rp.id),
-      courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, formatConfig),
+      courseHandicap: useGross ? 0 : getPlayingCourseHandicap(rp.course_handicap, teamCfg),
       grossScores: scoresByRpId[rp.id] || {},
     }));
 
@@ -74,7 +92,7 @@ export function buildEnginePerTeam(args: {
         const drawnRp = (rps as any[]).find(r => r.id === drawnRpId);
         const drawnCH = useGross
           ? 0
-          : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, formatConfig);
+          : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, teamCfg);
         return {
           drawnPlayerId: String(drawnRpId ?? drawnPlayerId),
           drawnPlayerCourseHandicap: drawnCH,

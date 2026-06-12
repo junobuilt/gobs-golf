@@ -8,9 +8,9 @@ import DangerModal from "../components/DangerModal";
 import { getTeamColor } from "@/lib/teamColors";
 import FormatPicker from "@/components/format/FormatPicker";
 import { FORMAT_LABELS } from "@/lib/format/copy";
-import { getHandicapAllowance, isTeamCardFormat } from "@/lib/format/helpers";
-import { getFlightsForRound, getTeamFlightMap, type Flight } from "@/lib/flights/resolve";
-import { createFlight, renameFlight, deleteFlight, moveTeamToFlight } from "@/lib/flights/mutations";
+import { getHandicapAllowance, isTeamCardFormat, ALLOWANCE_OPTIONS } from "@/lib/format/helpers";
+import { getFlightsForRound, getTeamFlightMap, getTeamAllowanceOverrides, type Flight } from "@/lib/flights/resolve";
+import { createFlight, renameFlight, deleteFlight, moveTeamToFlight, setTeamAllowance } from "@/lib/flights/mutations";
 import MoveTeamSheet from "@/components/flights/MoveTeamSheet";
 import RenameFlightModal from "@/components/flights/RenameFlightModal";
 import { scorecardHref } from "@/lib/round/scorecardHref";
@@ -37,14 +37,6 @@ const C = {
   pool: "#1a5a8c",
   font: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
 };
-
-// Wave 1A: handicap-allowance dropdown choices — 100% down to 10% in steps of
-// 5 (Dad's 2026-06-09 ask; was 10). Same floor/ceiling, default 100. No 0%
-// (gross play is the net/gross basis toggle's job). PH = round(CH × allowance%)
-// already handles the half-step values (e.g. 95/85) — no other change needed.
-const ALLOWANCE_OPTIONS = [
-  100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10,
-];
 
 type ViewMode = "none" | "active" | "edit";
 type TeamScoreStatus = "not_started" | "in_progress";
@@ -96,6 +88,9 @@ export default function RoundSetup({ allPlayers }: Props) {
   // the move sheet. The FormatPicker + allowance control are scoped to a flight.
   const [flights, setFlights] = useState<Flight[]>([]);
   const [teamFlightMap, setTeamFlightMap] = useState<Map<number, number>>(new Map());
+  // Per-team handicap-allowance overrides (team_number → %); only overridden
+  // teams appear. Drives each team card's effective-allowance display + control.
+  const [teamAllowanceOverrides, setTeamAllowanceOverrides] = useState<Map<number, number>>(new Map());
   const [pickerFlight, setPickerFlight] = useState<Flight | null>(null);
   // Buy-in for the per-flight "Pot $N" preview chip (read from league_settings).
   const [buyIn, setBuyIn] = useState<number>(DEFAULT_BUY_IN);
@@ -106,6 +101,8 @@ export default function RoundSetup({ allPlayers }: Props) {
   // modal confirm, scoped to a flight. Only set when that flight's format is
   // locked (a score exists); a pre-lock change writes immediately.
   const [pendingAllowance, setPendingAllowance] = useState<{ value: number; flightId: number } | null>(null);
+  // Per-team allowance override awaiting the mid-round recalc confirmation.
+  const [pendingTeamAllowance, setPendingTeamAllowance] = useState<{ teamNumber: number; value: number | null } | null>(null);
   // Session 2: a pending team move into/out of a LOCKED flight, awaiting the
   // recalc danger-modal confirm. Unlocked moves write immediately.
   const [pendingMove, setPendingMove] = useState<{ teamNumber: number; flightId: number } | null>(null);
@@ -226,6 +223,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       setFlights(roundFlights);
       const tfm = await getTeamFlightMap(round.id);
       setTeamFlightMap(new Map([...tfm.entries()].map(([tn, f]) => [tn, f.id])));
+      setTeamAllowanceOverrides(await getTeamAllowanceOverrides(round.id));
       const flight = roundFlights[0] ?? null;
       setRoundFormat((flight?.format ?? null) as Format | null);
       setRoundFormatConfig((flight?.format_config ?? null) as FormatConfig | null);
@@ -552,6 +550,36 @@ export default function RoundSetup({ allPlayers }: Props) {
       void writeAllowance(flight, value);
     }
   }, [writeAllowance]);
+
+  // ── Per-team allowance OVERRIDE ────────────────────────────────────────────
+  // Writes flight_teams.handicap_allowance for ONE team (null = revert to the
+  // flight default). Never touches the flight's own allowance or other teams.
+  const writeTeamAllowance = useCallback(async (teamNumber: number, value: number | null) => {
+    if (!existingRoundId) return;
+    setSaving(true);
+    try {
+      await setTeamAllowance(existingRoundId, teamNumber, value);
+    } catch (e) {
+      setSaving(false);
+      alert("Couldn't save the team allowance: " + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    setSaving(false);
+    await loadRoundForDate(selectedDate);
+  }, [existingRoundId, selectedDate, loadRoundForDate]);
+
+  // No-op when the stored override is unchanged. If the team's flight is locked
+  // (a score exists) the change routes through a danger modal scoped to THAT team;
+  // otherwise it writes immediately. `value` is the override % or null (default).
+  const onTeamAllowanceChange = useCallback((teamNumber: number, flight: Flight, value: number | null) => {
+    const current = teamAllowanceOverrides.get(teamNumber) ?? null;
+    if (value === current) return;
+    if (flight.format_locked_at !== null) {
+      setPendingTeamAllowance({ teamNumber, value });
+    } else {
+      void writeTeamAllowance(teamNumber, value);
+    }
+  }, [teamAllowanceOverrides, writeTeamAllowance]);
 
   // ── Session 2: flight CRUD handlers (all reload after the write) ───────────
   const handleCreateFlight = useCallback(async () => {
@@ -1050,6 +1078,26 @@ export default function RoundSetup({ allPlayers }: Props) {
     />
   );
 
+  // Per-team allowance override mid-round confirmation, scoped to the ONE team.
+  const teamAllowanceDangerModal = pendingTeamAllowance !== null && (
+    <DangerModal
+      title={`Change handicap allowance for Team ${pendingTeamAllowance.teamNumber}?`}
+      description={
+        pendingTeamAllowance.value == null
+          ? `Team ${pendingTeamAllowance.teamNumber}'s net scores will recalculate at the flight's allowance. Gross scores are unchanged.`
+          : `Team ${pendingTeamAllowance.teamNumber}'s net scores will recalculate at ${pendingTeamAllowance.value}% handicaps. Gross scores are unchanged.`
+      }
+      cannotBeUndone={false}
+      confirmLabel="Change allowance"
+      onConfirm={() => {
+        const p = pendingTeamAllowance;
+        setPendingTeamAllowance(null);
+        void writeTeamAllowance(p.teamNumber, p.value);
+      }}
+      onCancel={() => setPendingTeamAllowance(null)}
+    />
+  );
+
   // Session 2: moving a team into/out of a LOCKED flight recalculates that
   // team's net under the destination flight's format/allowance — confirm first.
   const moveDangerModal = pendingMove !== null && (
@@ -1101,6 +1149,14 @@ export default function RoundSetup({ allPlayers }: Props) {
     // Combined COURSE handicap (display-only; "—" if any player's CH isn't
     // computed yet — never a misleading partial sum).
     const teamCH = sumCourseHandicaps(players.map(p => playerRpInfo[p.id]?.courseHandicap ?? null));
+    // Per-team handicap-allowance override. Shown only on individual formats
+    // (allowance is inert for team-card formats — mirrors the flight-level control,
+    // which is disabled there). `override` null ⇒ inheriting the flight default.
+    const teamOverride = teamAllowanceOverrides.get(tn) ?? null;
+    const flightAllowance = flight ? getHandicapAllowance(flight.format_config) : 100;
+    const effectiveAllowance = teamOverride ?? flightAllowance;
+    const showAllowanceControl =
+      flight != null && flight.format != null && !isTeamCardFormat(flight.format);
     const rawStatus = isRoundComplete ? "complete" : (teamScoreStatus[tn] ?? "not_started");
     const statusLabel = rawStatus === "complete" ? "Complete" : rawStatus === "in_progress" ? "In progress" : "Not started";
     const statusBg = rawStatus === "complete" ? "#e9f5ee" : rawStatus === "in_progress" ? "#fef3c7" : "#f1f5f9";
@@ -1139,6 +1195,44 @@ export default function RoundSetup({ allPlayers }: Props) {
                 </button>
               )}
             </div>
+            {/* Per-team allowance override (admin; individual formats only). The
+                effective % shows an "override" marker in the allowance accent when
+                it differs from the flight default. Selecting "Flight default"
+                clears the override. */}
+            {showAllowanceControl && flight && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: "8px" }}>
+                <span style={{
+                  fontSize: "0.68rem", fontWeight: 600,
+                  color: teamOverride != null ? "#c2410c" : "#9ca3af",
+                }}>
+                  Allowance
+                </span>
+                <select
+                  aria-label={`Handicap allowance for Team ${tn}`}
+                  value={teamOverride == null ? "" : String(teamOverride)}
+                  disabled={saving || isRoundComplete}
+                  onChange={e =>
+                    onTeamAllowanceChange(tn, flight, e.target.value === "" ? null : Number(e.target.value))
+                  }
+                  style={{
+                    border: `1px solid ${teamOverride != null ? "#c2410c" : "#e4e4e4"}`,
+                    background: "#fff", borderRadius: "8px", padding: "2px 6px",
+                    fontSize: "0.7rem", fontWeight: 700,
+                    color: teamOverride != null ? "#c2410c" : "#475569",
+                    fontFamily: C.font,
+                    cursor: saving || isRoundComplete ? "default" : "pointer",
+                  }}
+                >
+                  <option value="">Flight default ({flightAllowance}%)</option>
+                  {ALLOWANCE_OPTIONS.map(v => <option key={v} value={v}>{v}%</option>)}
+                </select>
+                {teamOverride != null && (
+                  <span style={{ fontSize: "0.62rem", fontWeight: 700, color: "#c2410c", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    override · {effectiveAllowance}%
+                  </span>
+                )}
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
               {players.map(p => {
                 const info = playerRpInfo[p.id];
@@ -1337,6 +1431,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         </div>
         {dangerModal}
         {allowanceDangerModal}
+        {teamAllowanceDangerModal}
         {formatPicker}
         {seasonModal}
       </div>
@@ -1447,6 +1542,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         </div>
         {dangerModal}
         {allowanceDangerModal}
+        {teamAllowanceDangerModal}
         {moveDangerModal}
         {reopenModal && (
           <DangerModal
