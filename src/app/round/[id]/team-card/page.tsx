@@ -6,8 +6,6 @@ import { supabase } from "@/lib/supabase";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { isTeamCardFormat, getTeamBallCount } from "@/lib/format/helpers";
 import { getPrimaryFlightForRound, getFlightForTeam, getTeamFlightMap } from "@/lib/flights/resolve";
-// SESSION-4-REMOVE
-import { MULTI_FLIGHT_FINALIZE_NOTICE } from "@/lib/flights/finalizeGuard";
 import { computeTeamHandicap } from "@/lib/scoring/teamHandicap";
 import {
   buildTeamScoreMap,
@@ -72,8 +70,8 @@ export default function TeamCardPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitModal, setSubmitModal] = useState(false);
   const [allSubmittedRpcInFlight, setAllSubmittedRpcInFlight] = useState(false);
-  // SESSION-4-REMOVE: blocks Submit on rounds with 2+ non-empty flights.
-  const [multiFlightFinalizeBlocked, setMultiFlightFinalizeBlocked] = useState(false);
+  // Flights S4: 2+ non-empty flights → finalize routes to finalize_round_flights.
+  const [isMultiFlightRound, setIsMultiFlightRound] = useState(false);
 
   const teamNumber = teamFilter ? parseInt(teamFilter, 10) : null;
   const ballCount = getTeamBallCount(roundFormatConfig);
@@ -109,9 +107,9 @@ export default function TeamCardPage() {
       // submitted_teams stays ROUND-level (frozen rounds.format_config).
       setSubmittedTeams(Array.isArray(roundCfg?.submitted_teams) ? roundCfg!.submitted_teams! : []);
 
-      // SESSION-4-REMOVE: 2+ non-empty flights → finalize blocked this session.
+      // Flights S4: 2+ non-empty flights → route finalize to finalize_round_flights.
       const tFlightMap = await getTeamFlightMap(Number(roundId));
-      setMultiFlightFinalizeBlocked(
+      setIsMultiFlightRound(
         new Set([...tFlightMap.values()].map(f => f.id)).size >= 2,
       );
 
@@ -191,7 +189,6 @@ export default function TeamCardPage() {
   // league plays in person so submissions are essentially serial).
   const submitTeam = async (teamNum: number) => {
     if (submitting) return;
-    if (multiFlightFinalizeBlocked) return; // SESSION-4-REMOVE
     setSubmitting(true);
     try {
       const { data: row } = await supabase
@@ -235,9 +232,14 @@ export default function TeamCardPage() {
     if (!allTeamNumbers.every((t) => submittedTeams.includes(t))) return;
     setAllSubmittedRpcInFlight(true);
     try {
-      const { data, error } = await supabase.rpc("finalize_round_team_card", {
-        p_round_id: Number(roundId),
-      });
+      // Flights S4: a multi-flight round (this team-card flight + at least one
+      // other non-empty flight) finalizes through the flight-aware RPC, which
+      // runs every flight's own floor. A single-flight team-card round keeps the
+      // per-format RPC (byte-identical).
+      const { data, error } = await supabase.rpc(
+        isMultiFlightRound ? "finalize_round_flights" : "finalize_round_team_card",
+        { p_round_id: Number(roundId) },
+      );
       if (error) {
         console.warn("[1C] finalize RPC error", error);
         return;
@@ -537,24 +539,18 @@ export default function TeamCardPage() {
           <button
             type="button"
             onClick={() => setSubmitModal(true)}
-            disabled={!canSubmit || submitting || multiFlightFinalizeBlocked}
+            disabled={!canSubmit || submitting}
             style={{
               width: "100%", padding: "18px", borderRadius: "12px",
-              background: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "#15803d" : "#cbd5e1",
+              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
               color: "white", border: "none", fontWeight: 900, fontSize: "1rem",
-              cursor: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "pointer" : "not-allowed",
+              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
               fontFamily: "sans-serif",
             }}
           >
             {submitting ? "Submitting…" : "Submit Final Scores"}
           </button>
-          {/* SESSION-4-REMOVE: multi-flight finalize guard notice. */}
-          {multiFlightFinalizeBlocked && (
-            <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#b45309" }}>
-              {MULTI_FLIGHT_FINALIZE_NOTICE}
-            </p>
-          )}
-          {!canSubmit && !altShotBadSize && !multiFlightFinalizeBlocked && (
+          {!canSubmit && !altShotBadSize && (
             <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#94a3b8" }}>
               Available once this team has a score on every hole.
             </p>

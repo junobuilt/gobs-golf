@@ -196,3 +196,75 @@ describe("cross-surface agreement (Flights S3)", () => {
     }
   });
 });
+
+// Flights S4 — CROSS-FLIGHT blind-draw display. A short team in flight A is
+// filled by a player drawn from flight B; the fill's value must be computed
+// under the RECEIVING flight's (A) format + allowance, NOT the source flight's.
+// Flight A = 2_ball @ 100%, Flight B = 2_ball @ 50%. The drawn player (Dan, CH
+// 10, all pars, SI = hole) nets −10 under A's 100% (PH 10 → a stroke on holes
+// SI 1..10: 10×net-3 + 8×net-4 = 62 vs par 72), but would net −5 under B's 50%
+// (PH 5). The pill must read −10, proving the receiving-flight recompute.
+function seedCrossFlightDraw(): FakeData {
+  const holes = [];
+  for (let n = 1; n <= 18; n++) {
+    holes.push({ id: n, tee_id: 1, hole_number: n, par: 4, yardage: 350, stroke_index: n });
+  }
+  const players = [
+    { id: 201, full_name: "Alice A", display_name: "Alice A", handicap_index: 0, preferred_tee_id: 1, is_active: true },
+    { id: 202, full_name: "Bob B", display_name: "Bob B", handicap_index: 0, preferred_tee_id: 1, is_active: true },
+    { id: 203, full_name: "Carol C", display_name: "Carol C", handicap_index: 0, preferred_tee_id: 1, is_active: true },
+    { id: 204, full_name: "Dan D", display_name: "Dan D", handicap_index: 10, preferred_tee_id: 1, is_active: true },
+    { id: 205, full_name: "Eve E", display_name: "Eve E", handicap_index: 0, preferred_tee_id: 1, is_active: true },
+  ];
+  // Flight A: Team 1 = {Alice} (SHORT — 1 player vs flight-A max 2), Team 2 =
+  // {Bob, Carol}. Flight B: Team 3 = {Dan, Eve}. Team 1 drew Dan (cross-flight).
+  const round_players = [
+    { id: 101, round_id: 2, player_id: 201, tee_id: 1, team_number: 1, course_handicap: 0, dropped_after_hole: null },
+    { id: 102, round_id: 2, player_id: 202, tee_id: 1, team_number: 2, course_handicap: 0, dropped_after_hole: null },
+    { id: 103, round_id: 2, player_id: 203, tee_id: 1, team_number: 2, course_handicap: 0, dropped_after_hole: null },
+    { id: 104, round_id: 2, player_id: 204, tee_id: 1, team_number: 3, course_handicap: 10, dropped_after_hole: null },
+    { id: 105, round_id: 2, player_id: 205, tee_id: 1, team_number: 3, course_handicap: 0, dropped_after_hole: null },
+  ];
+  const scores: any[] = [];
+  let sId = 1;
+  for (const rp of round_players) {
+    for (let n = 1; n <= 18; n++) scores.push({ id: sId++, round_player_id: rp.id, hole_number: n, strokes: 4 });
+  }
+  return {
+    rounds: [{ id: 2, played_on: "2026-06-11", course_id: 1, is_complete: true, created_at: "2026-06-11T00:00:00Z" }],
+    tees: [{ id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 }],
+    holes, players, round_players, scores,
+    flights: [
+      { id: 10, round_id: 2, name: "Flight A", sort_order: 1, format: "2_ball",
+        format_config: { scoring_basis: "net", best_n: 2, handicap_allowance: 100 }, format_locked_at: null },
+      { id: 20, round_id: 2, name: "Flight B", sort_order: 2, format: "2_ball",
+        format_config: { scoring_basis: "net", best_n: 2, handicap_allowance: 50 }, format_locked_at: null },
+    ],
+    flight_teams: [
+      { id: 1, flight_id: 10, round_id: 2, team_number: 1 },
+      { id: 2, flight_id: 10, round_id: 2, team_number: 2 },
+      { id: 3, flight_id: 20, round_id: 2, team_number: 3 },
+    ],
+    blind_draws: [
+      { id: 1, round_id: 2, short_team_number: 1, drawn_player_id: 204,
+        hole_range_start: 1, hole_range_end: 18, random_seed: 123 },
+    ],
+  };
+}
+
+describe("cross-flight blind draw fill (Flights S4)", () => {
+  it("fill value uses the RECEIVING flight's allowance (−10 @ A's 100%, not −5 @ B's 50%)", async () => {
+    fakeRef.current = new FakeSupabase(seedCrossFlightDraw());
+    const outcome = await loadRoundResults(2);
+    expect(outcome.status).toBe("ok");
+    if (outcome.status !== "ok") return;
+
+    const flightA = outcome.data.flightSections.find(s => s.flightId === 10)!;
+    const team1 = flightA.teams.find(t => t.id === 1)!;
+    expect(team1.blindDraws).toHaveLength(1);
+    const fill = team1.blindDraws[0];
+    expect(fill.drawnPlayerName).toBe("Dan D");
+    expect(fill.fromTeamNumber).toBe(3);          // Dan's own (flight B) team
+    expect(fill.drawnPlayerNetValue).toBe(-10);   // receiving A @ 100% (NOT −5)
+  });
+});

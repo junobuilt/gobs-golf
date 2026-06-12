@@ -39,6 +39,9 @@ export interface SeedData {
   // fixtures resolve format/config/lock off the flight without re-declaring it.
   flights?: Row[];
   flight_teams?: Row[];
+  // Blind-draw fills (migration 008). Written by the finalize RPCs; seedable so a
+  // finalized round can render a cross-flight draw on the summary.
+  blind_draws?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -56,6 +59,8 @@ const KNOWN_TABLES = [
   // Flights — format ownership lives here (Session 1+).
   "flights",
   "flight_teams",
+  // Blind-draw fills (Session 4 finalize writes these).
+  "blind_draws",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */
@@ -260,6 +265,132 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
         if (!scored?.has(String(h))) return { status: 200, body: "not_yet" };
       }
     }
+    round.is_complete = true;
+    return { status: 200, body: "finalized" };
+  }
+
+  // Flights S4: flight-aware finalize (migration 024). Faithful JS mirror of the
+  // RPC's OBSERVABLE effect for the display layer — used only for MULTI-flight
+  // rounds (the client routes single-flight rounds to the per-format RPCs above).
+  //   * Resolve each team to its flight (canonical default rule: no flight_teams
+  //     row → the round's lowest-sort_order flight).
+  //   * PER-FLIGHT completion floor by format family (strict / relaxed / team-card).
+  //   * SHORT teams are PER-FLIGHT (max roster IN ITS OWN flight); only strict
+  //     best-N flights generate slots. Draws fill from the round-wide pool of
+  //     fully-18-scored, non-dropped, non-team-card players, no collisions.
+  //   * Flip is_complete; write blind_draws rows.
+  // NOTE: the draw PICK here is a simple deterministic first-eligible choice (the
+  // mock can't replicate Postgres setseed/random); reproducibility/order are the
+  // SQL's job, verified by the migration-024 relay dry-run on prod. The Playwright
+  // lifecycle test uses internally-even flights (zero slots → zero draws), so the
+  // pick logic isn't exercised — the floors + routing + is_complete flip are.
+  if (name === "finalize_round_flights") {
+    const roundId = args.p_round_id;
+    const round = (db.tables.rounds ?? []).find((r) => looseEq(r.id, roundId));
+    if (!round) return { status: 200, body: "round_not_found" };
+    if (round.is_complete) return { status: 200, body: "already_complete" };
+
+    const flights = (db.tables.flights ?? [])
+      .filter((f) => looseEq(f.round_id, roundId))
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const firstFlightId = flights[0]?.id;
+    const ft = (db.tables.flight_teams ?? []).filter((t) => looseEq(t.round_id, roundId));
+    const rps = (db.tables.round_players ?? []).filter(
+      (rp) => looseEq(rp.round_id, roundId) && (rp.team_number ?? 0) > 0,
+    );
+    const familyOf = (format: any): "team_card" | "relaxed" | "strict" =>
+      format === "texas_scramble" || format === "alternate_shot" ? "team_card"
+        : format === "shambles" ? "relaxed" : "strict";
+    const flightOfTeam = (tn: any) => {
+      const explicit = ft.find((t) => looseEq(t.team_number, tn));
+      const fid = explicit ? explicit.flight_id : firstFlightId;
+      return flights.find((fl) => looseEq(fl.id, fid)) ?? flights[0];
+    };
+
+    const teamNums = [...new Set(rps.map((rp) => rp.team_number))];
+    const scoredHolesByRp: Record<string, Set<string>> = {};
+    for (const s of db.tables.scores ?? []) {
+      (scoredHolesByRp[String(s.round_player_id)] ??= new Set()).add(String(s.hole_number));
+    }
+    const scoredHolesByTeam: Record<string, Set<string>> = {};
+    for (const ts of db.tables.team_scores ?? []) {
+      if (!looseEq(ts.round_id, roundId)) continue;
+      (scoredHolesByTeam[String(ts.team_number)] ??= new Set()).add(String(ts.hole_number));
+    }
+
+    // Per-flight completion floor.
+    for (const tn of teamNums) {
+      const fam = familyOf(flightOfTeam(tn)?.format);
+      const teamRps = rps.filter((rp) => rp.team_number === tn);
+      if (fam === "strict") {
+        for (const rp of teamRps) {
+          const cap = rp.dropped_after_hole ?? 18;
+          for (let h = 1; h <= cap; h++) {
+            if (!scoredHolesByRp[String(rp.id)]?.has(String(h))) return { status: 200, body: "not_yet" };
+          }
+        }
+      } else if (fam === "relaxed") {
+        for (let h = 1; h <= 18; h++) {
+          const any = teamRps.some((rp) => scoredHolesByRp[String(rp.id)]?.has(String(h)));
+          if (!any) return { status: 200, body: "not_yet" };
+        }
+      } else { // team_card
+        for (let h = 1; h <= 18; h++) {
+          if (!scoredHolesByTeam[String(tn)]?.has(String(h))) return { status: 200, body: "not_yet" };
+        }
+      }
+    }
+
+    // Per-flight shortness: max roster within each flight; slots only for strict.
+    const rosterOf = (tn: any) => rps.filter((rp) => rp.team_number === tn).length;
+    const dropoutsOf = (tn: any) => rps.filter((rp) => rp.team_number === tn && rp.dropped_after_hole != null).length;
+    const flightMax: Record<string, number> = {};
+    for (const tn of teamNums) {
+      if (familyOf(flightOfTeam(tn)?.format) !== "strict") continue;
+      const fid = String(flightOfTeam(tn)?.id);
+      flightMax[fid] = Math.max(flightMax[fid] ?? 0, rosterOf(tn));
+    }
+
+    // Round-wide eligible pool: non-team-card, not dropped, full 1..18 scores.
+    const pool = rps
+      .filter((rp) => familyOf(flightOfTeam(rp.team_number)?.format) !== "team_card"
+        && rp.dropped_after_hole == null
+        && (scoredHolesByRp[String(rp.id)]?.size ?? 0) >= 18)
+      .map((rp) => rp.id)
+      .sort((a, b) => Number(a) - Number(b));
+
+    const draws: Array<{ team: any; start: number }> = [];
+    for (const tn of [...teamNums].sort((a, b) => Number(a) - Number(b))) {
+      const f = flightOfTeam(tn);
+      if (familyOf(f?.format) !== "strict") continue;
+      const startSlots = (flightMax[String(f?.id)] ?? 0) - rosterOf(tn);
+      for (let i = 0; i < startSlots; i++) draws.push({ team: tn, start: 1 });
+      for (const rp of rps.filter((r) => r.team_number === tn && r.dropped_after_hole != null)) {
+        draws.push({ team: tn, start: (rp.dropped_after_hole as number) + 1 });
+      }
+    }
+
+    if (draws.length > pool.length) return { status: 200, body: "pool_too_small" };
+
+    const available = [...pool];
+    db.tables.blind_draws ??= [];
+    for (const d of draws) {
+      const teamRosterIds = rps.filter((rp) => rp.team_number === d.team).map((rp) => String(rp.id));
+      const idx = available.findIndex((id) => !teamRosterIds.includes(String(id)));
+      if (idx < 0) return { status: 200, body: "pool_too_small" };
+      const pickedRpId = available.splice(idx, 1)[0];
+      const drawnPlayerId = rps.find((rp) => looseEq(rp.id, pickedRpId))?.player_id;
+      db.tables.blind_draws.push({
+        id: db.allocId("blind_draws"),
+        round_id: roundId,
+        short_team_number: d.team,
+        drawn_player_id: drawnPlayerId,
+        hole_range_start: d.start,
+        hole_range_end: 18,
+        random_seed: 1,
+      });
+    }
+
     round.is_complete = true;
     return { status: 200, body: "finalized" };
   }

@@ -2,10 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-11 (Flights Session 3 — read-surface sectioning + per-flight payouts + batch readers + Alt-Shot guard)
-**Session purpose:** Make multi-flight rounds READ correctly everywhere. (a) `results.ts` ranks PER FLIGHT → additive `flightSections` + `TeamRow.flightId/flightName` + `PlayerRow.netStrokes`; round-wide Individual Rankings computed in the loader (mixed formats → net-strokes rule). (b) RoundResultsView / leaderboard / HistoryRoundList / homepage today's-teams section by flight (single-flight = no chrome); Round Setup gains a per-flight "Pot $N" chip from the abstract calculator. (c) `persistRoundPayouts` runs the engine once per non-empty flight (per-flight pots, both sweeps → BFB); migration `023` snapshots `flight_id`/`flight_name` on `round_payouts`; Winnings groups by flight. (d) NEW `getTeamFlightsByRounds` → the four batch-stats readers exclude per-PLAYER via their team's flight. (e) FormatPicker Alt-Shot guard counts only the target flight's teams. Single-flight rounds byte-identical (golden-tested). 830/830 vitest, 36/36 Playwright, tsc clean. **Migration 023 relayed for the gated apply (see DB changes).**
+**Last updated:** 2026-06-11 (Flights Session 4 — flight-aware finalize + cross-flight blind draw + guard removal)
+**Session purpose:** Make multi-flight rounds FINALIZE. (a) NEW `finalize_round_flights` RPC (migration 024): one finalize moment per round, per-flight completion floors by format family, PER-FLIGHT short-team benchmark (a 4-man flight beside a 3-man flight, both even → ZERO draws), round-wide pool of fully-scored non-team-card players (no collisions, team-card excluded as source+receiver), deterministic cross-flight draws. (b) Both finalize surfaces route 2+ non-empty-flight rounds to it; single-flight keeps the per-format RPC (byte-identical). (c) SESSION-4-REMOVE guard DELETED (file + tests + Submit-block/notice). (d) `results.ts` cross-flight fill-display fix: a fill drawn from another flight is valued under the RECEIVING flight's format/allowance (same-flight path untouched → goldens unchanged). 828/828 vitest, 37/37 Playwright, tsc clean. **Migration 024 relayed for the gated dry-run + apply (see DB changes).**
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-11 (Flights Session 4 — flight-aware finalize + cross-flight blind draw + guard removal)
+
+### Where we left off
+
+**Multi-flight rounds now FINALIZE end-to-end. Dad's split-field Friday is fully playable.** The temporary `SESSION-4-REMOVE` guard is gone; one finalize moment per round runs each flight's own completion floor and per-flight blind draws in one transaction.
+
+- **Migration `024_flights_finalize.sql` — NEW `finalize_round_flights(p_round_id)`.** `FOR UPDATE` lock + `already_complete`/`round_not_found` like 008/020/021. Resolves each team to its flight server-side via an inline CTE applying the CANONICAL DEFAULT RULE (no `flight_teams` row → the round's lowest-`sort_order` flight), mirroring `getFlightForTeam`. **Per-flight completion floor** by format family (strict best-N → every player 1..COALESCE(dropped,18); relaxed/Shambles → ≥1 score per hole per team; team-card → `team_scores` per hole); any flight fails → `not_yet`. **Per-flight short-team benchmark** — a team is short only vs the MAX roster IN ITS OWN flight (so internally-even flights of different sizes produce ZERO draws); only STRICT flights generate slots. **Round-wide pool** of NON-team-card, non-dropped, FULLY-18-scored players (picked-up Shambles players excluded as sources; team-card players excluded as sources AND receivers). Draws in DETERMINISTIC order (flight sort_order ASC → team_number ASC → round-start then dropout), no collisions (drawn players removed from the pool; subpool excludes the receiving team's roster). Round-wide `pool_too_small`. Invoker-rights, no temp tables (resolution CTE repeated per query). **Old RPCs 008/020/021 untouched** (frozen legacy, cleanup later).
+- **Client routing (both finalize surfaces).** `tryFinalizeIfAllSubmitted` routes a round with 2+ non-empty flights to `finalize_round_flights`; single-flight rounds keep `finalize_round_with_blind_draws` / `finalize_round_relaxed` / `finalize_round_team_card` (byte-identical). `submitted_teams` + the D1.7 pre-fire banner stay round-level (already correct round-wide). The scorecard refreshes blind-draw fills on success when draws are possible (multi-flight or non-relaxed single-flight).
+- **Guard REMOVED.** Deleted `src/lib/flights/finalizeGuard.ts` + its `mutations.test.ts` block; dropped the `MULTI_FLIGHT_FINALIZE_NOTICE` imports and the Submit-disable + notice on both surfaces. The `multiFlightFinalizeBlocked` state became `isMultiFlightRound` (routing predicate, not a block).
+- **Cross-flight fill display (`results.ts`).** A fill whose drawn player lives in ANOTHER flight is no longer valued at 0 — it's recomputed self-contained under the RECEIVING flight's format/allowance + the drawn player's own tee (the same inputs the engine uses for the team total). The same-flight branch (drawn player's own-team engine) is untouched, so no single-flight golden moves. Exported `mergePointTable` / `STABLEFORD_STANDARD_POINTS` / `GOBS_STABLEFORD_POINTS` for the stableford recompute.
+
+**Files:** NEW `supabase/migrations/024_flights_finalize.sql`, `e2e/flightsFinalize.spec.ts`. DELETED `src/lib/flights/finalizeGuard.ts`. MODIFIED `src/app/round/[id]/{scorecard,team-card}/page.tsx`, `src/lib/round/results.ts`, `src/lib/scoring/{engine,index}.ts`, `tests/lib/round/results-multiflight.test.ts`, `tests/lib/flights/mutations.test.ts`, `e2e/support/supabaseMock.ts`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(flights): Session 4 — flight-aware finalize + cross-flight blind draw + guard removal (migration 024)
+- (trailing) chore: update STATUS.md
+
+### DB changes (today)
+
+- **Migration `024` GATED — relayed, not yet applied from this session.** Additive (one `CREATE FUNCTION` — no table/column/data/constraint change) and reversible (`DROP FUNCTION`). **No backup needed** (no data read-modified). The relay is a self-checking dry-run: `BEGIN` → create the function → run synthetic scenarios (even 4-man+3-man flights → 0 draws; a short flight-A team drawing a flight-B player; team-card-flight players excluded from pool) asserting the outcomes → `ROLLBACK`. **This dry-run IS the SQL regression test** (there is no Postgres CI container). Unlike migration 023, the new RPC is invoked only on the client's choice (multi-flight) and doesn't break any existing SELECT, so the **push is NOT order-gated** — but apply 024 before a real multi-flight round is finalized in prod, else that finalize falls through to a no-op `null` RPC. `schema.sql` picks up the function on the next `npm run db:backup`.
+
+### Tests / verification
+
+- **828/828 vitest** (−3 removed guard tests; +1 cross-flight fill display: −10 under the receiving flight's 100% allowance, NOT −5 under the source flight's 50% — real `results.ts` code). **37/37 Playwright** (+1 multi-flight finalize lifecycle: guard gone, `finalize_round_flights` fires and the per-format RPC does NOT, internally-even flights → 0 draws, sectioned summary renders). `tsc --noEmit` clean. The e2e MockDb gained a faithful `finalize_round_flights` (per-flight floors + shortness + draws) so the lifecycle test exercises the client integration. **The SQL draw logic itself is verified by the migration-024 relay dry-run on prod** — see DB changes.
+
+### Tomorrow's priority
+
+1. **Run the migration-024 relay dry-run**, confirm the self-checking assertions, apply, then `npm run db:backup`.
+2. **Flights.5** — higher-of-two blind-draw payout rule (Dad's rule: drawn player paid the higher of own-team vs fill-team payout; foregone lower amount sweeps to BFB; recorded distinctly in `round_payouts`).
+3. **Flights.6 (follow-on)** — homepage team-formation flight targeting for self-formed teams.
+
+### Considered but not changed (confession)
+
+- **The per-flight DRAW SQL (shortness, no-collision, order, pool) has no automated test that runs the real SQL** — vitest mocks Supabase and the e2e harness intercepts the network (no Postgres container). The Playwright lifecycle test exercises a FAITHFUL JS mirror in the MockDb (so it tests the mock's fidelity + the client routing, not the SQL), and the cross-flight fill DISPLAY is tested in real `results.ts`. The authoritative SQL regression test is the **relay dry-run's self-checking synthetic scenarios on prod** — stated plainly, not hidden. The headline "4-man + 3-man even → 0 draws" assertion lives there.
+- **e2e MockDb gained a real `finalize_round_flights` implementation** (≈80 lines mirroring the RPC) — test-infra parity with the SQL, drift-prone by nature; its PRNG pick is a simplified deterministic first-eligible (the lifecycle test uses 0-draw scenarios so the pick isn't exercised). Flagged.
+- **Cross-flight display recompute uses the drawn player's OWN tee** (matching what `buildEnginePerTeam` feeds the engine), which for a mixed-tee same-flight draw could differ from the legacy own-team-engine value — but the fix only runs on CROSS-flight draws (drawn player's team absent from this flight's engine cache), so every existing single-flight golden is byte-identical (verified).
+- **`finalizeRoundAdmin` (EditModeBanner re-finalize) unchanged** — still a direct `is_complete` flip preserving existing draws, for multi-flight reopened rounds too (approved Q5).
+- **Migration 024 is invoker-rights with the resolution CTE repeated ~4×** rather than a temp table (avoids any TEMP-privilege question for anon) or SECURITY DEFINER (keeps it consistent with the frozen finalize siblings). Verbose but privilege-free.
+- **Out of scope (untouched):** higher-of-two payout rule (Flights.5), payout engine/persist internals (only the finalize trigger feeds it), old RPC bodies, admin flight CRUD, read-surface sectioning, batch readers, homepage team-formation targeting (Flights.6). Pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `flights-round-setup-mockup.html`) left unstaged; `.claude/settings.local.json` left dirty per instruction.
 
 ---
 

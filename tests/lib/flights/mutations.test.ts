@@ -19,7 +19,6 @@ import {
   flightLetter,
 } from "@/lib/flights/mutations";
 import { getTeamFlightMap } from "@/lib/flights/resolve";
-import { roundHasMultipleNonEmptyFlights } from "@/lib/flights/finalizeGuard";
 
 // Round 1 with TWO flights (A sort 1, B sort 2). Three teams; team 3 is
 // explicitly moved to flight B. Teams 1 & 2 have no flight_teams row → default
@@ -138,42 +137,7 @@ describe("deleteFlight — validations", () => {
   });
 });
 
-describe("roundHasMultipleNonEmptyFlights — SESSION-4 guard", () => {
-  it("true when 2+ flights each hold a (resolved) team", async () => {
-    // Seed fixture: flight A holds teams 1,2; flight B holds team 3 → blocked.
-    expect(await roundHasMultipleNonEmptyFlights(1)).toBe(true);
-  });
-
-  it("false for a single-flight round", async () => {
-    fakeRef.current = new FakeSupabase({
-      rounds: [{ id: 5, played_on: "2026-05-26", is_complete: false }],
-      tees: [], holes: [], players: [], scores: [],
-      round_players: [
-        { id: 1, round_id: 5, player_id: 1, team_number: 1 },
-        { id: 2, round_id: 5, player_id: 2, team_number: 2 },
-      ],
-      flights: [{ id: 50, round_id: 5, name: "Flight A", sort_order: 1, format: "2_ball", format_config: {}, format_locked_at: null }],
-      flight_teams: [],
-    });
-    expect(await roundHasMultipleNonEmptyFlights(5)).toBe(false);
-  });
-
-  it("false when a second flight exists but is EMPTY", async () => {
-    // Add an empty flight C to the base fixture's round — wait, base has B
-    // non-empty. Build a fresh round: flight A holds both teams, flight B empty.
-    fakeRef.current = new FakeSupabase({
-      rounds: [{ id: 7, played_on: "2026-05-26", is_complete: false }],
-      tees: [], holes: [], players: [], scores: [],
-      round_players: [
-        { id: 1, round_id: 7, player_id: 1, team_number: 1 },
-        { id: 2, round_id: 7, player_id: 2, team_number: 2 },
-      ],
-      flights: [
-        { id: 70, round_id: 7, name: "Flight A", sort_order: 1, format: "2_ball", format_config: {}, format_locked_at: null },
-        { id: 71, round_id: 7, name: "Flight B", sort_order: 2, format: null, format_config: {}, format_locked_at: null },
-      ],
-      flight_teams: [],
-    });
-    expect(await roundHasMultipleNonEmptyFlights(7)).toBe(false);
-  });
-});
+// NOTE: the Session-2 `roundHasMultipleNonEmptyFlights` finalize GUARD (and its
+// tests) were removed in Session 4 when flight-aware finalize shipped
+// (finalize_round_flights). Multi-flight detection now lives inline in the
+// finalize surfaces as a ROUTING predicate, not a block.

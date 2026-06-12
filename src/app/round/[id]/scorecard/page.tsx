@@ -19,8 +19,6 @@ import { getScoringBasis, getOverrideHoles, getHandicapAllowance, getPlayingCour
 import { getPrimaryFlightForRound, getFlightForTeam, getFlightsForRound, getTeamFlightMap, type Flight } from "@/lib/flights/resolve";
 import { formatTeamTotal, FORMAT_LABELS } from "@/lib/format/copy";
 import { scorecardHref } from "@/lib/round/scorecardHref";
-// SESSION-4-REMOVE
-import { MULTI_FLIGHT_FINALIZE_NOTICE } from "@/lib/flights/finalizeGuard";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getWriteQueue } from "@/lib/writeQueue";
 import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
@@ -252,9 +250,10 @@ export default function ScorecardPage() {
   // show per-team links instead. `teamFlightMap` powers those links + chips.
   const [mixedFormatRound, setMixedFormatRound] = useState(false);
   const [teamFlightMap, setTeamFlightMap] = useState<Map<number, Flight>>(new Map());
-  // SESSION-4-REMOVE: blocks Submit on rounds with 2+ non-empty flights (the
-  // round-wide finalize RPCs can't score multiple flights yet — Session 4).
-  const [multiFlightFinalizeBlocked, setMultiFlightFinalizeBlocked] = useState(false);
+  // Flights S4: true when the round has 2+ non-empty flights → finalize routes
+  // to the flight-aware RPC (finalize_round_flights) instead of the per-format
+  // RPC. Single-flight rounds keep the old per-format path (byte-identical).
+  const [isMultiFlightRound, setIsMultiFlightRound] = useState(false);
   const [roundPlayers, setRoundPlayers] = useState<RoundPlayer[]>([]);
   // Full active roster — the disambiguation universe for player short names.
   // Loaded once on mount so the per-player rows match every other surface.
@@ -415,8 +414,8 @@ export default function ScorecardPage() {
           );
       }
       setMixedFormatRound(mixed);
-      // SESSION-4-REMOVE: 2+ non-empty flights → finalize is blocked this session.
-      setMultiFlightFinalizeBlocked(
+      // Flights S4: 2+ non-empty flights → route finalize to finalize_round_flights.
+      setIsMultiFlightRound(
         new Set([...tFlightMap.values()].map(f => f.id)).size >= 2,
       );
       const roundIsComplete = !!roundRow?.is_complete;
@@ -1085,7 +1084,6 @@ export default function ScorecardPage() {
   // changes.
   const submitTeam = async (teamNum: number) => {
     if (submitting) return;
-    if (multiFlightFinalizeBlocked) return; // SESSION-4-REMOVE
     setSubmitting(true);
     try {
       try { await getWriteQueue().drain(); } catch { /* offline; continue */ }
@@ -1144,9 +1142,18 @@ export default function ScorecardPage() {
       // including the client-side payout persistence — is SHARED across both
       // paths; only the blind-draw refreshes are skipped for the relaxed path
       // (no fills are ever written there).
+      // Flights S4: a multi-flight round (2+ non-empty flights) finalizes via
+      // the flight-aware RPC, which runs each flight's own floor + per-flight
+      // blind draws in one shot. Single-flight rounds keep the per-format path:
+      // relaxed-close formats (Shambles) → the gaps-tolerant RPC, everything
+      // else → the blind-draw RPC. Either path may write blind_draws, so refresh
+      // fills on success unless we KNOW none were written (single-flight relaxed).
       const relaxed = allowsIncompleteClose(roundFormat);
+      const drawsPossible = isMultiFlightRound || !relaxed;
       const { data, error } = await supabase.rpc(
-        relaxed ? "finalize_round_relaxed" : "finalize_round_with_blind_draws",
+        isMultiFlightRound
+          ? "finalize_round_flights"
+          : relaxed ? "finalize_round_relaxed" : "finalize_round_with_blind_draws",
         { p_round_id: Number(roundId) },
       );
       if (error) {
@@ -1158,7 +1165,7 @@ export default function ScorecardPage() {
         setIsRoundComplete(true);
         setFinalizedToastVisible(true);
         setTimeout(() => setFinalizedToastVisible(false), 4000);
-        if (!relaxed) {
+        if (drawsPossible) {
           void refreshBlindDrawFills();
           void refreshBlindDrawInputs();
         }
@@ -1167,7 +1174,7 @@ export default function ScorecardPage() {
         void persistPayoutsAfterFinalize(Number(roundId));
       } else if (status === "already_complete") {
         setIsRoundComplete(true);
-        if (!relaxed) {
+        if (drawsPossible) {
           void refreshBlindDrawFills();
           void refreshBlindDrawInputs();
         }
@@ -2283,25 +2290,19 @@ export default function ScorecardPage() {
           <button
             type="button"
             onClick={() => setSubmitModal(true)}
-            disabled={!canSubmit || submitting || multiFlightFinalizeBlocked}
+            disabled={!canSubmit || submitting}
             style={{
               width: "100%", padding: "18px", borderRadius: "12px",
-              background: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "#15803d" : "#cbd5e1",
+              background: canSubmit && !submitting ? "#15803d" : "#cbd5e1",
               color: "white", border: "none", fontWeight: 900,
               fontSize: "1rem",
-              cursor: canSubmit && !submitting && !multiFlightFinalizeBlocked ? "pointer" : "not-allowed",
+              cursor: canSubmit && !submitting ? "pointer" : "not-allowed",
               fontFamily: "sans-serif",
             }}
           >
             {submitting ? "Submitting…" : "Submit Final Scores"}
           </button>
-          {/* SESSION-4-REMOVE: multi-flight finalize guard notice. */}
-          {multiFlightFinalizeBlocked && (
-            <p style={{ margin: "8px 0 0", textAlign: "center", fontSize: "0.72rem", color: "#b45309" }}>
-              {MULTI_FLIGHT_FINALIZE_NOTICE}
-            </p>
-          )}
-          {!canSubmit && !multiFlightFinalizeBlocked && (
+          {!canSubmit && (
             <p style={{
               margin: "8px 0 0", textAlign: "center",
               fontSize: "0.72rem", color: "#94a3b8",

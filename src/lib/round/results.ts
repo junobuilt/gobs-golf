@@ -11,9 +11,16 @@
 // additive field collapses to today's behavior.
 
 import { supabase } from "@/lib/supabase";
-import { getHandicapStrokes, computeAdjustedHoleScores } from "@/lib/scoring";
+import {
+  getHandicapStrokes,
+  computeAdjustedHoleScores,
+  getStablefordPoints,
+  mergePointTable,
+  STABLEFORD_STANDARD_POINTS,
+  GOBS_STABLEFORD_POINTS,
+} from "@/lib/scoring";
 import type { HoleInfo, Format, FormatConfig } from "@/lib/scoring";
-import { getPlayingCourseHandicap, isTeamCardFormat } from "@/lib/format/helpers";
+import { getPlayingCourseHandicap, isTeamCardFormat, getScoringBasis } from "@/lib/format/helpers";
 import { getFlightsForRound, getTeamFlightMap } from "@/lib/flights/resolve";
 import {
   holesCompleteForTeam,
@@ -599,9 +606,9 @@ export async function loadRoundResults(
           })();
 
           // D.1 hotfix follow-up: aggregate the drawn player's contribution
-          // to the short team over the fill range. Engine output lives on
-          // the drawn player's OWN team (where their handicap was applied
-          // during the engine call); we look up via fromTeamNumber.
+          // to the short team over the fill range. SAME-FLIGHT draws read the
+          // drawn player's OWN-team engine output (their team is in THIS flight's
+          // enginePerTeam, scored under this flight's format/allowance).
           let drawnPlayerNetValue = 0;
           const drawnCache = lookup ? enginePerTeam[lookup.teamNumber] : undefined;
           if (lookup && drawnCache) {
@@ -618,6 +625,41 @@ export async function loadRoundResults(
               } else if (pp.netScore != null) {
                 scoreSum += pp.netScore;
                 parSum += drawnCache.parByHole[h] ?? 0;
+              }
+            }
+            drawnPlayerNetValue = isStableford ? scoreSum : scoreSum - parSum;
+          } else if (lookup) {
+            // Flights S4 — CROSS-FLIGHT fill: the drawn player's team is in
+            // ANOTHER flight, so it is not in THIS (receiving) flight's
+            // enginePerTeam. Recompute the fill value self-contained under the
+            // RECEIVING flight's format + allowance, using the drawn player's own
+            // tee — the SAME inputs buildEnginePerTeam fed the engine for the
+            // team-total scoring (locked decision: fill scored under the
+            // receiving flight). The same-flight branch above is untouched, so no
+            // existing (single-flight) golden moves.
+            const drawnRp = rpsRows.find(r => r.id === lookup.rpId);
+            const drawnHoles = holesByTee[lookup.teeId] || [];
+            const useGross = getScoringBasis(cfg) === "gross";
+            const receivingPlayingCH = useGross
+              ? 0
+              : getPlayingCourseHandicap(drawnRp?.course_handicap ?? null, cfg);
+            const table = fmt === "gobs_stableford"
+              ? mergePointTable(GOBS_STABLEFORD_POINTS, (cfg as any).point_values)
+              : STABLEFORD_STANDARD_POINTS;
+            let scoreSum = 0;
+            let parSum = 0;
+            for (let h = holeRangeStart; h <= holeRangeEnd; h++) {
+              const gross = drawnPlayerScores[h - 1];
+              if (gross == null) continue;
+              const hole = drawnHoles.find(dh => dh.holeNumber === h);
+              const si = hole?.strokeIndex ?? null;
+              const par = hole?.par ?? 0;
+              const net = gross - (si == null ? 0 : getHandicapStrokes(receivingPlayingCH, si));
+              if (isStableford) {
+                scoreSum += getStablefordPoints(net, par, table);
+              } else {
+                scoreSum += net;
+                parSum += par;
               }
             }
             drawnPlayerNetValue = isStableford ? scoreSum : scoreSum - parSum;

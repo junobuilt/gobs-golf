@@ -7,4 +7,7 @@ export {
   computeRoundResult,
   computePlayerRoundTotal,
   getStablefordPoints,
+  mergePointTable,
+  STABLEFORD_STANDARD_POINTS,
+  GOBS_STABLEFORD_POINTS,
 } from "./engine";

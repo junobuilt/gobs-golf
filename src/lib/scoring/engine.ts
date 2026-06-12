@@ -177,7 +177,7 @@ export const GOBS_STABLEFORD_POINTS: StablefordPointTable = {
   albatross: 8,
 };
 
-function mergePointTable(
+export function mergePointTable(
   base: StablefordPointTable,
   overrides: Record<string, number> | undefined,
 ): StablefordPointTable {
