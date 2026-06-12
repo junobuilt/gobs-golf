@@ -31,12 +31,23 @@ export type HistoryTeamLine = {
   placeLabel: string; // "6th of 8" / "T2 of 8"
 };
 
+// Flights S3: one flight's ranked team lines, for the grouped History row.
+// Single-flight rounds carry exactly one section.
+export type HistoryFlightSection = {
+  flightId: number;
+  flightName: string;
+  format: Format;
+  teams: HistoryTeamLine[]; // ranked, ascending rank, within the flight
+};
+
 export type RoundListItem = {
   roundId: number;
   playedOn: string; // ISO date (rounds.played_on)
-  format: Format;
+  format: Format; // PRIMARY flight format (back-compat top-of-row chip)
   hasBlindDraws: boolean;
-  teams: HistoryTeamLine[]; // ranked, ascending rank
+  teams: HistoryTeamLine[]; // flat, section-ordered (FilteredRow looks up by player)
+  // Flights S3 (additive): per-flight grouping for the default (full) row.
+  sections: HistoryFlightSection[];
 };
 
 // Loads all finalized rounds, newest-first by played_on, each as a projection
@@ -58,19 +69,27 @@ export async function loadRoundsList(): Promise<RoundListItem[]> {
       if (outcome.status !== "ok") return null; // no format / missing → skip
       const { data } = outcome;
 
-      const teams: HistoryTeamLine[] = data.teams
-        .slice()
-        .sort((a, b) => a.rank - b.rank)
-        .map(t => ({
-          teamNumber: t.id,
-          name: t.name,
-          rosterDisplay: t.rosterDisplay,
-          playerIds: t.players.map(p => p.playerId),
-          rank: t.rank,
-          total: t.total,
-          totalLabel: t.totalLabel,
-          placeLabel: t.placeLabel,
-        }));
+      const toLine = (t: typeof data.teams[number]): HistoryTeamLine => ({
+        teamNumber: t.id,
+        name: t.name,
+        rosterDisplay: t.rosterDisplay,
+        playerIds: t.players.map(p => p.playerId),
+        rank: t.rank,
+        total: t.total,
+        totalLabel: t.totalLabel,
+        placeLabel: t.placeLabel,
+      });
+
+      // Per-flight sections, each ranked within the flight. Single-flight rounds
+      // yield one section; the flat `teams` (section-ordered) matches today's
+      // ranked list exactly.
+      const sections: HistoryFlightSection[] = data.flightSections.map(s => ({
+        flightId: s.flightId,
+        flightName: s.flightName,
+        format: s.format,
+        teams: s.teams.slice().sort((a, b) => a.rank - b.rank).map(toLine),
+      }));
+      const teams: HistoryTeamLine[] = sections.flatMap(s => s.teams);
 
       return {
         roundId: round.id,
@@ -78,6 +97,7 @@ export async function loadRoundsList(): Promise<RoundListItem[]> {
         format: data.format,
         hasBlindDraws: data.teams.some(t => t.blindDraws.length > 0),
         teams,
+        sections,
       };
     }),
   );

@@ -19,8 +19,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useIsAdmin, withAdminFlags } from "@/lib/admin";
 import { reopenRound } from "@/lib/round/reopenRound";
 import DangerModal from "@/app/admin/components/DangerModal";
-import { formatTeamTotal } from "@/lib/format/copy";
-import { isStablefordFormat, type RankedTeam } from "@/lib/leaderboard/rank";
+import { formatTeamTotal, FORMAT_LABELS } from "@/lib/format/copy";
+import { isStablefordFormat } from "@/lib/leaderboard/rank";
 import type { RankedFormattedTeam } from "@/lib/leaderboard/rankAndFormat";
 import { getScoringBasis, isTeamCardFormat, getPlayingCourseHandicap } from "@/lib/format/helpers";
 import { sumAdjusted } from "@/lib/scoring";
@@ -33,6 +33,9 @@ import type {
   PlayerRow,
   TeamRow,
   BlindDrawFill,
+  FlightSection,
+  IndividualRankingRow,
+  IndividualRankingsMode,
 } from "@/lib/round/results";
 import { pairBlindDraws, rangeCopy } from "@/lib/round/blindDrawPairing";
 
@@ -129,6 +132,30 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
     });
   }
 
+  // Flights S3: section the cards under flight headers only when the round has
+  // 2+ non-empty flights. Single-flight rounds render the flat list with NO
+  // flight chrome — byte-identical to pre-flights.
+  const multiFlight = data.flightSections.length >= 2;
+
+  const renderTeamCard = (
+    team: RankedFormattedTeam<TeamRow>,
+    format: Format,
+    formatConfig: FormatConfig,
+  ) => (
+    <TeamCard
+      key={team.id}
+      team={team}
+      format={format}
+      formatConfig={formatConfig}
+      isComplete={data.isComplete}
+      isFirst={team.rank === 1}
+      isTeamExpanded={expandedTeams.has(team.id)}
+      expandedPlayers={expandedPlayers}
+      onToggleTeam={toggleTeam}
+      onTogglePlayer={togglePlayer}
+    />
+  );
+
   return (
     <>
       <Header data={data} />
@@ -139,30 +166,54 @@ export default function RoundResultsView({ data }: { data: LoadedRoundResults })
           </div>
         ) : (
           <>
-            {data.teams.map(team => (
-              <TeamCard
-                key={team.id}
-                team={team}
-                format={data.format}
-                formatConfig={data.formatConfig}
-                isComplete={data.isComplete}
-                isFirst={team.rank === 1}
-                isTeamExpanded={expandedTeams.has(team.id)}
-                expandedPlayers={expandedPlayers}
-                onToggleTeam={toggleTeam}
-                onTogglePlayer={togglePlayer}
+            {multiFlight
+              ? data.flightSections.map(section => (
+                  <div key={section.flightId} style={{ marginBottom: 6 }}>
+                    <FlightSectionHeader section={section} />
+                    {section.teams.map(team =>
+                      renderTeamCard(team, section.format, section.formatConfig),
+                    )}
+                  </div>
+                ))
+              : data.teams.map(team =>
+                  renderTeamCard(team, data.format, data.formatConfig),
+                )}
+            {/* Round-wide Individual Rankings. Empty for team-card-only rounds
+                (no per-player scores); mixed-format rounds rank by net strokes.
+                Order + ranks are canonical (computed in results.ts). */}
+            {data.individualRankings.length > 0 && (
+              <IndividualRankings
+                rows={data.individualRankings}
+                mode={data.individualRankingsMode}
               />
-            ))}
-            {/* Wave 1B: team-card rounds have no per-player scores, so there is
-                no cross-team individual ranking to show. */}
-            {!isTeamCardFormat(data.format) && (
-              <IndividualRankings teams={data.teams} format={data.format} />
             )}
           </>
         )}
         <AdminEditRoundButton data={data} />
       </div>
     </>
+  );
+}
+
+// Flights S3: compact header above a flight's team cards (multi-flight only).
+// Flight name + a small read-only format chip (e.g. "3-Man · 2-Ball").
+function FlightSectionHeader({ section }: { section: FlightSection }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "4px 2px 8px",
+    }}>
+      <span style={{ fontSize: 15, fontWeight: 800, color: C.navy }}>
+        {section.flightName}
+      </span>
+      <span style={{
+        fontSize: 11, fontWeight: 700, color: "#33506e",
+        background: "#eef2f7", border: "1px solid #dde6ef",
+        padding: "2px 9px", borderRadius: 999, whiteSpace: "nowrap",
+      }}>
+        {FORMAT_LABELS[section.format].title}
+      </span>
+    </div>
   );
 }
 
@@ -728,56 +779,23 @@ function BlindDrawPseudoPlayerSection({
   );
 }
 
-// Cross-team flat list of every player, ranked by net (best-N: ascending,
-// lowest wins) or by points (Stableford: descending, highest wins). Tie
-// handling mirrors rankTeams in `src/lib/leaderboard/rank.ts`: tied entries
-// share the same rank, the next position is then skipped (1, 2, 2, 4).
+// Cross-team flat list of every player, ranked round-wide. Order + ranks are
+// canonical (computed in results.ts → data.individualRankings):
+//   stableford  → by points, highest wins ("N pts" display)
+//   best_n      → by net strokes, lowest wins (Gross/Net display)
+//   net_strokes → mixed-format rounds: every individual-format player by net
+//                 strokes (each under their own flight's allowance)
 // Read-only — no expand, no tap actions.
 function IndividualRankings({
-  teams,
-  format,
+  rows,
+  mode,
 }: {
-  teams: ReadonlyArray<RankedTeam<TeamRow>>;
-  format: Format;
+  rows: ReadonlyArray<IndividualRankingRow>;
+  mode: IndividualRankingsMode;
 }) {
-  const isStableford = isStablefordFormat(format);
-
-  // D.1 S7: only rank players who completed all 18 holes themselves.
-  // Blind-draw fills aren't in team.players at all (no round_players row),
-  // so they're automatically excluded. Dropouts are filtered here. Drawn
-  // players still appear once, on their OWN team, with their own scores.
-  const rows = teams.flatMap(team =>
-    team.players
-      .filter(p => p.holesPlayed > 0 && p.droppedAfterHole == null)
-      .map(p => ({
-        rpId: p.rpId,
-        displayName: p.displayName,
-        teamName: team.name,
-        grossTotal: p.grossTotal,
-        netTotal: p.netTotal,
-      })),
-  );
-
   if (rows.length === 0) return null;
-
-  const decorated = rows.map((row, idx) => ({ row, idx }));
-  decorated.sort((a, b) => {
-    const diff = isStableford
-      ? b.row.netTotal - a.row.netTotal
-      : a.row.netTotal - b.row.netTotal;
-    if (diff !== 0) return diff;
-    return a.idx - b.idx;
-  });
-
-  // Skip-tie rank assignment (matches rankTeams semantics).
-  let lastRank = 0;
-  const withRank = decorated.map(({ row }, i) => {
-    const prev = i > 0 ? decorated[i - 1].row : null;
-    const isTieWithPrev = prev !== null && prev.netTotal === row.netTotal;
-    const rank = isTieWithPrev ? lastRank : i + 1;
-    lastRank = rank;
-    return { ...row, rank };
-  });
+  const isStableford = mode === "stableford";
+  const withRank = rows;
 
   return (
     <div style={{
@@ -844,7 +862,7 @@ function IndividualRankings({
               fontSize: 16, fontWeight: 700, color: C.accentBlue,
               minWidth: 60,
             }}>
-              {row.netTotal} pts
+              {row.points} pts
             </div>
           ) : (
             <div style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
@@ -871,7 +889,7 @@ function IndividualRankings({
                 <div style={{
                   fontSize: 16, fontWeight: 700, color: C.textPrimary, lineHeight: 1.1,
                 }}>
-                  {row.netTotal}
+                  {row.netStrokes}
                 </div>
               </div>
             </div>

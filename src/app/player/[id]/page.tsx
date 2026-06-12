@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchPlayerStats, type PlayerStats } from "@/lib/playerStats";
 import { excludedFromIndividualStats, getPlayingCourseHandicap } from "@/lib/format/helpers";
-import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
+import { getTeamFlightsByRounds } from "@/lib/flights/resolve";
 import { getActiveSeason, type Season } from "@/lib/seasons";
 import {
   loadPlayedWith as loadPlayedWithBuckets,
@@ -89,6 +89,7 @@ export default function PlayerProfilePage() {
           .select(`
             id,
             round_id,
+            team_number,
             tee_id,
             course_handicap,
             tees ( color ),
@@ -120,11 +121,11 @@ export default function PlayerProfilePage() {
             holesByTee[teeId] = (h ?? []) as any[];
           }
 
-          // Format / allowance live on each round's primary flight (Session 1).
-          // Batch-resolve so the exclusion filter + playing-handicap read off
-          // the flight, not the frozen rounds.* columns. Session 3 must revisit
-          // this for true multi-flight rounds (per-flight aggregation).
-          const flightByRound = await getPrimaryFlightByRound(
+          // Flights S3: format / allowance live on each TEAM's flight. Resolve
+          // per (round, team) so the exclusion filter + playing-handicap read
+          // off THIS player's flight, not the round's primary — correct on
+          // multi-flight rounds, identical to the primary on single-flight.
+          const flightResolver = await getTeamFlightsByRounds(
             roundPlayers.map((rp: any) => rp.round_id as number).filter(Boolean),
           );
 
@@ -138,7 +139,9 @@ export default function PlayerProfilePage() {
               (rp: any) =>
                 rp.scores &&
                 rp.scores.length > 0 &&
-                !excludedFromIndividualStats(flightByRound.get(rp.round_id)?.format ?? null),
+                !excludedFromIndividualStats(
+                  flightResolver.get(rp.round_id, rp.team_number ?? 0)?.format ?? null,
+                ),
             )
             .map((rp: any) => {
               const total_strokes = rp.scores.reduce(
@@ -166,7 +169,7 @@ export default function PlayerProfilePage() {
                 tee_color: rp.tees?.color || "?",
                 total_strokes,
                 course_handicap: rp.course_handicap,
-                playing_handicap: getPlayingCourseHandicap(rp.course_handicap, flightByRound.get(rp.round_id)?.format_config ?? null),
+                playing_handicap: getPlayingCourseHandicap(rp.course_handicap, flightResolver.get(rp.round_id, rp.team_number ?? 0)?.format_config ?? null),
                 adj_total: sumAdjusted(adj),
               };
             });

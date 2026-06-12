@@ -16,6 +16,7 @@ import RenameFlightModal from "@/components/flights/RenameFlightModal";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
+import { deriveRoundMoney, resolveBuyIn, DEFAULT_BUY_IN } from "@/lib/payouts/winningsMoney";
 import { todayLocal } from "@/lib/date";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
@@ -95,6 +96,8 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [teamFlightMap, setTeamFlightMap] = useState<Map<number, number>>(new Map());
   const [pickerFlight, setPickerFlight] = useState<Flight | null>(null);
+  // Buy-in for the per-flight "Pot $N" preview chip (read from league_settings).
+  const [buyIn, setBuyIn] = useState<number>(DEFAULT_BUY_IN);
   const [moveTeamFor, setMoveTeamFor] = useState<number | null>(null);
   const [renameFor, setRenameFor] = useState<Flight | null>(null);
   const [deleteFlightModal, setDeleteFlightModal] = useState<Flight | null>(null);
@@ -225,6 +228,11 @@ export default function RoundSetup({ allPlayers }: Props) {
       setRoundFormat((flight?.format ?? null) as Format | null);
       setRoundFormatConfig((flight?.format_config ?? null) as FormatConfig | null);
       setRoundFormatLockedAt((flight?.format_locked_at ?? null) as string | null);
+
+      // Buy-in for the per-flight Pot chip (league-global, app's "10" fallback).
+      const { data: buyInRow } = await supabase
+        .from("league_settings").select("value").eq("key", "buy_in_amount").maybeSingle();
+      setBuyIn(resolveBuyIn(buyInRow?.value));
 
       // Phase D.2: count blind_draws for this round so the Edit Round
       // confirmation modal can warn the admin about preserved-but-stale
@@ -1276,6 +1284,26 @@ export default function RoundSetup({ allPlayers }: Props) {
               </select>
             </span>
           )}
+
+          {/* Pot preview — the abstract payout calculator's balance for THIS
+              flight's headcount (no pot arithmetic in the component). */}
+          {(() => {
+            const flightHeadcount = flightTeams.reduce((s, [, ps]) => s + ps.length, 0);
+            if (flightHeadcount === 0) return null;
+            const pot = deriveRoundMoney(flightHeadcount, buyIn).balance;
+            return (
+              <span
+                aria-label={`Pot for ${flight.name}`}
+                style={{
+                  display: "inline-flex", alignItems: "center",
+                  background: "#dcfce7", color: "#166534", borderRadius: "999px",
+                  padding: "3px 11px", fontSize: "0.75rem", fontWeight: 700,
+                }}
+              >
+                Pot ${pot}
+              </span>
+            );
+          })()}
         </div>
 
         {flightTeams.length === 0 ? (

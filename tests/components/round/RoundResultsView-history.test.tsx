@@ -31,6 +31,7 @@ function player(over: Partial<PlayerRow> & { rpId: number; displayName: string }
     grossTotal: 80,
     netValue: -2,
     netTotal: 70,
+    netStrokes: 70,
     holesPlayed: 18,
     scores: Array(18).fill(4),
     par: PAR_18,
@@ -47,19 +48,35 @@ function teamWith(players: PlayerRow[]): TeamRow {
     id: 1, name: "Team 1", rosterDisplay: players.map(p => p.displayName).join(" · "),
     total: -2, rawTeamScore: 70, teamPar: 72, thru: 18,
     f9Total: -1, b9Total: -1, players, blindDraws: [],
+    flightId: 1, flightName: "Flight A",
   };
 }
 
 function data(opts: { isComplete?: boolean; formatConfig?: FormatConfig; format?: Format; players: PlayerRow[] }): LoadedRoundResults {
   const format = opts.format ?? "2_ball";
+  const formatConfig = opts.formatConfig ?? { basis: "net" };
+  const teams = rankAndFormatTeams([teamWith(opts.players)], format);
+  const indiv = opts.players
+    .filter(p => p.holesPlayed > 0 && p.droppedAfterHole == null)
+    .map((p, i) => ({
+      rpId: p.rpId, playerId: p.playerId, displayName: p.displayName,
+      teamName: "Team 1", flightId: 1, grossTotal: p.grossTotal,
+      netStrokes: p.netStrokes, points: 0, rank: i + 1,
+    }));
   return {
     playedOn: "2026-05-21",
     isComplete: opts.isComplete ?? true,
     roundId: 77,
     format,
-    formatConfig: opts.formatConfig ?? { basis: "net" },
+    formatConfig,
     formatLocked: true,
-    teams: rankAndFormatTeams([teamWith(opts.players)], format),
+    teams,
+    flightSections: [{
+      flightId: 1, flightName: "Flight A", format, formatConfig,
+      formatLocked: true, teams,
+    }],
+    individualRankings: indiv,
+    individualRankingsMode: "best_n",
     maxThru: 18,
   };
 }

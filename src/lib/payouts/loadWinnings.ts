@@ -102,6 +102,10 @@ export type WinningsTeamPayout = {
   totalForTeam: number;
   isTied: boolean;
   roster: string; // display names joined with " · "
+  // Flights S3: flight this payout was computed under (snapshot, migration 023).
+  // NULL on historical/single-flight rows → the panel renders ungrouped.
+  flightId: number | null;
+  flightName: string | null;
   // S4b override surface: per-team override state (drives Edit/Revert + "was $X").
   wasOverridden: boolean;
   originalAmount: number | null; // engine value before override; null when not overridden
@@ -143,7 +147,7 @@ export async function loadWinningsHistory(
     .from("round_payouts")
     .select(
       "round_id, team_number, place, per_player, team_size, total_for_team, " +
-        "is_tied, was_overridden, original_amount, override_reason, " +
+        "is_tied, flight_id, flight_name, was_overridden, original_amount, override_reason, " +
         "rounds!inner ( played_on, format, season_id, is_complete )",
     )
     .eq("rounds.is_complete", true);
@@ -208,6 +212,8 @@ export async function loadWinningsHistory(
         totalForTeam: r.total_for_team as number,
         isTied: r.is_tied === true,
         roster: (rosterByRoundTeam[rid]?.[r.team_number as number] ?? []).join(" · "),
+        flightId: (r.flight_id ?? null) as number | null,
+        flightName: (r.flight_name ?? null) as string | null,
         wasOverridden: r.was_overridden === true,
         originalAmount: (r.original_amount ?? null) as number | null,
         overrideReason: (r.override_reason ?? null) as string | null,

@@ -30,7 +30,11 @@ function line(rank: number, teamNumber: number, playerIds: number[], total: numb
 }
 
 function round(roundId: number, playedOn: string, teams: HistoryTeamLine[], hasBlindDraws = false): RoundListItem {
-  return { roundId, playedOn, format: "2_ball", hasBlindDraws, teams };
+  return {
+    roundId, playedOn, format: "2_ball", hasBlindDraws, teams,
+    // Single-flight: one section holding every team (mirrors the loader).
+    sections: [{ flightId: 1, flightName: "Flight A", format: "2_ball", teams }],
+  };
 }
 
 describe("HistoryRoundList — default mode", () => {

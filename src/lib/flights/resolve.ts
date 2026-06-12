@@ -186,6 +186,68 @@ export async function getPrimaryFlightByRound(
   return result;
 }
 
+// Batch (round_id, team_number) → Flight resolver across many rounds. The
+// per-PLAYER stats surfaces (player profile, season, playerStats, playedWith)
+// need each round_player's flight to gate stats inclusion / read the right
+// allowance — the PRIMARY flight is wrong once a round has 2+ flights. This
+// applies the SAME canonical default rule as getTeamFlightMap (explicit
+// flight_teams row wins; otherwise the round's first flight), batched.
+//
+// Returns a resolver with a synchronous `get(roundId, teamNumber)`. Deliberately
+// does NOT fetch round_players (the callers already have those, and a round-wide
+// `.in()` over round_players could exceed Supabase's 1000-row cap): it resolves
+// any team on demand from flights + flight_teams alone. Both of those are small
+// (≈1–2 flights per round; flight_teams rows exist only for explicitly-moved
+// teams), so the two `.in()` queries here stay well under the cap.
+export type TeamFlightResolver = {
+  get(roundId: number, teamNumber: number): Flight | null;
+};
+
+export async function getTeamFlightsByRounds(
+  roundIds: number[],
+): Promise<TeamFlightResolver> {
+  const unique = [...new Set(roundIds)];
+  if (unique.length === 0) return { get: () => null };
+
+  const { data: flightRows } = await supabase
+    .from("flights")
+    .select(FLIGHT_COLUMNS)
+    .in("round_id", unique)
+    .order("sort_order", { ascending: true });
+
+  // round_id → flights (sort_order ascending; [0] is the default-rule primary).
+  const flightsByRound = new Map<number, Flight[]>();
+  const flightById = new Map<number, Flight>();
+  for (const row of (flightRows ?? []) as Record<string, unknown>[]) {
+    const f = rowToFlight(row);
+    if (!flightsByRound.has(f.round_id)) flightsByRound.set(f.round_id, []);
+    flightsByRound.get(f.round_id)!.push(f);
+    flightById.set(f.id, f);
+  }
+
+  const { data: ftRows } = await supabase
+    .from("flight_teams")
+    .select("round_id, team_number, flight_id")
+    .in("round_id", unique);
+  const explicit = new Map<string, number>();
+  for (const r of (ftRows ?? []) as { round_id: number; team_number: number; flight_id: number }[]) {
+    explicit.set(`${r.round_id}:${r.team_number}`, r.flight_id);
+  }
+
+  return {
+    get(roundId: number, teamNumber: number): Flight | null {
+      const flights = flightsByRound.get(roundId);
+      if (!flights || flights.length === 0) return null;
+      const fid = explicit.get(`${roundId}:${teamNumber}`);
+      if (fid != null) {
+        const f = flightById.get(fid);
+        if (f && f.round_id === roundId) return f;
+      }
+      return flights[0]; // default rule: lowest sort_order
+    },
+  };
+}
+
 // Idempotently ensure a round has its primary flight ("Flight A", sort_order 1,
 // format null). Called at round creation (ensureRoundShell) so the invariant
 // "every round has exactly one flight" — with NO format qualifier — holds for

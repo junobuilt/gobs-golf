@@ -15,7 +15,7 @@
 // view (full_name-keyed, unverified freshness post-H.5; dropped in E6).
 
 import { supabase } from "@/lib/supabase";
-import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
+import { getTeamFlightsByRounds } from "@/lib/flights/resolve";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 export type Partner = {
@@ -179,10 +179,10 @@ export async function fetchPairRounds(
   if (error) throw error;
   const rows = (data ?? []) as any[];
 
-  // Format moved to the round's primary flight (Session 1); resolve it for the
-  // shared rounds so the Pair Lookup row label reads off the flight, not
-  // rounds.format. Session 3 must revisit for true multi-flight rounds.
-  const flightByRound = await getPrimaryFlightByRound(
+  // Flights S3: a pairing plays under ITS TEAM's flight. Resolve per (round,
+  // team) so the Pair Lookup row label reads the partnership's own flight format
+  // — correct on multi-flight rounds, identical to the primary on single-flight.
+  const flightResolver = await getTeamFlightsByRounds(
     rows.map((r) => r.round_id as number),
   );
 
@@ -202,7 +202,7 @@ export async function fetchPairRounds(
         round_id: r.round_id,
         team_number: r.team_number,
         played_on: rnd.played_on,
-        format: flightByRound.get(r.round_id)?.format ?? null,
+        format: flightResolver.get(r.round_id, r.team_number)?.format ?? null,
         ids: new Set<number>(),
       };
       byRoundTeam.set(key, entry);

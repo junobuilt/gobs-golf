@@ -7,7 +7,7 @@ import type { Format, FormatConfig } from "@/lib/scoring/types";
 import { GOBS_STABLEFORD_POINTS } from "@/lib/scoring/engine";
 import { FORMAT_ORDER, FORMAT_LABELS } from "@/lib/format/copy";
 import { defaultConfigFor, getScoringBasis, getOverrideHoles, getTeamBallCount } from "@/lib/format/helpers";
-import { getPrimaryFlightForRound } from "@/lib/flights/resolve";
+import { getPrimaryFlightForRound, getTeamFlightMap } from "@/lib/flights/resolve";
 import DangerModal from "@/app/admin/components/DangerModal";
 
 // GOBS Stableford editable point-value rows. Order is best-result-first so
@@ -134,6 +134,11 @@ export default function FormatPicker({
 
   // Phase 1C: load this round's team sizes so the Alternate Shot guard can block
   // selection unless every assigned team is exactly 2.
+  //
+  // Flights S3: when the picker is scoped to a specific flight (flightId set,
+  // i.e. a per-flight card), count ONLY the teams resolved to THAT flight — a
+  // 3-man team in flight B must not block Alt-Shot on flight A. With no flightId
+  // (the single-flight default button) every team counts, as before.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -143,15 +148,23 @@ export default function FormatPicker({
         .select("team_number")
         .eq("round_id", roundId)
         .gt("team_number", 0);
+
+      let inScope: (teamNumber: number) => boolean = () => true;
+      if (flightId != null) {
+        const teamFlightMap = await getTeamFlightMap(roundId);
+        inScope = (tn) => teamFlightMap.get(tn)?.id === flightId;
+      }
       if (cancelled) return;
+
       const sizes: Record<number, number> = {};
       for (const r of (data ?? []) as Array<{ team_number: number }>) {
+        if (!inScope(r.team_number)) continue;
         sizes[r.team_number] = (sizes[r.team_number] ?? 0) + 1;
       }
       setTeamSizes(sizes);
     })();
     return () => { cancelled = true; };
-  }, [open, roundId]);
+  }, [open, roundId, flightId]);
 
   const baseline = useMemo(() => {
     const baselinePoints = readGobsPointValues(currentConfig);

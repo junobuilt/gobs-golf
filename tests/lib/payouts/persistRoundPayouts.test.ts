@@ -40,7 +40,34 @@ function team(id: number, total: number, n: number) {
 function okResult(teams: ReturnType<typeof team>[], format: string) {
   loadMock.mockResolvedValue({
     status: "ok",
-    data: { teams, format, formatConfig: {}, isComplete: true, roundId: 1, maxThru: 18, formatLocked: true, playedOn: "2026-06-07" },
+    data: {
+      teams, format, formatConfig: {}, isComplete: true, roundId: 1, maxThru: 18,
+      formatLocked: true, playedOn: "2026-06-07",
+      // Single-flight: one section holds every team (the engine runs once → the
+      // payout payload is byte-identical to the pre-flights single run, plus the
+      // additive flight_id/flight_name stamp).
+      flightSections: [{
+        flightId: 1, flightName: "Flight A", format, formatConfig: {},
+        formatLocked: true, teams,
+      }],
+      individualRankings: [], individualRankingsMode: "best_n",
+    },
+  });
+}
+// Multi-flight: caller supplies explicit sections (each its own format/teams).
+function okSections(sections: Array<{ flightId: number; flightName: string; format: string; teams: ReturnType<typeof team>[] }>) {
+  const teams = sections.flatMap(s => s.teams);
+  loadMock.mockResolvedValue({
+    status: "ok",
+    data: {
+      teams, format: sections[0]?.format, formatConfig: {}, isComplete: true,
+      roundId: 1, maxThru: 18, formatLocked: true, playedOn: "2026-06-07",
+      flightSections: sections.map(s => ({
+        flightId: s.flightId, flightName: s.flightName, format: s.format,
+        formatConfig: {}, formatLocked: true, teams: s.teams,
+      })),
+      individualRankings: [], individualRankingsMode: "best_n",
+    },
   });
 }
 function lastPayload() {
@@ -74,7 +101,7 @@ describe("computeAndPersistRoundPayouts", () => {
     const p = lastPayload();
     expect(p.p_round_id).toBe(101);
     expect(p.p_payload.payouts).toHaveLength(3); // team 4 (4th of 4, only 3 paid) excluded
-    expect(payoutByTeam(p, 1)).toEqual({ team_number: 1, place: 1, per_player: 15, team_size: 2, total_for_team: 30, is_tied: false, below_floor: false });
+    expect(payoutByTeam(p, 1)).toEqual({ team_number: 1, place: 1, per_player: 15, team_size: 2, total_for_team: 30, is_tied: false, below_floor: false, flight_id: 1, flight_name: "Flight A" });
     expect(payoutByTeam(p, 2)).toMatchObject({ place: 2, per_player: 8, total_for_team: 16 });
     expect(payoutByTeam(p, 3)).toMatchObject({ place: 3, per_player: 5, total_for_team: 10 });
     // sweep is 0 here → no sweep fund row
@@ -209,6 +236,47 @@ describe("computeAndPersistRoundPayouts", () => {
     const out = await computeAndPersistRoundPayouts(1);
     expect(out).toEqual({ status: "skipped", reason: "missing_round" });
     expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("multi-flight: each flight scored independently (winner == standalone)", async () => {
+    // Two best-N flights, each identical to the standalone 4-team round above.
+    // Per-flight isolation means flight A's winner per_player must equal the
+    // single-flight result (pot from its OWN 8 players = $56), NOT a round-wide
+    // 16-player pot. Two engine runs → 3 paid each → 6 payout rows.
+    okSections([
+      { flightId: 1, flightName: "Flight A", format: "2_ball", teams: [team(1, -10, 2), team(2, -5, 2), team(3, -1, 2), team(4, 2, 2)] },
+      { flightId: 2, flightName: "Flight B", format: "2_ball", teams: [team(5, -10, 2), team(6, -5, 2), team(7, -1, 2), team(8, 2, 2)] },
+    ]);
+
+    const out = await computeAndPersistRoundPayouts(1);
+    expect(out).toMatchObject({ status: "persisted", placesPaid: 6, headcount: 16, balance: 112 });
+
+    const p = lastPayload();
+    expect(p.p_payload.payouts).toHaveLength(6);
+    expect(payoutByTeam(p, 1)).toMatchObject({ place: 1, per_player: 15, flight_id: 1, flight_name: "Flight A" });
+    expect(payoutByTeam(p, 5)).toMatchObject({ place: 1, per_player: 15, flight_id: 2, flight_name: "Flight B" });
+    // Per-player contributions sum across both flights' headcounts.
+    expect(p.p_payload.funds).toContainEqual({ fund: "hio", amount: 16, reason: "buyin_hio" });
+    expect(p.p_payload.funds).toContainEqual({ fund: "bfb", amount: 32, reason: "buyin_bfb" });
+  });
+
+  it("multi-flight: both flights' sweeps combine into one BFB sweep", async () => {
+    // Two 1-team flights → each pays 0 places and sweeps its whole pot ($28).
+    okSections([
+      { flightId: 1, flightName: "Flight A", format: "2_ball", teams: [team(1, -5, 4)] },
+      { flightId: 2, flightName: "Flight B", format: "2_ball", teams: [team(2, 0, 4)] },
+    ]);
+
+    const out = await computeAndPersistRoundPayouts(1);
+    expect(out).toMatchObject({ status: "persisted", placesPaid: 0, headcount: 8, balance: 56 });
+
+    const p = lastPayload();
+    expect(p.p_payload.payouts).toHaveLength(0);
+    expect(p.p_payload.funds).toEqual([
+      { fund: "hio", amount: 8, reason: "buyin_hio" },
+      { fund: "bfb", amount: 16, reason: "buyin_bfb" },
+      { fund: "bfb", amount: 56, reason: "sweep" }, // 28 (A) + 28 (B)
+    ]);
   });
 
   it("throws when the persist rpc errors (surfaced for recovery)", async () => {

@@ -26,6 +26,7 @@ function player(
     grossTotal: 0,
     netValue: 0,
     netTotal: 0,
+    netStrokes: 0,
     holesPlayed: droppedAfterHole ?? 18,
     scores: Array.from({ length: 18 }, () => null),
     par: Array.from({ length: 18 }, () => 4),
@@ -66,6 +67,8 @@ function team(players: PlayerRow[], fills: BlindDrawFill[]): TeamRow {
     b9Total: null,
     players,
     blindDraws: fills,
+    flightId: 1,
+    flightName: "Flight A",
   };
 }
 

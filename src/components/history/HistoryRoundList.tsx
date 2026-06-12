@@ -13,7 +13,7 @@
 // from loadRoundsList → rankAndFormatTeams, so they are IDENTICAL to the detail.
 
 import Link from "next/link";
-import type { RoundListItem } from "@/lib/round/loadRoundsList";
+import type { RoundListItem, HistoryTeamLine } from "@/lib/round/loadRoundsList";
 import { FORMAT_LABELS } from "@/lib/format/copy";
 import { isStablefordFormat } from "@/lib/leaderboard/rank";
 import type { Format } from "@/lib/scoring";
@@ -59,10 +59,59 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
+// One ranked team line.
+function TeamLineRow({ t, format }: { t: HistoryTeamLine; format: Format }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 9, padding: "5px 0",
+    }}>
+      <span style={{
+        width: 18, textAlign: "center", fontSize: 12, fontWeight: 800,
+        color: t.rank === 1 ? C.gold : C.faint,
+      }}>
+        {t.rank}
+      </span>
+      <span style={{
+        flex: 1, minWidth: 0, fontSize: 13.5, color: C.ink,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }}>
+        {t.rosterDisplay}
+      </span>
+      <span style={{ fontSize: 13.5, fontWeight: 800, color: scoreColor(t.total, format) }}>
+        {t.totalLabel}
+      </span>
+    </div>
+  );
+}
+
+// Small flight label (multi-flight only): "Flight A · 2-Ball".
+function SectionLabel({ name, format }: { name: string; format: Format }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase",
+      letterSpacing: "0.04em", marginTop: 8, marginBottom: 1,
+    }}>
+      {name} · {FORMAT_LABELS[format].title}
+    </div>
+  );
+}
+
+function OverflowLine({ overflow }: { overflow: number }) {
+  if (overflow <= 0) return null;
+  return (
+    // Handoff override of the mockup: navy + BOLD (not faint grey) for the
+    // 60–80 demographic's eyes.
+    <div style={{
+      fontSize: 12.5, fontWeight: 700, color: C.navy, marginTop: 8, textAlign: "right",
+    }}>
+      {`+${overflow} more ${overflow === 1 ? "team" : "teams"} · tap for full result`}
+    </div>
+  );
+}
+
 // One mini-leaderboard row (default mode).
 function FullRow({ round }: { round: RoundListItem }) {
-  const visible = round.teams.slice(0, MAX_LINES);
-  const overflow = round.teams.length - visible.length;
+  const multiFlight = round.sections.length >= 2;
 
   return (
     <Link
@@ -77,44 +126,66 @@ function FullRow({ round }: { round: RoundListItem }) {
         <span style={{ fontSize: 16, fontWeight: 800, color: C.navy }}>
           {formatRowDate(round.playedOn)}
         </span>
-        <Chip>{FORMAT_LABELS[round.format].title}</Chip>
+        {/* Multi-flight: per-section labels carry each format, so the top chip
+            is omitted to avoid implying one round-wide format. */}
+        {!multiFlight && <Chip>{FORMAT_LABELS[round.format].title}</Chip>}
         {round.hasBlindDraws && <Chip>🎲</Chip>}
       </div>
 
       <div style={{ marginTop: 9, borderTop: "1px solid #eef2f6", paddingTop: 6 }}>
-        {visible.map(t => (
-          <div key={t.teamNumber} style={{
-            display: "flex", alignItems: "center", gap: 9, padding: "5px 0",
-          }}>
-            <span style={{
-              width: 18, textAlign: "center", fontSize: 12, fontWeight: 800,
-              color: t.rank === 1 ? C.gold : C.faint,
-            }}>
-              {t.rank}
-            </span>
-            <span style={{
-              flex: 1, minWidth: 0, fontSize: 13.5, color: C.ink,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>
-              {t.rosterDisplay}
-            </span>
-            <span style={{ fontSize: 13.5, fontWeight: 800, color: scoreColor(t.total, round.format) }}>
-              {t.totalLabel}
-            </span>
-          </div>
-        ))}
+        {multiFlight ? <MultiFlightBody round={round} /> : <SingleFlightBody round={round} />}
       </div>
-
-      {overflow > 0 && (
-        // Handoff override of the mockup: navy + BOLD (not faint grey) for the
-        // 60–80 demographic's eyes.
-        <div style={{
-          fontSize: 12.5, fontWeight: 700, color: C.navy, marginTop: 8, textAlign: "right",
-        }}>
-          {`+${overflow} more ${overflow === 1 ? "team" : "teams"} · tap for full result`}
-        </div>
-      )}
     </Link>
+  );
+}
+
+// Single-flight body: byte-identical to the pre-flights row (flat top-5 + "+N").
+function SingleFlightBody({ round }: { round: RoundListItem }) {
+  const visible = round.teams.slice(0, MAX_LINES);
+  const overflow = round.teams.length - visible.length;
+  return (
+    <>
+      {visible.map(t => (
+        <TeamLineRow key={t.teamNumber} t={t} format={round.format} />
+      ))}
+      <OverflowLine overflow={overflow} />
+    </>
+  );
+}
+
+// Multi-flight body: per-round 5-line budget across section headers. A section
+// gets header + lines only while budget remains; a section that would get 0
+// lines is dropped entirely (no orphaned header) and folded into "+N more".
+function MultiFlightBody({ round }: { round: RoundListItem }) {
+  let remaining = MAX_LINES;
+  let shown = 0;
+  const blocks: { flightId: number; name: string; format: Format; teams: HistoryTeamLine[] }[] = [];
+  for (const section of round.sections) {
+    if (remaining <= 0) break;
+    const take = Math.min(section.teams.length, remaining);
+    if (take === 0) continue;
+    blocks.push({
+      flightId: section.flightId,
+      name: section.flightName,
+      format: section.format,
+      teams: section.teams.slice(0, take),
+    });
+    remaining -= take;
+    shown += take;
+  }
+  const overflow = round.teams.length - shown;
+  return (
+    <>
+      {blocks.map(b => (
+        <div key={b.flightId}>
+          <SectionLabel name={b.name} format={b.format} />
+          {b.teams.map(t => (
+            <TeamLineRow key={t.teamNumber} t={t} format={b.format} />
+          ))}
+        </div>
+      ))}
+      <OverflowLine overflow={overflow} />
+    </>
   );
 }
 
@@ -123,9 +194,15 @@ function FilteredRow({ round, playerId }: { round: RoundListItem; playerId: numb
   const team = round.teams.find(t => t.playerIds.includes(playerId));
   if (!team) return null;
 
+  // The player's team plays under its OWN flight's format (single-flight → the
+  // round's one format). Resolve it so the chip + score color match the team.
+  const teamFormat =
+    round.sections.find(s => s.teams.some(t => t.teamNumber === team.teamNumber))?.format
+    ?? round.format;
+
   // Bold the filtered player within the roster (names are in playerIds order).
   const names = team.rosterDisplay.split(" · ");
-  const isStableford = isStablefordFormat(round.format);
+  const isStableford = isStablefordFormat(teamFormat);
   const placeSuffix = team.rank === 1
     ? `🥇 ${team.placeLabel} teams · won the round`
     : `${team.placeLabel} teams`;
@@ -152,14 +229,14 @@ function FilteredRow({ round, playerId }: { round: RoundListItem; playerId: numb
                 : n}
             </span>
           ))}
-          {" · "}{FORMAT_LABELS[round.format].title}
+          {" · "}{FORMAT_LABELS[teamFormat].title}
         </div>
         <div style={{ fontSize: 11.5, color: C.faint, marginTop: 4 }}>
           {placeSuffix}
         </div>
       </div>
       <div style={{ textAlign: "right", flexShrink: 0 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor(team.total, round.format) }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor(team.total, teamFormat) }}>
           {team.totalLabel}
         </div>
         <div style={{ fontSize: 10, fontWeight: 700, color: C.faint, letterSpacing: "0.4px" }}>

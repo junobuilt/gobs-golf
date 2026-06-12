@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { computePlayerRoundTotal } from "@/lib/scoring";
 import { excludedFromIndividualStats } from "@/lib/format/helpers";
-import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
+import { getTeamFlightsByRounds } from "@/lib/flights/resolve";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
 
 interface PlayerStats {
@@ -70,34 +70,34 @@ export default function LeaderboardPage() {
       // Wave 1B follow-up: exclude rounds that don't feed per-player season
       // stats — team-card formats (no individual scores) AND Shambles (its
       // per-player scores exist but aren't authoritative: picked-up balls,
-      // relaxed close). The format filter is now the load-bearing exclusion for
+      // relaxed close). The format filter is the load-bearing exclusion for
       // Shambles since it DOES carry `scores` rows.
       //
-      // Format now lives on each round's primary flight (Session 1); batch-
-      // resolve and read it off the flight. Session 3 must revisit for true
-      // multi-flight rounds.
-      const flightByRound = await getPrimaryFlightByRound(
-        rounds.map((r: any) => r.id as number),
-      );
-      const roundIds = rounds
-        .filter((r: any) => !excludedFromIndividualStats(flightByRound.get(r.id)?.format ?? null))
-        .map(r => r.id);
+      // Flights S3: the exclusion is PER PLAYER, via their team's flight — on a
+      // multi-flight round one flight can be excluded while another counts. We
+      // therefore fetch every completed round's round_players, then drop the
+      // excluded ones before pulling scores (so the scores fetch stays bounded
+      // to counted players). Single-flight rounds → identical to the old
+      // round-level primary-flight filter. (Mind Supabase's 1000-row cap: this
+      // league's completed-round roster volume is well under it.)
+      const allRoundIds = rounds.map((r: any) => r.id as number);
+      const flightResolver = await getTeamFlightsByRounds(allRoundIds);
 
-      if (roundIds.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      // Get all round_players for completed rounds
-      const { data: rps } = await supabase
+      const { data: allRps } = await supabase
         .from("round_players")
         .select(`
-          id, player_id, tee_id, course_handicap, round_id,
+          id, player_id, team_number, tee_id, course_handicap, round_id,
           players ( full_name, display_name, handicap_index )
         `)
-        .in("round_id", roundIds);
+        .in("round_id", allRoundIds);
 
-      if (!rps || rps.length === 0) {
+      const rps = (allRps ?? []).filter((rp: any) =>
+        !excludedFromIndividualStats(
+          flightResolver.get(rp.round_id, rp.team_number ?? 0)?.format ?? null,
+        ),
+      );
+
+      if (rps.length === 0) {
         setLoading(false);
         return;
       }

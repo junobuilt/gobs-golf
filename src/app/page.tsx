@@ -12,7 +12,8 @@ import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { scorecardHref } from "@/lib/round/scorecardHref";
-import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
+import { getPrimaryFlightByRound, getTeamFlightMap } from "@/lib/flights/resolve";
+import { FORMAT_LABELS } from "@/lib/format/copy";
 import type { Format } from "@/lib/scoring/types";
 import type { Player } from "@/app/admin/page";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
@@ -31,6 +32,17 @@ type TeamInfo = {
   number: number;
   players: string[];
   hasScores: boolean;
+  // Flights S3: the team's OWN flight format (drives scorecardHref routing on
+  // multi-flight days). Falls back to the round's primary format.
+  format: Format | null;
+};
+
+// Flights S3: one flight's team cards on the homepage (multi-flight grouping).
+type HomeFlightGroup = {
+  flightId: number;
+  flightName: string;
+  format: Format | null;
+  teams: TeamInfo[];
 };
 
 type RecentRound = {
@@ -40,8 +52,44 @@ type RecentRound = {
   format: Format | null;
   isYesterday: boolean;
   teams: TeamInfo[];
+  // Flights S3 (additive): per-flight grouping for the today's-teams cards.
+  // Single-flight rounds carry one group; 2+ triggers section headers.
+  flightSections: HomeFlightGroup[];
   hasAnyScores: boolean;
 };
+
+// Flights S3: the 2-col grid of team cards. Shared by the flat (single-flight)
+// and grouped (multi-flight) renders so the card markup stays identical; each
+// card routes by its own team.format (falls back to the round's primary).
+function TeamGrid({ round, teams }: { round: RecentRound; teams: TeamInfo[] }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+      {teams.map((team) => {
+        const tc = getTeamColor(team.number);
+        return (
+          <Link
+            key={team.number}
+            href={scorecardHref(round.id, team.number, team.format ?? round.format)}
+            style={{
+              display: "flex", flexDirection: "column", padding: "10px 12px",
+              backgroundColor: tc.bg, borderRadius: "10px", textDecoration: "none",
+              border: `1px solid ${tc.border}`, borderLeft: `3px solid ${tc.border}`,
+            }}
+          >
+            <span style={{ fontSize: "0.62rem", fontWeight: 800, color: tc.pillText, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Team {team.number}
+            </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+              {team.players.map((name, i) => (
+                <span key={i} style={{ fontSize: "0.75rem", color: "#64748b" }}>{name}</span>
+              ))}
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -180,9 +228,45 @@ export default function HomePage() {
             if (rpIdsWithScores.has(rp.id)) teamMap[tNum].hasScores = true;
           });
 
+          const primaryFormat = (flightByRound.get(round.id)?.format ?? null) as Format | null;
+
+          // Flights S3: resolve each team to its flight so multi-flight days can
+          // group team cards and route each card by its OWN flight format.
+          const teamFlightMap = await getTeamFlightMap(round.id);
+
           const teamList: TeamInfo[] = Object.entries(teamMap)
-            .map(([num, info]) => ({ number: parseInt(num), players: info.players, hasScores: info.hasScores }))
+            .map(([num, info]) => {
+              const number = parseInt(num);
+              const flight = teamFlightMap.get(number);
+              return {
+                number,
+                players: info.players,
+                hasScores: info.hasScores,
+                format: (flight?.format ?? primaryFormat) as Format | null,
+              };
+            })
             .sort((a, b) => a.number - b.number);
+
+          // Group by flight, ordered by the flight's sort_order. Only flights
+          // holding ≥1 team get a group. Single flight → one group → no chrome.
+          const groupMap = new Map<number, HomeFlightGroup & { sortOrder: number }>();
+          for (const team of teamList) {
+            const flight = teamFlightMap.get(team.number);
+            if (!flight) continue;
+            if (!groupMap.has(flight.id)) {
+              groupMap.set(flight.id, {
+                flightId: flight.id,
+                flightName: flight.name,
+                format: flight.format,
+                sortOrder: flight.sort_order,
+                teams: [],
+              });
+            }
+            groupMap.get(flight.id)!.teams.push(team);
+          }
+          const flightSections: HomeFlightGroup[] = [...groupMap.values()]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map(({ sortOrder: _omit, ...g }) => g);
 
           const hasAnyScores = teamList.some(t => t.hasScores);
 
@@ -190,9 +274,10 @@ export default function HomePage() {
             ...round,
             // format now comes from the round's primary flight (Session 1),
             // not the dropped rounds.format column. Consumed by scorecardHref.
-            format: (flightByRound.get(round.id)?.format ?? null) as Format | null,
+            format: primaryFormat,
             isYesterday: round.played_on === yesterday,
             teams: teamList,
+            flightSections,
             hasAnyScores,
           };
         })
@@ -551,31 +636,23 @@ export default function HomePage() {
                   </span>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
-                  {round.teams.map((team) => {
-                    const tc = getTeamColor(team.number);
-                    return (
-                      <Link
-                        key={team.number}
-                        href={scorecardHref(round.id, team.number, round.format)}
-                        style={{
-                          display: "flex", flexDirection: "column", padding: "10px 12px",
-                          backgroundColor: tc.bg, borderRadius: "10px", textDecoration: "none",
-                          border: `1px solid ${tc.border}`, borderLeft: `3px solid ${tc.border}`,
-                        }}
-                      >
-                        <span style={{ fontSize: "0.62rem", fontWeight: 800, color: tc.pillText, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          Team {team.number}
-                        </span>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
-                          {team.players.map((name, i) => (
-                            <span key={i} style={{ fontSize: "0.75rem", color: "#64748b" }}>{name}</span>
-                          ))}
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
+                {round.flightSections.length >= 2 ? (
+                  // Multi-flight: group team cards under small flight labels.
+                  round.flightSections.map((section) => (
+                    <div key={section.flightId} style={{ marginBottom: "10px" }}>
+                      <div style={{
+                        fontSize: "0.68rem", fontWeight: 800, color: "#475569",
+                        textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "6px",
+                      }}>
+                        {section.flightName}
+                        {section.format && ` · ${FORMAT_LABELS[section.format].title}`}
+                      </div>
+                      <TeamGrid round={round} teams={section.teams} />
+                    </div>
+                  ))
+                ) : (
+                  <TeamGrid round={round} teams={round.teams} />
+                )}
 
                 {round.is_complete && (
                   <Link href={`/round/${round.id}/summary`} style={{

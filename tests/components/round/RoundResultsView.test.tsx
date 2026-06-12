@@ -15,10 +15,53 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 import RoundResultsView from "@/components/round/RoundResultsView";
-import type { LoadedRoundResults, TeamRow } from "@/lib/round/results";
+import type {
+  LoadedRoundResults,
+  TeamRow,
+  IndividualRankingRow,
+} from "@/lib/round/results";
 import type { RankedTeam } from "@/lib/leaderboard/rank";
-import { rankAndFormatTeams } from "@/lib/leaderboard/rankAndFormat";
-import type { Format } from "@/lib/scoring";
+import {
+  rankAndFormatTeams,
+  type RankedFormattedTeam,
+} from "@/lib/leaderboard/rankAndFormat";
+import type { Format, FormatConfig } from "@/lib/scoring";
+
+// Mirrors results.ts's best_n Individual Rankings derivation so single-flight
+// fixtures render the same canonical list the loader would emit.
+function deriveIndiv(teams: RankedTeam<TeamRow>[]): IndividualRankingRow[] {
+  const rows = teams.flatMap(t =>
+    t.players
+      .filter(p => p.holesPlayed > 0 && p.droppedAfterHole == null)
+      .map(p => ({
+        rpId: p.rpId, playerId: p.playerId, displayName: p.displayName,
+        teamName: t.name, flightId: t.flightId, grossTotal: p.grossTotal,
+        netStrokes: p.netStrokes, points: 0, rank: 0,
+      })),
+  );
+  const dec = rows.map((row, idx) => ({ row, idx }));
+  dec.sort((a, b) => (a.row.netStrokes - b.row.netStrokes) || (a.idx - b.idx));
+  const out: IndividualRankingRow[] = [];
+  for (let i = 0; i < dec.length; i++) {
+    const r = dec[i].row;
+    const prev = i > 0 ? dec[i - 1].row : null;
+    const tie = prev !== null && prev.netStrokes === r.netStrokes;
+    out.push({ ...r, rank: tie ? out[i - 1].rank : i + 1 });
+  }
+  return out;
+}
+
+// Single-flight section wrapper (Flight A) for the new flightSections contract.
+function singleSection(
+  teams: RankedFormattedTeam<TeamRow>[],
+  format: Format,
+  formatConfig: FormatConfig,
+  formatLocked: boolean,
+) {
+  return [{
+    flightId: 1, flightName: "Flight A", format, formatConfig, formatLocked, teams,
+  }];
+}
 
 const PAR_18 = [4, 4, 4, 3, 5, 4, 3, 5, 4, 4, 4, 3, 5, 4, 3, 5, 4, 4];
 const SCORES_18: (number | null)[] = Array(18).fill(4);
@@ -46,6 +89,7 @@ function makeTeam(
         grossTotal: 72,
         netValue: -2,
         netTotal: 70,
+        netStrokes: 70,
         holesPlayed: thru,
         scores: SCORES_18,
         par: PAR_18,
@@ -56,6 +100,8 @@ function makeTeam(
       },
     ],
     blindDraws: [],
+    flightId: 1,
+    flightName: "Flight A",
     rank,
   };
 }
@@ -75,6 +121,11 @@ function makeData(
     // All fixtures here are best-N (non-Stableford), so "2_ball" labels are
     // correct even for the rows whose format is overridden afterward.
     teams: rankAndFormatTeams(teams, "2_ball"),
+    flightSections: singleSection(
+      rankAndFormatTeams(teams, "2_ball"), "2_ball", { basis: "net" }, isComplete,
+    ),
+    individualRankings: deriveIndiv(rankAndFormatTeams(teams, "2_ball")),
+    individualRankingsMode: "best_n",
     maxThru: teams.reduce((m, t) => Math.max(m, t.thru), 0),
   };
 }
@@ -165,6 +216,8 @@ describe("RoundResultsView — NET team-card (Texas Scramble / Alternate Shot)",
       teamGrid: { scores: Array(18).fill(null).map((_, i) => (i < 10 ? 4 : 5)), par: PAR_18 },
       teamHandicap: 12,
       teamNet: 68,
+      flightId: 1,
+      flightName: "Flight A",
       rank: 1,
     };
   }

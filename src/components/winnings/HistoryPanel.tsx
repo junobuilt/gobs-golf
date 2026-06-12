@@ -40,6 +40,42 @@ function formatDate(d: string): string {
   });
 }
 
+// Flights S3: group a round's payout rows by flight, preserving first-seen
+// order. Returns a single label-less group unless the round spans 2+ distinct
+// (non-null) flights — single-flight + historical (NULL flight_id) rounds render
+// exactly as before.
+type PayoutGroup = { key: string; label: string | null; teams: WinningsTeamPayout[] };
+function groupPayoutsByFlight(teams: WinningsTeamPayout[]): PayoutGroup[] {
+  const distinct = new Set(
+    teams.filter((t) => t.flightId != null).map((t) => t.flightId as number),
+  );
+  if (distinct.size < 2) {
+    return [{ key: "all", label: null, teams }];
+  }
+  const groups: PayoutGroup[] = [];
+  const byId = new Map<number, PayoutGroup>();
+  for (const t of teams) {
+    const id = t.flightId as number;
+    let g = byId.get(id);
+    if (!g) {
+      g = { key: String(id), label: t.flightName ?? `Flight ${id}`, teams: [] };
+      byId.set(id, g);
+      groups.push(g);
+    }
+    g.teams.push(t);
+  }
+  return groups;
+}
+
+const flightSubheaderStyle: React.CSSProperties = {
+  fontSize: "10px",
+  fontWeight: 800,
+  color: "#475569",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  margin: "8px 0 4px",
+};
+
 export default function HistoryPanel({
   activeSeason,
   buyIn,
@@ -256,57 +292,66 @@ export default function HistoryPanel({
                     </div>
                   )}
                   <div style={subsectionHeaderStyle}>Team Payouts</div>
-                  {r.teams.map((t) => {
-                    const rankLabel = (t.isTied ? "T" : "") + t.place;
-                    const gold = t.place === 1;
-                    return (
-                      <div key={t.teamNumber} style={teamPayoutStyle}>
-                        <div>
-                          <div style={{ color: "#1a1a1a", fontWeight: 600 }}>
-                            <span style={rankBadgeStyle(gold)}>{rankLabel}</span>
-                            Team {t.teamNumber}
-                            {t.isTied && <span title="Tied" style={{ marginLeft: "6px" }}>🤝</span>}
-                          </div>
-                          <div style={{ color: C.textMuted, fontSize: "10px", marginTop: "2px" }}>
-                            {t.roster}
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ color: C.money, fontWeight: 700, fontSize: "13px", fontVariantNumeric: "tabular-nums" }}>
-                            ${t.totalForTeam}
-                          </div>
-                          <div style={{ fontSize: "10px", color: C.textMuted, fontWeight: 500 }}>
-                            ${t.perPlayer}/player × {t.teamSize}
-                          </div>
-                          {t.wasOverridden && t.originalAmount != null && (
-                            <div style={{ fontSize: "9px", color: C.textMuted }}>
-                              was ${t.originalAmount}/player
+                  {groupPayoutsByFlight(r.teams).map((group) => (
+                    <div key={group.key}>
+                      {/* Flights S3: flight subheader only when the round spans
+                          2+ flights; single-flight rounds render ungrouped. */}
+                      {group.label && (
+                        <div style={flightSubheaderStyle}>{group.label}</div>
+                      )}
+                      {group.teams.map((t) => {
+                        const rankLabel = (t.isTied ? "T" : "") + t.place;
+                        const gold = t.place === 1;
+                        return (
+                          <div key={t.teamNumber} style={teamPayoutStyle}>
+                            <div>
+                              <div style={{ color: "#1a1a1a", fontWeight: 600 }}>
+                                <span style={rankBadgeStyle(gold)}>{rankLabel}</span>
+                                Team {t.teamNumber}
+                                {t.isTied && <span title="Tied" style={{ marginLeft: "6px" }}>🤝</span>}
+                              </div>
+                              <div style={{ color: C.textMuted, fontSize: "10px", marginTop: "2px" }}>
+                                {t.roster}
+                              </div>
                             </div>
-                          )}
-                          <div style={{ marginTop: "5px", display: "flex", gap: "6px", justifyContent: "flex-end" }}>
-                            <button
-                              type="button"
-                              onClick={(e) => openOverride(e, r.roundId, t)}
-                              style={editBtnStyle}
-                              data-testid="payout-edit-btn"
-                            >
-                              Edit
-                            </button>
-                            {t.wasOverridden && (
-                              <button
-                                type="button"
-                                onClick={(e) => openRevert(e, r.roundId, t)}
-                                style={revertBtnStyle}
-                                data-testid="payout-revert-btn"
-                              >
-                                Revert
-                              </button>
-                            )}
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ color: C.money, fontWeight: 700, fontSize: "13px", fontVariantNumeric: "tabular-nums" }}>
+                                ${t.totalForTeam}
+                              </div>
+                              <div style={{ fontSize: "10px", color: C.textMuted, fontWeight: 500 }}>
+                                ${t.perPlayer}/player × {t.teamSize}
+                              </div>
+                              {t.wasOverridden && t.originalAmount != null && (
+                                <div style={{ fontSize: "9px", color: C.textMuted }}>
+                                  was ${t.originalAmount}/player
+                                </div>
+                              )}
+                              <div style={{ marginTop: "5px", display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => openOverride(e, r.roundId, t)}
+                                  style={editBtnStyle}
+                                  data-testid="payout-edit-btn"
+                                >
+                                  Edit
+                                </button>
+                                {t.wasOverridden && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => openRevert(e, r.roundId, t)}
+                                    style={revertBtnStyle}
+                                    data-testid="payout-revert-btn"
+                                  >
+                                    Revert
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

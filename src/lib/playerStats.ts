@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { excludedFromIndividualStats } from "@/lib/format/helpers";
-import { getPrimaryFlightByRound } from "@/lib/flights/resolve";
+import { getTeamFlightsByRounds } from "@/lib/flights/resolve";
 
 export type PlayerStatsFilter = {
   startDate?: string;
@@ -46,6 +46,7 @@ export async function fetchPlayerStats(
     .select(
       `
         round_id,
+        team_number,
         course_handicap,
         rounds!inner ( played_on, is_complete ),
         scores ( strokes )
@@ -68,6 +69,7 @@ export async function fetchPlayerStats(
   type RoundRow = { played_on: string | null; is_complete: boolean | null };
   type Row = {
     round_id: number;
+    team_number: number | null;
     course_handicap: number | null;
     rounds: RoundRow | RoundRow[] | null;
     scores: ScoreRow[] | null;
@@ -75,10 +77,10 @@ export async function fetchPlayerStats(
 
   const rows = data as unknown as Row[];
 
-  // Format now lives on each round's primary flight (Session 1); batch-resolve
-  // so the season-stats exclusion reads off the flight, not rounds.format.
-  // Session 3 must revisit for true multi-flight rounds.
-  const flightByRound = await getPrimaryFlightByRound(
+  // Flights S3: format lives on each TEAM's flight. Resolve per (round, team) so
+  // the season-stats exclusion reads off THIS player's flight — on a multi-flight
+  // round the player's own flight decides inclusion, not the round's primary.
+  const flightResolver = await getTeamFlightsByRounds(
     rows.map((rp) => rp.round_id),
   );
 
@@ -91,12 +93,13 @@ export async function fetchPlayerStats(
         (sum, s) => sum + (s?.strokes ?? 0),
         0,
       );
+      const flight = flightResolver.get(rp.round_id, rp.team_number ?? 0);
       return {
         playedOn,
         totalStrokes,
         scoreCount: scores.length,
         courseHandicap: rp.course_handicap,
-        excludedFromStats: excludedFromIndividualStats(flightByRound.get(rp.round_id)?.format ?? null),
+        excludedFromStats: excludedFromIndividualStats(flight?.format ?? null),
       };
     })
     // Wave 1B follow-up: exclude rounds that don't feed per-player season stats.
