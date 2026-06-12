@@ -160,12 +160,25 @@ describe("loadWinningsHistory", () => {
     expect(r501.teams).toHaveLength(4);
     expect(r501.teams[0]).toMatchObject({ place: 1, teamNumber: 1, perPlayer: 25, totalForTeam: 50 });
     expect(r501.teams[0].roster).toContain("P1"); // disambiguated name present
+    // Flights S5: redirected_share_count maps through (0 when absent on the row).
+    expect(r501.teams[0].redirectedShareCount).toBe(0);
 
     const r502 = rounds.find((r) => r.roundId === 502)!;
     expect(r502.headcount).toBe(18);
     expect(r502.paid).toBe(42);
     expect(r502.sweepToBfb).toBe(126 - 42);
     expect(r502.hasOverride).toBe(true);
+  });
+
+  it("maps redirected_share_count through to the team payout (S5)", async () => {
+    seedHistory();
+    // Mark Team 1 as having forfeited one share (net total reflects it).
+    dataRef.current.round_payouts[0].redirected_share_count = 1;
+    dataRef.current.round_payouts[0].total_for_team = 25;
+    const rounds = await loadWinningsHistory(null, 10);
+    const t1 = rounds.find((r) => r.roundId === 501)!.teams.find((t) => t.teamNumber === 1)!;
+    expect(t1.redirectedShareCount).toBe(1);
+    expect(t1.totalForTeam).toBe(25);
   });
 
   it("season scope filters rounds (negative control: other-season round excluded)", async () => {

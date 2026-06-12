@@ -34,8 +34,16 @@ vi.mock("@/lib/round/results", () => ({ loadRoundResults: loadMock }));
 import { computeAndPersistRoundPayouts } from "@/lib/payouts/persistRoundPayouts";
 
 type T = { id: number; total: number; n: number };
-function team(id: number, total: number, n: number) {
-  return { id, total, players: Array.from({ length: n }, () => ({})) };
+// Flights S5: a team may carry blind-draw fills. The reconciliation reads only
+// each fill's `fromTeamNumber` (the drawn player's own team) + the holding
+// team's id, so fills here are minimal. Default [] → no redirect (byte-identical).
+function team(
+  id: number,
+  total: number,
+  n: number,
+  blindDraws: Array<{ fromTeamNumber: number }> = [],
+) {
+  return { id, total, players: Array.from({ length: n }, () => ({})), blindDraws };
 }
 function okResult(teams: ReturnType<typeof team>[], format: string) {
   loadMock.mockResolvedValue({
@@ -70,13 +78,18 @@ function okSections(sections: Array<{ flightId: number; flightName: string; form
     },
   });
 }
+type PersistedPayout = {
+  team_number: number; place: number; per_player: number; team_size: number;
+  total_for_team: number; is_tied: boolean; below_floor: boolean;
+  flight_id: number; flight_name: string; redirected_share_count: number;
+};
 function lastPayload() {
   const call = rpcMock.mock.calls.at(-1)!;
   expect(call[0]).toBe("persist_round_payouts");
   return call[1] as {
     p_round_id: number;
     p_payload: {
-      payouts: Array<Record<string, unknown>>;
+      payouts: PersistedPayout[];
       funds: Array<{ fund: string; amount: number; reason: string }>;
     };
   };
@@ -101,7 +114,7 @@ describe("computeAndPersistRoundPayouts", () => {
     const p = lastPayload();
     expect(p.p_round_id).toBe(101);
     expect(p.p_payload.payouts).toHaveLength(3); // team 4 (4th of 4, only 3 paid) excluded
-    expect(payoutByTeam(p, 1)).toEqual({ team_number: 1, place: 1, per_player: 15, team_size: 2, total_for_team: 30, is_tied: false, below_floor: false, flight_id: 1, flight_name: "Flight A" });
+    expect(payoutByTeam(p, 1)).toEqual({ team_number: 1, place: 1, per_player: 15, team_size: 2, total_for_team: 30, is_tied: false, below_floor: false, flight_id: 1, flight_name: "Flight A", redirected_share_count: 0 });
     expect(payoutByTeam(p, 2)).toMatchObject({ place: 2, per_player: 8, total_for_team: 16 });
     expect(payoutByTeam(p, 3)).toMatchObject({ place: 3, per_player: 5, total_for_team: 10 });
     // sweep is 0 here → no sweep fund row
@@ -283,5 +296,127 @@ describe("computeAndPersistRoundPayouts", () => {
     okResult([team(1, -10, 2), team(2, -5, 2), team(3, -1, 2), team(4, 2, 2)], "2_ball");
     rpcMock.mockResolvedValueOnce({ error: { message: "boom" } });
     await expect(computeAndPersistRoundPayouts(1)).rejects.toThrow(/persist_round_payouts: boom/);
+  });
+});
+
+// Flights S5 — blind-draw higher-of-two reconciliation. All fixtures are the
+// confirmed 3-team / headcount-5 shape (one short team, balance 35): the engine
+// pays 2 places at per_player 1st=$11, 2nd=$6 (independently anchored by the
+// "short (blind-drawn) team" test above). A short team's total_for_team is
+// per_player × team_size (= 2), so it is paid as if FULL — including the fill
+// share — until the reconciliation removes a forfeited share.
+describe("blind-draw higher-of-two reconciliation (S5)", () => {
+  const fund = (p: ReturnType<typeof lastPayload>, reason: string) =>
+    p.p_payload.funds.find((f) => f.reason === reason);
+
+  it("own team did NOT place → no redirect, byte-identical (no marker, no sweep)", async () => {
+    // Team 1 (short, drew a player from Team 2). Team 2 finishes LAST (unpaid).
+    // Nothing to compare → today's behavior; the drawing team keeps full pay.
+    okResult([
+      team(1, -10, 1, [{ fromTeamNumber: 2 }]), // drawing team, 1st ($11)
+      team(2, 0, 2),                             // own team of the fill — 3rd, UNPAID
+      team(3, -5, 2),                            // 2nd ($6)
+    ], "2_ball");
+
+    await computeAndPersistRoundPayouts(1);
+    const p = lastPayload();
+    expect(payoutByTeam(p, 1)).toMatchObject({ per_player: 11, team_size: 2, total_for_team: 22, redirected_share_count: 0 });
+    expect(p.p_payload.payouts.every((r) => r.redirected_share_count === 0)).toBe(true);
+    expect(fund(p, "blind_draw_redirect")).toBeUndefined();
+  });
+
+  it("THE rule: drawing team HIGHER (1st) → own team forfeits its share to BFB", async () => {
+    // Team 1 (short, 1st $11) drew a player whose OWN team (Team 3) placed 2nd
+    // ($6). Player keeps Team 1's $11 (higher); Team 3 forfeits one $6 share → BFB.
+    okResult([
+      team(1, -10, 1, [{ fromTeamNumber: 3 }]), // drawing, 1st ($11)
+      team(2, 0, 2),                             // 3rd, unpaid
+      team(3, -5, 2),                            // own team of the fill — 2nd ($6)
+    ], "2_ball");
+
+    await computeAndPersistRoundPayouts(1);
+    const p = lastPayload();
+    // Drawing team unchanged — the player collects its (higher) fill share there.
+    expect(payoutByTeam(p, 1)).toMatchObject({ per_player: 11, team_size: 2, total_for_team: 22, redirected_share_count: 0 });
+    // Own team forfeits ONE $6 share: 12 → 6, count 1.
+    expect(payoutByTeam(p, 3)).toMatchObject({ per_player: 6, team_size: 2, total_for_team: 6, redirected_share_count: 1 });
+    expect(fund(p, "blind_draw_redirect")).toEqual({ fund: "bfb", amount: 6, reason: "blind_draw_redirect" });
+  });
+
+  it("REVERSE: own team HIGHER → the DRAWING team forfeits the fill share (short roster math)", async () => {
+    // Team 3 (short n=1, 2nd $6) drew a player whose OWN team (Team 1) placed 1st
+    // ($11). Player keeps his own Team-1 $11; the DRAWING Team 3 forfeits the fill
+    // share. BEFORE: Team 3 paid as if FULL — per_player 6 × team_size 2 = $12
+    // (the engine granted the fill share). AFTER: 12 − 6 = $6 = paid for its ONE
+    // real member; per_player + team_size unchanged; the $6 fill share → BFB.
+    okResult([
+      team(1, -10, 2),                           // own team of the fill — 1st ($11)
+      team(2, 0, 2),                             // 3rd, unpaid
+      team(3, -5, 1, [{ fromTeamNumber: 1 }]),   // drawing team, 2nd ($6), SHORT
+    ], "2_ball");
+
+    await computeAndPersistRoundPayouts(1);
+    const p = lastPayload();
+    const drawing = payoutByTeam(p, 3)!;
+    // per_player + team_size are NOT touched (we removed a granted share, not a
+    // phantom one); total drops by exactly one per_player; count = 1.
+    expect(drawing).toMatchObject({ per_player: 6, team_size: 2, total_for_team: 6, redirected_share_count: 1 });
+    expect(drawing.per_player * (drawing.team_size - drawing.redirected_share_count)).toBe(drawing.total_for_team);
+    // Own (higher) team unchanged.
+    expect(payoutByTeam(p, 1)).toMatchObject({ per_player: 11, team_size: 2, total_for_team: 22, redirected_share_count: 0 });
+    expect(fund(p, "blind_draw_redirect")).toEqual({ fund: "bfb", amount: 6, reason: "blind_draw_redirect" });
+  });
+
+  it("EQUAL shares (drawing + own tied) → no redirect, no sweep, no double-pay", async () => {
+    // Team 3 (short, drew from Team 1); Teams 1 & 3 TIE for 1st → identical
+    // per_player → the player's two shares are equal → nothing moves.
+    okResult([
+      team(1, -10, 2),                           // tie 1st
+      team(2, 0, 2),                             // last, unpaid
+      team(3, -10, 1, [{ fromTeamNumber: 1 }]),  // tie 1st, drawing, SHORT
+    ], "2_ball");
+
+    await computeAndPersistRoundPayouts(1);
+    const p = lastPayload();
+    const t1 = payoutByTeam(p, 1)!;
+    const t3 = payoutByTeam(p, 3)!;
+    expect(t1.per_player).toBe(t3.per_player);     // equal shares
+    expect(t1.redirected_share_count).toBe(0);
+    expect(t3.redirected_share_count).toBe(0);
+    expect(fund(p, "blind_draw_redirect")).toBeUndefined();
+  });
+
+  it("cross-flight: redirect compares each team's OWN-flight per-player (different pots)", async () => {
+    // Flight A (Team 1 short, drew from flight B's Team 3). Flight A pot is large
+    // (4 players → balance 28, 1st≈$13), flight B small (2 players → balance 14).
+    // The drawing team's flight-A share vs the own team's flight-B share — the
+    // reconciliation reads each team's own row, so the comparison is flight-correct.
+    okSections([
+      { flightId: 10, flightName: "A", format: "2_ball", teams: [
+        team(1, -10, 1, [{ fromTeamNumber: 3 }]), // drawing (flight A)
+        team(2, 0, 2),
+      ] },
+      { flightId: 20, flightName: "B", format: "2_ball", teams: [
+        team(3, -5, 2),                            // own team (flight B)
+        team(4, 5, 2),
+      ] },
+    ]);
+
+    await computeAndPersistRoundPayouts(1);
+    const p = lastPayload();
+    const drawing = payoutByTeam(p, 1)!;
+    const own = payoutByTeam(p, 3)!;
+    // Whichever placed lower forfeits a share; the higher is untouched; the swept
+    // amount equals the loser's per_player. Assert the invariant holds with the
+    // flight-correct per_player values (no cross-flight bleed).
+    const lower = Math.min(drawing.per_player, own.per_player);
+    const loser = drawing.per_player < own.per_player ? drawing : own;
+    const winner = drawing.per_player < own.per_player ? own : drawing;
+    if (drawing.per_player !== own.per_player) {
+      expect(loser.redirected_share_count).toBe(1);
+      expect(loser.total_for_team).toBe(loser.per_player * (loser.team_size - 1));
+      expect(winner.redirected_share_count).toBe(0);
+      expect(fund(p, "blind_draw_redirect")).toEqual({ fund: "bfb", amount: lower, reason: "blind_draw_redirect" });
+    }
   });
 });

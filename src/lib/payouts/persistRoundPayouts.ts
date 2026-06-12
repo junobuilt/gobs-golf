@@ -29,6 +29,14 @@
 // row carries its flight_id + flight_name (migration 023). A single-flight round
 // resolves to exactly one section, so the persisted payload — payout amounts AND
 // funds — is byte-identical to the pre-flights single run (golden-tested).
+//
+// Flights Track, Session 5: a reconciliation pass over blind-draw fills applies
+// Dad's higher-of-two rule — a drawn player keeps the higher of his own-team vs
+// drawing-team per-player share; the lower team forfeits one share (recorded in
+// round_payouts.redirected_share_count, migration 025) and that amount sweeps to
+// BFB under the distinct `blind_draw_redirect` ledger reason. When a drawn
+// player's own team didn't place, or the two shares are equal, nothing changes
+// (single-flight ordinary draws stay byte-identical).
 
 import { supabase } from "@/lib/supabase";
 import { loadRoundResults } from "@/lib/round/results";
@@ -84,6 +92,9 @@ export async function computeAndPersistRoundPayouts(
     team_number: number; place: number; per_player: number; team_size: number;
     total_for_team: number; is_tied: boolean; below_floor: boolean;
     flight_id: number; flight_name: string;
+    // Flights S5: how many shares this team forfeited to the blind-draw
+    // higher-of-two rule (its total_for_team is net of these). 0 normally.
+    redirected_share_count: number;
   };
   const payouts: PayoutRow[] = [];
   let totalHeadcount = 0;
@@ -137,6 +148,7 @@ export async function computeAndPersistRoundPayouts(
         below_floor: tp.per_player < FLOOR_PER_PLAYER,
         flight_id: section.flightId,
         flight_name: section.flightName,
+        redirected_share_count: 0,
       });
     }
 
@@ -149,16 +161,55 @@ export async function computeAndPersistRoundPayouts(
 
   if (totalHeadcount === 0) return { status: "skipped", reason: "no_players" };
 
+  // ── Flights S5: blind-draw higher-of-two reconciliation ─────────────────────
+  // A blind-draw fill player is associated with TWO per-player shares: one on
+  // his OWN team (he's rostered there) and one on the DRAWING team (the fill
+  // slot is part of that team's team_size). Dad's rule: he keeps the HIGHER
+  // share; the LOWER team forfeits one share, which sweeps to BFB.
+  //
+  // Reads ONLY loadRoundResults output (no new query): each drawing team's
+  // `blindDraws[]` carries the drawn player + `fromTeamNumber` (his own team).
+  // per_player values are flight-correct (S3), so cross-flight draws compare
+  // each team's own-flight share. No collisions (S4) → a player is in at most
+  // these two contexts. Equal shares OR one team unplaced → no change (the
+  // single-flight ordinary-draw case stays byte-identical).
+  const payoutByTeam = new Map<number, PayoutRow>();
+  for (const p of payouts) payoutByTeam.set(p.team_number, p);
+
+  let redirectSweep = 0;
+  for (const section of flightSections) {
+    for (const team of section.teams) {
+      const drawingRow = payoutByTeam.get(team.id);
+      for (const fill of team.blindDraws) {
+        const ownRow = payoutByTeam.get(fill.fromTeamNumber);
+        const pDraw = drawingRow?.per_player ?? 0; // drawing (fill-holding) team
+        const pOwn = ownRow?.per_player ?? 0;       // drawn player's own team
+        // One side didn't place, or shares are equal → no redirect, no sweep.
+        if (pDraw === 0 || pOwn === 0 || pDraw === pOwn) continue;
+        // The player keeps the HIGHER share; the LOWER team forfeits one share.
+        const loserRow = pDraw < pOwn ? drawingRow! : ownRow!;
+        const foregone = Math.min(pDraw, pOwn); // = the loser's per_player
+        loserRow.total_for_team = Math.max(0, loserRow.total_for_team - foregone);
+        loserRow.redirected_share_count += 1;
+        redirectSweep += foregone;
+      }
+    }
+  }
+
   // Funds are credited at finalize regardless of whether any place was paid (a
   // 1-team flight still collects buy-in; its whole balance sweeps to BFB). HiO +
   // BFB per-player contributions sum across flights → identical to the round-wide
-  // headcount. Each flight's sweep is summed into one BFB sweep entry.
+  // headcount. Each flight's sweep is summed into one BFB sweep entry; the
+  // blind-draw redirect sweep is a DISTINCT ledger reason.
   const funds: Array<{ fund: string; amount: number; reason: string }> = [
     { fund: "hio", amount: HIO_PER_PLAYER * totalHeadcount, reason: "buyin_hio" },
     { fund: "bfb", amount: BFB_PER_PLAYER * totalHeadcount, reason: "buyin_bfb" },
   ];
   if (totalSweep > 0) {
     funds.push({ fund: "bfb", amount: totalSweep, reason: "sweep" });
+  }
+  if (redirectSweep > 0) {
+    funds.push({ fund: "bfb", amount: redirectSweep, reason: "blind_draw_redirect" });
   }
 
   const { error } = await supabase.rpc("persist_round_payouts", {

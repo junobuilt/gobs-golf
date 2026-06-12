@@ -302,6 +302,10 @@ export default function HistoryPanel({
                       {group.teams.map((t) => {
                         const rankLabel = (t.isTied ? "T" : "") + t.place;
                         const gold = t.place === 1;
+                        // Flights S5: shares this team forfeited to the blind-draw
+                        // higher-of-two rule. totalForTeam is already net; show the
+                        // actual paid share count + a "→ BFB" marker.
+                        const paidShares = t.teamSize - t.redirectedShareCount;
                         return (
                           <div key={t.teamNumber} style={teamPayoutStyle}>
                             <div>
@@ -319,8 +323,18 @@ export default function HistoryPanel({
                                 ${t.totalForTeam}
                               </div>
                               <div style={{ fontSize: "10px", color: C.textMuted, fontWeight: 500 }}>
-                                ${t.perPlayer}/player × {t.teamSize}
+                                ${t.perPlayer}/player × {paidShares}
                               </div>
+                              {t.redirectedShareCount > 0 && (
+                                <div
+                                  data-testid="payout-redirect-marker"
+                                  title="Blind-draw player took a higher share elsewhere; this share swept to BFB"
+                                  style={{ fontSize: "9px", color: "#b45309", fontWeight: 600 }}
+                                >
+                                  −{t.redirectedShareCount} share{t.redirectedShareCount > 1 ? "s" : ""}{" "}
+                                  (${t.perPlayer * t.redirectedShareCount}) → BFB
+                                </div>
+                              )}
                               {t.wasOverridden && t.originalAmount != null && (
                                 <div style={{ fontSize: "9px", color: C.textMuted }}>
                                   was ${t.originalAmount}/player

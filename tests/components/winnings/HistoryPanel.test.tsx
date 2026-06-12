@@ -50,12 +50,13 @@ function roundFixture(over: boolean, opts: { paid?: number; balance?: number } =
       {
         teamNumber: 1, place: 1, perPlayer: over ? 30 : 25, teamSize: 2,
         totalForTeam: over ? 60 : 50, isTied: false, roster: "Bill C · Dave K",
+        redirectedShareCount: 0,
         wasOverridden: over, originalAmount: over ? 25 : null,
         overrideReason: over ? "bump" : null,
       },
       {
         teamNumber: 7, place: 2, perPlayer: 23, teamSize: 2, totalForTeam: 46,
-        isTied: false, roster: "Wayne V · Jeff I",
+        isTied: false, roster: "Wayne V · Jeff I", redirectedShareCount: 0,
         wasOverridden: false, originalAmount: null, overrideReason: null,
       },
     ],
@@ -81,6 +82,24 @@ describe("HistoryPanel", () => {
     fireEvent.click(screen.getByTestId("winnings-history-row"));
     expect(screen.getByText("Bill C · Dave K")).toBeInTheDocument();
     expect(screen.getByText("$25/player × 2")).toBeInTheDocument();
+  });
+
+  it("renders the blind-draw redirect marker on a team that forfeited a share (S5)", async () => {
+    // Team 1 forfeited 1 of its 2 shares to the higher-of-two rule: total is net
+    // ($25), the paid count drops to 1, and the marker shows the swept $25 → BFB.
+    const round = roundFixture(false);
+    round.teams[0] = {
+      ...round.teams[0], totalForTeam: 25, redirectedShareCount: 1,
+    };
+    historyMock.mockResolvedValue([round]);
+    render(<HistoryPanel activeSeason={SEASON} buyIn={10} />);
+    await waitFor(() => expect(screen.getByTestId("winnings-history-row")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("winnings-history-row"));
+    // Paid-share count reflects the forfeit (× 1, not × 2).
+    expect(screen.getByText("$25/player × 1")).toBeInTheDocument();
+    const marker = screen.getByTestId("payout-redirect-marker");
+    expect(marker).toHaveTextContent("−1 share ($25) → BFB");
   });
 
   it("shows the Admin Override badge only when a round was overridden", async () => {

@@ -2,10 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-11 (Flights Session 4 — flight-aware finalize + cross-flight blind draw + guard removal)
-**Session purpose:** Make multi-flight rounds FINALIZE. (a) NEW `finalize_round_flights` RPC (migration 024): one finalize moment per round, per-flight completion floors by format family, PER-FLIGHT short-team benchmark (a 4-man flight beside a 3-man flight, both even → ZERO draws), round-wide pool of fully-scored non-team-card players (no collisions, team-card excluded as source+receiver), deterministic cross-flight draws. (b) Both finalize surfaces route 2+ non-empty-flight rounds to it; single-flight keeps the per-format RPC (byte-identical). (c) SESSION-4-REMOVE guard DELETED (file + tests + Submit-block/notice). (d) `results.ts` cross-flight fill-display fix: a fill drawn from another flight is valued under the RECEIVING flight's format/allowance (same-flight path untouched → goldens unchanged). 828/828 vitest, 37/37 Playwright, tsc clean. **Migration 024 relayed for the gated dry-run + apply (see DB changes).**
+**Last updated:** 2026-06-11 (Flights Session 5 — higher-of-two blind-draw payout rule · TRACK CORE COMPLETE)
+**Session purpose:** Ship Dad's blind-draw payout rule. A reconciliation pass in `computeAndPersistRoundPayouts` (after the S3 per-flight runs, reading `loadRoundResults`' `blindDraws[].fromTeamNumber` — no new query) pays a drawn player the HIGHER of his own-team vs drawing-team per-player share; the LOWER team forfeits one share (`round_payouts.redirected_share_count`, migration 025) → that amount sweeps to BFB under the distinct `blind_draw_redirect` ledger reason. Equal shares / one team unplaced → no change (byte-identical). Winnings shows the losing-team "−N share ($X) → BFB" marker; RoundResultsView stays money-free. 834/834 vitest, 37/37 Playwright, tsc clean. **Migration 025 relayed for the gated apply (see DB changes).** This completes the Flights track's original 3-feature ask.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-11 (Flights Session 5 — higher-of-two blind-draw payout rule · TRACK CORE COMPLETE)
+
+### Where we left off
+
+**Dad's blind-draw payout rule is live; the Flights track's core (build → score → finalize → pay out per flight + the payout rule) is complete.** A blind-draw fill player is associated with TWO per-player shares — his OWN team's, and the DRAWING team's fill slot (one of that team's `team_size` shares). He keeps the higher; the lower team forfeits one share to BFB.
+
+- **Reconciliation pass (`persistRoundPayouts.ts`).** After the S3 per-flight payout rows are built, a pass iterates each drawing team's `blindDraws[]` (from `loadRoundResults` — `fromTeamNumber` is the drawn player's own team, so NO new query). Per fill: `pDraw = drawing team per_player`, `pOwn = own team per_player`. If both placed AND unequal → loser = lower team; `loser.total_for_team −= foregone` (= loser's per_player), `loser.redirected_share_count += 1`, `redirectSweep += foregone`. Equal OR one unplaced → no change. per_player values are flight-correct (S3) so cross-flight comparisons use each team's own-flight share; no collisions (S4) → a player is in ≤2 contexts. Funds gain a DISTINCT `{bfb, redirectSweep, 'blind_draw_redirect'}` row. Money conserved (Σ total_for_team drops by the sweep; BFB rises by it; per-flight `sweep` untouched).
+- **Reverse-case verified** (own team higher → DRAWING team forfeits the fill share): a short team paid as if FULL (`per_player × team_size`, including the engine-granted fill share) drops to `per_player × (team_size − 1)` = paid for its real (short) roster; `per_player` + `team_size` are untouched (we removed a GRANTED share, not a phantom one); the fill share sweeps. The test shows before/after.
+- **Migration `025_blind_draw_redirect.sql`** (additive, NULL→0 for historical rows, no backup): `round_payouts.redirected_share_count int NOT NULL DEFAULT 0 CHECK (≥0)` + `persist_round_payouts` CREATE OR REPLACE to accept/INSERT it. The `blind_draw_redirect` fund reason is a free string (no schema change).
+- **Display.** `loadWinnings` selects `redirected_share_count` → `WinningsTeamPayout.redirectedShareCount`; `REASON_LABELS` gains "Blind-draw redirect". `HistoryPanel` losing-team row shows `$per_player/player × (team_size − redirected)` + an amber "−N share ($X) → BFB" marker (`data-testid=payout-redirect-marker`). **RoundResultsView unchanged** (fill pill = net only; money lives in Winnings). Admin override reads/edits the NET persisted total — mechanism unchanged.
+
+**Files:** NEW `supabase/migrations/025_blind_draw_redirect.sql`. MODIFIED `src/lib/payouts/persistRoundPayouts.ts`, `src/lib/payouts/loadWinnings.ts`, `src/components/winnings/HistoryPanel.tsx`, `tests/lib/payouts/{persistRoundPayouts,loadWinnings}.test.ts`, `tests/components/winnings/HistoryPanel.test.tsx`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(flights): Session 5 — higher-of-two blind-draw payout rule (migration 025)
+- (trailing) chore: update STATUS.md
+
+### DB changes (today)
+
+- **Migration `025` GATED — relayed, not yet applied from this session.** Additive (one nullable-with-default column + `CREATE OR REPLACE persist_round_payouts`); no backfill, no destructive change → **no backup needed**. Like 024 it breaks no existing SELECT (the new column is selected by `loadWinnings`, but with `COALESCE(... ?? 0)` and a `DEFAULT 0` column so it's present once applied) — **apply 025 before this code deploys**, else the Winnings SELECT errors on the missing column (same gate posture as 023). Relay: a self-checking dry-run (`BEGIN` → ALTER + CREATE FUNCTION → a synthetic round_payouts insert WITH a redirect row asserting the round-trip → `ROLLBACK`) + the real apply. `schema.sql` picks up the column on the next `npm run db:backup`. **NOTE for the relay harness (from S4): seed explicit identity ids with `OVERRIDING SYSTEM VALUE`, and keep synthetic `played_on` dates in 2099 to avoid the unique-date collision.**
+
+### Tests / verification
+
+- **834/834 vitest** (+6 over S4's 828: byte-identical (own team didn't place → no redirect); THE rule (own 2nd $6 / drawing 1st $11 → own forfeits, hand-computed); reverse (own higher → drawing team forfeits the fill share, before/after per_player+total shown); equal shares (no sweep); cross-flight (flight-correct per_player); cross-surface mapping (`loadWinnings` carries `redirected_share_count`) + the `HistoryPanel` marker render). **37/37 Playwright** (no new spec — the rule is pure client TS; existing finalize/winnings e2e exercise the persist path unchanged). `tsc --noEmit` clean. Existing single-flight blind-draw goldens are byte-identical (no drawn player's own team placed → reconciliation no-ops).
+
+### Tomorrow's priority
+
+1. **Run the migration-025 relay** (self-checking dry-run + apply), then push, then `npm run db:backup` to fold 023/024/025 into `schema.sql`.
+2. **Flights track is CORE COMPLETE.** Remaining are OPTIONAL: **Flights.6** (homepage team-formation flight targeting for self-formed teams) + a **cleanup migration** to drop the frozen legacy finalize RPCs (008/020/021) and the frozen `rounds.format*` columns.
+
+### Considered but not changed (confession)
+
+- **Reconciliation reads only `loadRoundResults` output** (`blindDraws[].fromTeamNumber`) — no new `blind_draws` query (Q3). Single source of truth; cross-flight per_player is flight-correct from S3.
+- **Equal-shares → persist exactly as today** (no decrement, no sweep, `redirected_share_count` 0), per Q1. The single-flight ordinary-draw case (own team didn't place) is likewise unchanged — byte-identical, asserted.
+- **NO backfill** of historical rounds (Q4). The rule applies to new finalizes; a reopened round picks it up on re-finalize. Existing persisted single-flight rounds where a drawn player's own team placed are NOT retro-changed.
+- **RoundResultsView stays money-free** (Q5) — adding the drawn player's paid amount there would require loading `round_payouts` into `results.ts`/the view, out of scope. The fill pill keeps showing net only; the redirect lives in Winnings. The per-draw attribution line ("Dan paid by Team 1") was the optional nice-to-have and is NOT built — it would need `blind_draws` in `loadWinnings` (new plumbing), so per the "only if no significant plumbing" guard it's deferred. The team-row marker + ledger entry are the shipped core.
+- **No new Playwright spec** — the reconciliation is pure client TS, fully vitest-tested across 6 cases + the cross-surface mapping. A redirect e2e would mostly re-exercise the same persist path the finalize/winnings specs already cover. Flagged.
+- **Migration 025 is the same deploy-gate posture as 023** (Winnings SELECTs the new column) — push held until applied.
+- **Out of scope (untouched):** finalize RPCs / blind-draw selection (S4), payout engine internals beyond the reconciliation pass, flight CRUD, read-surface sectioning, batch readers. Pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `flights-round-setup-mockup.html`) left unstaged; `.claude/settings.local.json` left dirty per instruction.
 
 ---
 

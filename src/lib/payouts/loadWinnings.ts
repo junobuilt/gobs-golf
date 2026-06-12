@@ -70,6 +70,9 @@ const REASON_LABELS: Record<string, string> = {
   sweep: "BFB sweep",
   reopen_reversal: "Reversal (round reopened)",
   reset: "Fund reset",
+  // Flights S5: a blind-draw player kept the higher of his two per-player
+  // shares; the lower team's foregone share swept here.
+  blind_draw_redirect: "Blind-draw redirect",
 };
 
 export function reasonLabel(fund: string, reason: string): string {
@@ -106,6 +109,10 @@ export type WinningsTeamPayout = {
   // NULL on historical/single-flight rows → the panel renders ungrouped.
   flightId: number | null;
   flightName: string | null;
+  // Flights S5: shares this team forfeited to the blind-draw higher-of-two rule
+  // (migration 025). totalForTeam is already net of these; >0 → render the
+  // "−N share → BFB" marker. 0 on every historical/non-redirect row.
+  redirectedShareCount: number;
   // S4b override surface: per-team override state (drives Edit/Revert + "was $X").
   wasOverridden: boolean;
   originalAmount: number | null; // engine value before override; null when not overridden
@@ -147,7 +154,8 @@ export async function loadWinningsHistory(
     .from("round_payouts")
     .select(
       "round_id, team_number, place, per_player, team_size, total_for_team, " +
-        "is_tied, flight_id, flight_name, was_overridden, original_amount, override_reason, " +
+        "is_tied, flight_id, flight_name, redirected_share_count, " +
+        "was_overridden, original_amount, override_reason, " +
         "rounds!inner ( played_on, format, season_id, is_complete )",
     )
     .eq("rounds.is_complete", true);
@@ -214,6 +222,7 @@ export async function loadWinningsHistory(
         roster: (rosterByRoundTeam[rid]?.[r.team_number as number] ?? []).join(" · "),
         flightId: (r.flight_id ?? null) as number | null,
         flightName: (r.flight_name ?? null) as string | null,
+        redirectedShareCount: (r.redirected_share_count ?? 0) as number,
         wasOverridden: r.was_overridden === true,
         originalAmount: (r.original_amount ?? null) as number | null,
         overrideReason: (r.override_reason ?? null) as string | null,
