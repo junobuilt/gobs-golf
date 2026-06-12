@@ -286,6 +286,13 @@ function AdminEditRoundButton({ data }: { data: LoadedRoundResults }) {
 
 function Header({ data }: { data: LoadedRoundResults }) {
   const dateLabel = formatHeaderDate(data.playedOn);
+  // Flights: the top-level chip sources the PRIMARY flight's format, which is
+  // misleading when the round's non-empty flights run differing formats. Show
+  // "Multiple" instead (the per-section FlightSectionHeader chips carry each
+  // flight's real format). Single-flight / same-format rounds are unchanged.
+  const multiFormat =
+    new Set(data.flightSections.map((s) => s.format)).size >= 2 &&
+    data.flightSections.length >= 2;
   // Phase D.2: the admin-entry "Edit Round Scores" button on this header
   // was the D1.11 entry point; superseded by the Edit Round button on the
   // admin Round Setup tab (single source of entry). Removed 2026-05-27.
@@ -313,6 +320,7 @@ function Header({ data }: { data: LoadedRoundResults }) {
               currentFormat={data.format}
               currentConfig={data.formatConfig}
               formatLocked={data.formatLocked}
+              titleOverride={multiFormat ? "Multiple" : undefined}
             />
           </div>
           <div style={{ fontSize: 12, color: C.textMuted }}>
@@ -438,7 +446,9 @@ function TeamCard({
           </div>
           {team.blindDraws.length > 0 && (
             <div style={{
-              fontSize: 11, color: C.textMuted,
+              // shared allowance/adjusted accent (#c2410c) — make the 🎲 line
+              // stand out from ordinary roster rows (display-only).
+              fontSize: 11, color: "#c2410c", fontWeight: 600,
               marginBottom: 4, lineHeight: 1.4,
             }}>
               {team.blindDraws.map((bd, i) => (
@@ -689,7 +699,8 @@ function PlayerSection({
             })()}
           {dropoutFill && (
             <div style={{
-              fontSize: 11, color: C.textMuted,
+              // shared allowance/adjusted accent (#c2410c) — display-only.
+              fontSize: 11, color: "#c2410c", fontWeight: 600,
               marginBottom: 6, fontStyle: "italic",
             }}>
               🎲 Holes {dropoutFill.holeRangeStart}–{dropoutFill.holeRangeEnd}:
@@ -755,7 +766,8 @@ function BlindDrawPseudoPlayerSection({
           }}>
             🎲 {fill.drawnPlayerName}
             <span style={{
-              fontSize: 11, fontWeight: 500, color: C.textMuted,
+              // shared allowance/adjusted accent (#c2410c) — display-only.
+              fontSize: 11, fontWeight: 600, color: "#c2410c",
               marginLeft: 6, fontStyle: "italic",
             }}>
               blind draw fill ({rangeCopy(fill)}, from Team {fill.fromTeamNumber})

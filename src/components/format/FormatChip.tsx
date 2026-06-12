@@ -11,6 +11,10 @@ interface FormatChipProps {
   currentConfig?: FormatConfig | null;
   formatLocked: boolean;
   onChange?: () => void;
+  // When set, render this text in place of the format title (e.g. "Multiple" on
+  // a multi-flight round with differing formats) and force the chip read-only.
+  // Display-only — does not change currentFormat.
+  titleOverride?: string;
 }
 
 const C = {
@@ -30,11 +34,14 @@ export default function FormatChip({
   currentConfig,
   formatLocked,
   onChange,
+  titleOverride,
 }: FormatChipProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const editable = typeof onChange === "function";
-  const { title } = FORMAT_LABELS[currentFormat];
+  // titleOverride forces read-only (no picker) — it's a display rollup, not a
+  // real single format to edit.
+  const editable = typeof onChange === "function" && titleOverride == null;
+  const title = titleOverride ?? FORMAT_LABELS[currentFormat].title;
 
   function handleTap() {
     if (!editable) return;

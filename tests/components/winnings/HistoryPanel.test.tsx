@@ -102,6 +102,32 @@ describe("HistoryPanel", () => {
     expect(marker).toHaveTextContent("−1 share ($25) → BFB");
   });
 
+  it("shows the round header '(N-per)' suffix only when every team is the same size (display polish Fix 3)", async () => {
+    // Uniform round (teams sized 2 & 2) reads exactly as today.
+    historyMock.mockResolvedValue([roundFixture(false)]);
+    const { container } = render(<HistoryPanel activeSeason={SEASON} buyIn={10} />);
+    await waitFor(() => expect(screen.getByTestId("winnings-history-row")).toBeInTheDocument());
+    expect(container.textContent).toContain("teams (2-per)");
+    expect(container.textContent).not.toContain("(mixed)");
+  });
+
+  it("shows '(mixed)' instead of asserting one size when team sizes differ (flights)", async () => {
+    // Flights can produce uneven teams (e.g. 2/3/4/4); the first team's size 2
+    // must NOT be asserted for the whole round.
+    const round = roundFixture(false);
+    round.teams = [
+      { ...round.teams[0], teamNumber: 1, teamSize: 2 },
+      { ...round.teams[1], teamNumber: 2, teamSize: 3 },
+      { ...round.teams[0], teamNumber: 3, teamSize: 4 },
+      { ...round.teams[1], teamNumber: 4, teamSize: 4 },
+    ];
+    historyMock.mockResolvedValue([round]);
+    const { container } = render(<HistoryPanel activeSeason={SEASON} buyIn={10} />);
+    await waitFor(() => expect(screen.getByTestId("winnings-history-row")).toBeInTheDocument());
+    expect(container.textContent).toContain("teams (mixed)");
+    expect(container.textContent).not.toMatch(/\(\d+-per\)/);
+  });
+
   it("shows the Admin Override badge only when a round was overridden", async () => {
     historyMock.mockResolvedValue([roundFixture(false)]);
     render(<HistoryPanel activeSeason={SEASON} buyIn={10} />);

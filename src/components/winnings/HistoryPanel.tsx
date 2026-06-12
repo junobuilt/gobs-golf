@@ -251,8 +251,18 @@ export default function HistoryPanel({
       ) : (
         rounds.map((r) => {
           const isExpanded = expanded === r.roundId;
-          const teamSizeSuffix =
-            r.teamSize != null ? ` (${r.teamSize}-per)` : "";
+          // Flights: teams can differ in size (e.g. 2/3/4/4). Only assert an
+          // "(N-per)" size when every team matches; otherwise show "(mixed)".
+          const teamSizes = r.teams
+            .map((t) => t.teamSize)
+            .filter((n): n is number => n != null);
+          const uniformSize =
+            teamSizes.length > 0 && teamSizes.every((s) => s === teamSizes[0]);
+          const teamSizeSuffix = uniformSize
+            ? ` (${teamSizes[0]}-per)`
+            : teamSizes.length > 0
+              ? " (mixed)"
+              : "";
           return (
             <div
               key={r.roundId}

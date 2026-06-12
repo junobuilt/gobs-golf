@@ -26,6 +26,7 @@ import {
   type RankedFormattedTeam,
 } from "@/lib/leaderboard/rankAndFormat";
 import type { Format, FormatConfig } from "@/lib/scoring";
+import { FORMAT_LABELS } from "@/lib/format/copy";
 
 // Mirrors results.ts's best_n Individual Rankings derivation so single-flight
 // fixtures render the same canonical list the loader would emit.
@@ -249,5 +250,67 @@ describe("RoundResultsView — NET team-card (Texas Scramble / Alternate Shot)",
   it("hides Individual Rankings (one team score per hole, no per-player rows)", () => {
     const html = renderToString(<RoundResultsView data={teamCardData()} />);
     expect(html).not.toContain("Individual Rankings");
+  });
+});
+
+describe("RoundResultsView — blind-draw line uses the orange accent (display polish Fix 1)", () => {
+  function teamWithBlindDraw(): RankedTeam<TeamRow> {
+    const t = makeTeam(1, 18, 1);
+    t.blindDraws = [{
+      drawnPlayerId: 42,
+      drawnPlayerName: "Drew Z",
+      fromTeamNumber: 2,
+      holeRangeStart: 1,
+      holeRangeEnd: 18,
+      drawnPlayerScores: SCORES_18,
+      drawnPlayerPar: PAR_18,
+      drawnPlayerNetValue: 3,
+    }];
+    return t;
+  }
+
+  it("renders the 🎲 Blind draw line in the accent orange (#c2410c), not muted grey", () => {
+    const data = makeData(true, [teamWithBlindDraw()]);
+    const html = renderToString(<RoundResultsView data={data} />);
+    // (SSR splits text with comment markers, so match the label fragment + name
+    // separately rather than the contiguous string.)
+    expect(html).toContain("Blind draw:");
+    expect(html).toContain("Drew Z");
+    // The team-card blind-draw line div carries the shared allowance/adjusted
+    // accent + a weight bump (was C.textMuted #9a9a9a).
+    expect(html).toContain("color:#c2410c;font-weight:600");
+  });
+});
+
+describe("RoundResultsView — top-level format chip on multi-flight rounds (display polish Fix 4)", () => {
+  function multiFlightData(formatA: Format, formatB: Format): LoadedRoundResults {
+    const base = makeData(true, [makeTeam(1, 18, 1)]);
+    return {
+      ...base,
+      // Top-level format = primary flight (formatA). The header rollup should
+      // ignore this when the flights' formats differ.
+      format: formatA,
+      flightSections: [
+        { flightId: 1, flightName: "Flight A", format: formatA, formatConfig: { basis: "net" }, formatLocked: true, teams: rankAndFormatTeams([makeTeam(1, 18, 1)], "2_ball") },
+        { flightId: 2, flightName: "Flight B", format: formatB, formatConfig: { basis: "net" }, formatLocked: true, teams: rankAndFormatTeams([makeTeam(2, 18, 1)], "2_ball") },
+      ],
+    };
+  }
+
+  it("shows 'Multiple' as the top-level chip when flights run differing formats", () => {
+    const html = renderToString(<RoundResultsView data={multiFlightData("2_ball", "best_ball")} />);
+    expect(html).toContain("Multiple");
+  });
+
+  it("shows the single format title (not 'Multiple') on a single-flight round", () => {
+    const data = makeData(true, [makeTeam(1, 18, 1)]);
+    const html = renderToString(<RoundResultsView data={data} />);
+    expect(html).not.toContain("Multiple");
+    expect(html).toContain(FORMAT_LABELS["2_ball"].title);
+  });
+
+  it("does NOT show 'Multiple' when 2+ flights share the same format", () => {
+    const html = renderToString(<RoundResultsView data={multiFlightData("2_ball", "2_ball")} />);
+    expect(html).not.toContain("Multiple");
   });
 });

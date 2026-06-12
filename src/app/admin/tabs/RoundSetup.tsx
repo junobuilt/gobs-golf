@@ -14,6 +14,7 @@ import { createFlight, renameFlight, deleteFlight, moveTeamToFlight } from "@/li
 import MoveTeamSheet from "@/components/flights/MoveTeamSheet";
 import RenameFlightModal from "@/components/flights/RenameFlightModal";
 import { scorecardHref } from "@/lib/round/scorecardHref";
+import { sumCourseHandicaps } from "@/lib/round/teamCourseHandicap";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { reopenRound } from "@/lib/round/reopenRound";
 import { deriveRoundMoney, resolveBuyIn, DEFAULT_BUY_IN } from "@/lib/payouts/winningsMoney";
@@ -114,7 +115,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   // join, not the round_players row). Refreshed by refreshDropoutStates()
   // after a mark/undo write.
   const [playerRpInfo, setPlayerRpInfo] = useState<
-    Record<number, { rpId: number; droppedAfterHole: number | null }>
+    Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null }>
   >({});
 
   // Per-player serialization for round_players writes. toggleInRoster fires
@@ -146,7 +147,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     if (!existingRoundId) return;
     const { data } = await supabase
       .from("round_players")
-      .select("id, player_id, dropped_after_hole")
+      .select("id, player_id, dropped_after_hole, course_handicap")
       .eq("round_id", existingRoundId);
     if (!data) return;
     setPlayerRpInfo(prev => {
@@ -155,6 +156,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         next[r.player_id] = {
           rpId: r.id,
           droppedAfterHole: r.dropped_after_hole ?? null,
+          courseHandicap: r.course_handicap ?? null,
         };
       });
       return next;
@@ -254,7 +256,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       // already-in concern.
       const { data: rps } = await supabase
         .from("round_players")
-        .select("id, player_id, team_number, dropped_after_hole, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
+        .select("id, player_id, team_number, dropped_after_hole, course_handicap, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
         .eq("round_id", round.id);
 
       if (!rps || rps.length === 0) {
@@ -265,7 +267,7 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       const loadedRoster: Player[] = [];
       const loadedTeams: Record<number, Player[]> = {};
-      const loadedRpInfo: Record<number, { rpId: number; droppedAfterHole: number | null }> = {};
+      const loadedRpInfo: Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null }> = {};
 
       rps.forEach((rp: any) => {
         // PostgREST embed returns the joined row as either an object (single
@@ -285,6 +287,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         loadedRpInfo[playerRow.id] = {
           rpId: rp.id as number,
           droppedAfterHole: rp.dropped_after_hole ?? null,
+          courseHandicap: rp.course_handicap ?? null,
         };
         const tn = rp.team_number;
         if (tn >= 1) {
@@ -1095,7 +1098,9 @@ export default function RoundSetup({ allPlayers }: Props) {
   const renderTeamCard = (num: string, players: Player[], flight: Flight | null, multi: boolean) => {
     const tn = parseInt(num);
     const tc = getTeamColor(tn);
-    const combinedHC = players.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
+    // Combined COURSE handicap (display-only; "—" if any player's CH isn't
+    // computed yet — never a misleading partial sum).
+    const teamCH = sumCourseHandicaps(players.map(p => playerRpInfo[p.id]?.courseHandicap ?? null));
     const rawStatus = isRoundComplete ? "complete" : (teamScoreStatus[tn] ?? "not_started");
     const statusLabel = rawStatus === "complete" ? "Complete" : rawStatus === "in_progress" ? "In progress" : "Not started";
     const statusBg = rawStatus === "complete" ? "#e9f5ee" : rawStatus === "in_progress" ? "#fef3c7" : "#f1f5f9";
@@ -1115,7 +1120,7 @@ export default function RoundSetup({ allPlayers }: Props) {
               }}>
                 Team {tn}
               </span>
-              <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
+              <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>Team CH {teamCH ?? "—"}</span>
               {/* Session 2: flight chip — only once 2+ flights exist. Tap → move sheet. */}
               {multi && (
                 <button
@@ -1604,7 +1609,9 @@ export default function RoundSetup({ allPlayers }: Props) {
             {teamNums.map(num => {
               const tc = getTeamColor(num);
               const teamPlayers = teams[num] || [];
-              const combinedHC = teamPlayers.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
+              // Combined COURSE handicap (display-only; "—" if any player's CH
+              // isn't computed yet).
+              const teamCH = sumCourseHandicaps(teamPlayers.map(p => playerRpInfo[p.id]?.courseHandicap ?? null));
 
               return (
                 <div key={num} style={{
@@ -1620,7 +1627,7 @@ export default function RoundSetup({ allPlayers }: Props) {
                       Team {num}
                     </span>
                     {teamPlayers.length > 0 && (
-                      <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
+                      <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>Team CH {teamCH ?? "—"}</span>
                     )}
                   </div>
 
@@ -1762,7 +1769,9 @@ export default function RoundSetup({ allPlayers }: Props) {
             {teamNums.map(num => {
               const tc = getTeamColor(num);
               const teamPlayers = teams[num] || [];
-              const combinedHC = teamPlayers.reduce((s, p) => s + (p.handicap_index ?? 0), 0);
+              // Combined COURSE handicap (display-only; "—" if any player's CH
+              // isn't computed yet).
+              const teamCH = sumCourseHandicaps(teamPlayers.map(p => playerRpInfo[p.id]?.courseHandicap ?? null));
 
               return (
                 <div key={num} style={{
@@ -1781,7 +1790,7 @@ export default function RoundSetup({ allPlayers }: Props) {
                       Team {num}
                     </span>
                     {teamPlayers.length > 0 && (
-                      <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>HC {Math.round(combinedHC)}</span>
+                      <span style={{ fontSize: "0.68rem", color: "#9ca3af" }}>Team CH {teamCH ?? "—"}</span>
                     )}
                   </div>
                   <div style={{ padding: "10px", minHeight: "100px" }}>

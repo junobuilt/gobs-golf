@@ -2,10 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-11 (Flights Session 5 — higher-of-two blind-draw payout rule · TRACK CORE COMPLETE)
-**Session purpose:** Ship Dad's blind-draw payout rule. A reconciliation pass in `computeAndPersistRoundPayouts` (after the S3 per-flight runs, reading `loadRoundResults`' `blindDraws[].fromTeamNumber` — no new query) pays a drawn player the HIGHER of his own-team vs drawing-team per-player share; the LOWER team forfeits one share (`round_payouts.redirected_share_count`, migration 025) → that amount sweeps to BFB under the distinct `blind_draw_redirect` ledger reason. Equal shares / one team unplaced → no change (byte-identical). Winnings shows the losing-team "−N share ($X) → BFB" marker; RoundResultsView stays money-free. 834/834 vitest, 37/37 Playwright, tsc clean. **Migration 025 relayed for the gated apply (see DB changes).** This completes the Flights track's original 3-feature ask.
+**Last updated:** 2026-06-11 (Flights — display polish: 4 cosmetic display-only fixes)
+**Session purpose:** Four DISPLAY-ONLY polish fixes from live testing of the Flights track — none touch any scored/ranked/paid value (goldens byte-identical). (1) Blind-draw line on leaderboard/summary/expanded card recolored from faint grey to the existing `#c2410c` accent + weight bump. (2) Admin Round Setup combined-handicap label changed from Σ handicap-index (meaningless) to Σ course-handicap labelled "Team CH" (`"—"` when any CH not yet computed). (3) Winnings "(N-per)" round-header suffix now shows "(mixed)" when team sizes vary across flights. (4) Top-level FORMAT chip shows "Multiple" on multi-flight rounds with differing formats. 845/845 vitest, 37/37 Playwright, tsc clean.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-11 (Flights — display polish: 4 cosmetic display-only fixes)
+
+### Where we left off
+
+**Four display-only rough edges from live Flights testing are fixed; the Flights track core stays complete.** No scoring/ranking/payout/finalize logic touched — every golden + cross-surface agreement snapshot is byte-identical (confirmed: full suite green, no `-u` regeneration).
+
+- **Fix 1 — blind-draw line accent (`src/components/round/RoundResultsView.tsx`).** The 🎲 blind-draw line on leaderboard/summary/expanded team card rendered in `C.textMuted` (`#9a9a9a`, faint). Recolored to the EXISTING allowance/GHIN-adjusted accent **`#c2410c`** + `fontWeight: 600` at all three sites (team-card header line, expanded-player dropout-fill row, pseudo-player metadata span). No new token — same hex already inlined for the GHIN-Adjusted total in this file. Values (`fillScoreCopy`, ranges, names) untouched.
+- **Fix 2 — admin combined-handicap label (`src/app/admin/tabs/RoundSetup.tsx`).** The three team-card "HC {Σ handicap_index}" labels (e.g. 17.1+16.5→34 — summed indexes aren't a real golf quantity) → **"Team CH {Σ course_handicap}"** (user chose Option 2: combined COURSE handicap — allowance-independent, one field, no per-flight allowance sourcing on this admin surface). New pure helper `src/lib/round/teamCourseHandicap.ts` `sumCourseHandicaps(chs)` returns `null` if ANY player's CH is null → renders `"—"` (never a misleading partial sum), replacing the 3 identical inline reduces. Plumbed `course_handicap` into the RoundSetup `round_players` load + `refreshDropoutStates` refetch + `playerRpInfo` map.
+- **Fix 3 — Winnings round-header size suffix (`src/components/winnings/HistoryPanel.tsx`).** The "(N-per)" suffix used `r.teamSize` (= first team's size) and was wrong on mixed-size flight days (2/3/4/4). Now derives uniformity from `r.teams[].teamSize`: all equal → `(N-per)` (unchanged); differ → `(mixed)`. `loadWinnings.ts` untouched.
+- **Fix 4 — top-level FORMAT chip (`RoundResultsView` Header + `FormatChip`).** The header chip sourced the PRIMARY flight's format → misleading when flights differ. Added an additive optional `FormatChip.titleOverride?: string` prop (forces read-only); Header passes `"Multiple"` when `flightSections` has 2+ entries with `>1` distinct format. Single-flight + same-format multi-flight unchanged; per-section `FlightSectionHeader` chips (already correct) untouched.
+
+**Files:** NEW `src/lib/round/teamCourseHandicap.ts`, `tests/lib/round/teamCourseHandicap.test.ts`. MODIFIED `src/components/round/RoundResultsView.tsx`, `src/components/format/FormatChip.tsx`, `src/components/winnings/HistoryPanel.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `tests/components/round/RoundResultsView.test.tsx`, `tests/components/winnings/HistoryPanel.test.tsx`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(flights): display polish — blind-draw accent, Team CH label, mixed-size winnings, Multiple format chip
+
+### DB changes (today)
+
+- **None.** Display-only. Fix 2 adds `course_handicap` to an existing RoundSetup SELECT (column already on `round_players`); no migration, no schema change, no prod write.
+
+### Tests / verification
+
+- **845/845 vitest** (+ `sumCourseHandicaps` helper unit test incl. null→`—` + negative-control sum; blind-draw accent SSR assertion; Winnings uniform `(2-per)` vs mixed `(mixed)`; multi-flight header `Multiple` vs single-flight format-title vs same-format-no-Multiple). **37/37 Playwright** (unchanged; no e2e asserted on the changed strings — verified by grep). `tsc --noEmit` clean. **No golden / cross-surface / loadRoundsList snapshot changed** — display-only, as intended.
+- Visual spot-check via preview deferred: the exact rendered inline styles + label strings are asserted in the SSR/jsdom component tests (stronger than eyeballing), and the multi-flight + blind-draw + mixed-size scenarios need seeded data not readily available locally.
+
+### Tomorrow's priority
+
+1. **Run the migration-025 relay** (still pending from Session 5 — self-checking dry-run + apply), then `npm run db:backup` to fold 023/024/025 into `schema.sql`.
+2. **Flights track is CORE COMPLETE.** Remaining OPTIONAL: **Flights.6** (homepage team-formation flight targeting) + a **cleanup migration** to drop the frozen legacy finalize RPCs (008/020/021) and the frozen `rounds.format*` columns.
+
+### Considered but not changed (confession)
+
+- **Per item — all four confirmed DISPLAY-ONLY, nothing scored/paid reads them:** (1) blind-draw line reads `loadRoundResults` `blindDraws[]` (computed once; engine applies draws to hole scores BEFORE render); only styling changed. (2) RoundSetup `course_handicap` feeds ONLY the label — scoring reads CH via `teamTotals.ts`/`results.ts` from their own queries, payouts read `round_payouts`. (3) the "(N-per)" string is inert; payout amounts use `perPlayer`/`totalForTeam`. (4) the header chip gets no `onChange` → read-only text. **No "obvious display source" turned out to feed a real value.**
+- **Fix 2 surface correction:** the spec described the figure as on "the team scorecard" and said per-player PH was "already shown"; investigation found it's the admin **RoundSetup** cards summing handicap **index**, where PH isn't shown OR computable (no CH/allowance loaded). Raised with Jonathan → chose Σ COURSE handicap ("Team CH"), not PH. The `/team-card` page's `HCP` (a correctly weighted `computeTeamHandicap`) was NOT the target and is untouched.
+- **Two small reuse decisions:** extracted `sumCourseHandicaps` (consolidated 3 identical reduces I was already editing — testable without RoundSetup's jsdom-hostile harness); added additive `FormatChip.titleOverride` prop (single chip-styling source rather than duplicating the chip in Header).
+- **Null-CH degrade = whole-team `"—"`** (if ANY rostered player's CH is null) rather than omitting players from a partial sum — avoids a misleading number during early team formation.
+- **Out of scope (untouched):** scoring/ranking/payout/finalize, engine/`results.ts` math, the per-section flight chips, blind-draw NET values (styling only), the scorecard-ENTRY blind-draw captions in `scorecard/page.tsx` (the spec targeted the read surfaces). Pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`) left unstaged; `.claude/settings.local.json` left dirty per instruction. **Migration-025 relay still pending** from Session 5 (unrelated to this display-only session).
 
 ---
 
