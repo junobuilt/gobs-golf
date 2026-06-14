@@ -469,6 +469,12 @@ export async function loadRoundResults(
     flightName: string,
   ): TeamRow[] {
     const isStableford = isStablefordFormat(fmt);
+    // Par Competition's per-hole engine teamScore is ALREADY the ±1/0/−1 record
+    // value (no par reference) — so, like Stableford, its leg totals must NOT
+    // subtract par, and its headline total is the summed record (teamParAtScored
+    // is 0 by engine contract). Distinct from isStableford because the per-player
+    // axis stays net-strokes (handled by the best-N netValue branch below).
+    const isParCompetition = fmt === "par_competition";
 
     // D.1 hotfix follow-up: precompute engine + par lookup per team in a first
     // pass so the second pass can do cross-team lookups when computing each
@@ -509,7 +515,10 @@ export async function loadRoundResults(
           if (!holes.includes(hole.holeNumber)) continue;
           if (hole.result.teamScore == null) continue;
           scoreSum += hole.result.teamScore;
-          if (!isStableford) {
+          // Best-N legs are a net delta (subtract par per contributing ball).
+          // Stableford (points) and Par Competition (record) leave the per-hole
+          // value as-is — no par subtraction.
+          if (!isStableford && !isParCompetition) {
             parSum += (parByHole[hole.holeNumber] ?? 0) *
               hole.result.contributingPlayerIds.length;
           }
@@ -655,12 +664,18 @@ export async function loadRoundResults(
               if (!pp) continue;
               if (isStableford) {
                 if (pp.points != null) scoreSum += pp.points;
+              } else if (isParCompetition) {
+                // Drawn player's RECORD over the range: net vs hole par → ±1/0/−1.
+                if (pp.netScore != null) {
+                  const par = drawnCache.parByHole[h] ?? 0;
+                  scoreSum += pp.netScore < par ? 1 : pp.netScore === par ? 0 : -1;
+                }
               } else if (pp.netScore != null) {
                 scoreSum += pp.netScore;
                 parSum += drawnCache.parByHole[h] ?? 0;
               }
             }
-            drawnPlayerNetValue = isStableford ? scoreSum : scoreSum - parSum;
+            drawnPlayerNetValue = (isStableford || isParCompetition) ? scoreSum : scoreSum - parSum;
           } else if (lookup) {
             // Flights S4 — CROSS-FLIGHT fill: the drawn player's team is in
             // ANOTHER flight, so it is not in THIS (receiving) flight's
@@ -692,12 +707,15 @@ export async function loadRoundResults(
               const net = gross - (si == null ? 0 : getHandicapStrokes(receivingPlayingCH, si));
               if (isStableford) {
                 scoreSum += getStablefordPoints(net, par, table);
+              } else if (isParCompetition) {
+                // Record over the range under the receiving flight's allowance.
+                scoreSum += net < par ? 1 : net === par ? 0 : -1;
               } else {
                 scoreSum += net;
                 parSum += par;
               }
             }
-            drawnPlayerNetValue = isStableford ? scoreSum : scoreSum - parSum;
+            drawnPlayerNetValue = (isStableford || isParCompetition) ? scoreSum : scoreSum - parSum;
           }
 
           return {

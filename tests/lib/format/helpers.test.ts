@@ -198,6 +198,13 @@ describe("excludedFromIndividualStats (Wave 1B follow-up)", () => {
     }
   });
 
+  it("does NOT exclude par_competition (individual stats COUNT — locked)", () => {
+    // Each player plays their own ball start-to-finish, so the per-player net
+    // strokes ARE authoritative — par_competition feeds season stats like Best
+    // Ball, unlike Shambles.
+    expect(excludedFromIndividualStats("par_competition")).toBe(false);
+  });
+
   it("returns false for null/undefined", () => {
     expect(excludedFromIndividualStats(null)).toBe(false);
     expect(excludedFromIndividualStats(undefined)).toBe(false);
@@ -209,10 +216,15 @@ describe("allowsIncompleteClose (Wave 1B follow-up)", () => {
     expect(allowsIncompleteClose("shambles")).toBe(true);
   });
 
+  it("is true for par_competition (relaxed close — mirrors Shambles)", () => {
+    expect(allowsIncompleteClose("par_competition")).toBe(true);
+  });
+
   it("is false for every full-completion format (incl. the team-card formats)", () => {
     // Texas Scramble / Alternate Shot are team-card but NOT relaxed-close —
     // every team scores every hole, finalized via finalize_round_team_card.
-    for (const f of FORMAT_ORDER.filter((x) => x !== "shambles")) {
+    const relaxed = new Set<Format>(["shambles", "par_competition"]);
+    for (const f of FORMAT_ORDER.filter((x) => !relaxed.has(x))) {
       expect(allowsIncompleteClose(f)).toBe(false);
     }
   });

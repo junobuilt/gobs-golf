@@ -1732,7 +1732,13 @@ export default function ScorecardPage() {
     ordered.forEach((id, i) => m.set(id, i + 1));
     return m;
   })();
-  const isBestNFormat = roundFormat === "2_ball" || roundFormat === "3_ball" || roundFormat === "best_ball";
+  // Drives the per-player "Ball N" pill + the override-hole banner. Par
+  // Competition reuses the best-net selection (single ball, N=1) so it shows one
+  // "Ball 1" pill like Best Ball; its override-holes are always empty so the
+  // override banner never fires for it regardless.
+  const isBestNFormat =
+    roundFormat === "2_ball" || roundFormat === "3_ball" ||
+    roundFormat === "best_ball" || roundFormat === "par_competition";
   const isOverrideHole = getOverrideHoles(roundFormatConfig).includes(currentHole);
   const playerToRemove = removePlayerModal !== null ? roundPlayers.find(p => p.id === removePlayerModal) : null;
 
@@ -1929,15 +1935,24 @@ export default function ScorecardPage() {
       {scoredHoles > 0 && (
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
           <div style={{ flex: 1, background: "#1e40af", borderRadius: "12px", padding: "10px 14px", color: "white", textAlign: "center" }}>
-            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>Team Net</div>
+            <div style={{ fontSize: "0.6rem", fontWeight: 800, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {roundFormat === "par_competition" ? "Record" : "Team Net"}
+            </div>
             <div style={{ fontSize: "2rem", fontWeight: 900 }}>
               {/* C3: helper handles both stroke delta and Stableford "X pts".
                   For Stableford, teamPar (teamParAtScored) is 0 by engine
                   contract, so teamNet - teamPar collapses to teamNet (the
                   absolute points total) — the helper's Stableford branch
-                  expects an absolute value, and this naturally provides it. */}
+                  expects an absolute value, and this naturally provides it.
+                  Par Competition: teamPar is 0 too, so this collapses to the
+                  summed RECORD; the helper renders +N / E / −N. */}
               {roundFormat ? formatTeamTotal(teamNet - teamPar, roundFormat) : ""}
             </div>
+            {roundFormat === "par_competition" && (
+              <div style={{ fontSize: "0.6rem", fontWeight: 700, opacity: 0.7, letterSpacing: "0.03em", marginTop: "1px" }}>
+                vs course
+              </div>
+            )}
             {/* F9 / B9 cumulative net beneath the headline delta. Tot was
                 redundant with the big headline number (Nassau settles each
                 leg separately; total = headline by construction). */}

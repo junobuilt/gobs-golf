@@ -52,6 +52,10 @@ function fillScoreCopy(
   const isStableford = isStablefordFormat(format);
   const valueStr = formatPlayerNet(value, format);
   if (isStableford) return valueStr;
+  // Par Competition fill = the drawn player's RECORD over the range (defensive;
+  // these teams play short and don't receive in practice). Label it "vs course"
+  // rather than a Net/Gross stroke prefix.
+  if (format === "par_competition") return `${valueStr} vs course`;
   const prefix = getScoringBasis(formatConfig) === "gross" ? "Gross" : "Net";
   return `${prefix} ${valueStr}`;
 }
@@ -86,6 +90,15 @@ function formatHeaderDate(dateStr: string): string {
 function bestNDeltaColor(delta: number): string {
   if (delta === 0) return C.scoreEven;
   return delta < 0 ? C.scoreUnder : C.scoreOver;
+}
+
+// Par Competition team RECORD color — OPPOSITE sign convention to best-N:
+// positive (up on the course) is GOOD → green; negative is red; even neutral.
+// Used ONLY for the team headline + History row, never per-player (an
+// individual's net delta keeps the best-N convention: green = under par).
+function recordColor(record: number): string {
+  if (record === 0) return C.scoreEven;
+  return record > 0 ? C.scoreUnder : C.scoreOver;
 }
 
 function scoreColor(value: number, isStableford: boolean): string {
@@ -394,7 +407,12 @@ function TeamCard({
 }) {
   const isStableford = isStablefordFormat(format);
   const isTeamCard = isTeamCardFormat(format);
-  const totalColor = scoreColor(team.total, isStableford);
+  const isParCompetition = format === "par_competition";
+  // Par Competition's headline is a RECORD (opposite sign convention to best-N);
+  // every other format keeps scoreColor (Stableford blue / best-N delta).
+  const totalColor = isParCompetition
+    ? recordColor(team.total)
+    : scoreColor(team.total, isStableford);
   const { dropoutPairings, roundStartFills, unmatchedPlayers } = pairBlindDraws(team);
   // Map for quick lookup during PlayerSection rendering.
   const dropoutFillByRpId = new Map<number, BlindDrawFill>(
@@ -505,6 +523,14 @@ function TeamCard({
           }}>
             {team.totalLabel}
           </div>
+          {isParCompetition && (
+            <div style={{
+              fontSize: 10, color: C.textMuted,
+              letterSpacing: "0.2px", marginTop: 2, fontWeight: 600,
+            }}>
+              vs course
+            </div>
+          )}
           <div style={{
             fontSize: 10, color: C.textMuted,
             textTransform: "uppercase", letterSpacing: "0.3px",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rankTeams, holesCompleteForTeam, isStablefordFormat } from "@/lib/leaderboard/rank";
+import { rankTeams, holesCompleteForTeam, isStablefordFormat, ranksDescending } from "@/lib/leaderboard/rank";
 
 describe("isStablefordFormat", () => {
   it("returns true for the Stableford-family formats", () => {
@@ -10,6 +10,25 @@ describe("isStablefordFormat", () => {
   it("returns false for best-N formats", () => {
     expect(isStablefordFormat("2_ball")).toBe(false);
     expect(isStablefordFormat("3_ball")).toBe(false);
+  });
+
+  it("returns FALSE for par_competition — individuals stay on net strokes", () => {
+    // The whole point of keeping ranksDescending separate: par_competition must
+    // NOT widen isStablefordFormat (that drives the per-player points axis).
+    expect(isStablefordFormat("par_competition")).toBe(false);
+  });
+});
+
+describe("ranksDescending", () => {
+  it("is true for Stableford family AND par_competition", () => {
+    expect(ranksDescending("stableford_standard")).toBe(true);
+    expect(ranksDescending("gobs_stableford")).toBe(true);
+    expect(ranksDescending("par_competition")).toBe(true);
+  });
+
+  it("is false for best-N formats", () => {
+    expect(ranksDescending("2_ball")).toBe(false);
+    expect(ranksDescending("best_ball")).toBe(false);
   });
 });
 
@@ -33,6 +52,19 @@ describe("rankTeams", () => {
     ];
     const ranked = rankTeams(teams, "stableford_standard");
     expect(ranked.map(t => t.id)).toEqual([2, 1, 3]);
+    expect(ranked.map(t => t.rank)).toEqual([1, 2, 3]);
+  });
+
+  it("ranks par_competition DESCENDING — highest record wins", () => {
+    // Fixture seeded in ASCENDING total order so a no-op (or best-N ascending)
+    // sort would leave it unchanged and FAIL — the descending sort must reorder.
+    const teams = [
+      { id: 1, total: -2 }, // worst record (down 2 on the course)
+      { id: 2, total: 0 },
+      { id: 3, total: 5 }, // best record (up 5)
+    ];
+    const ranked = rankTeams(teams, "par_competition");
+    expect(ranked.map(t => t.id)).toEqual([3, 2, 1]);
     expect(ranked.map(t => t.rank)).toEqual([1, 2, 3]);
   });
 

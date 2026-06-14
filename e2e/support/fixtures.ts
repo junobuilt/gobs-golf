@@ -158,6 +158,53 @@ export function seedShamblesRound(opts: {
 }
 
 /**
+ * Par Competition — match play vs the course (individual best-net selection
+ * mapped to ±1/0/−1 per hole; relaxed close like Shambles). A 4-player Team 1 on
+ * tee 1, 18 flat par-4 holes. Carl carries course_handicap 18 → exactly one
+ * stroke per hole, so his NET can beat an equal GROSS — proving best-NET (not
+ * gross) selection. `scores` seeds exactly the holes a scenario asserts on;
+ * `isComplete` parameterizes the finalize case. slope 113 / rating == par keeps
+ * the seeded course_handicap stable (LT1 self-heal is a no-op).
+ */
+export function seedParCompetitionRound(opts: {
+  roundId: number;
+  scores?: Row[];
+  isComplete?: boolean;
+}): SeedData {
+  const today = todayLocal();
+  return {
+    players: ALL_PLAYERS,
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4Holes(7600),
+    rounds: [
+      {
+        id: opts.roundId,
+        played_on: today,
+        is_complete: !!opts.isComplete,
+        season_id: SEASON.id,
+        format: "par_competition",
+        format_config: {
+          basis: "net",
+          scoring_basis: "net",
+          override_holes: [],
+          submitted_teams: [],
+        },
+        format_locked_at: opts.scores && opts.scores.length ? `${today}T00:00:00Z` : null,
+      },
+    ],
+    round_players: [
+      { id: 8601, round_id: opts.roundId, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 8602, round_id: opts.roundId, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 8603, round_id: opts.roundId, player_id: PLAYERS.carl.id, team_number: 1, tee_id: 1, course_handicap: 18, handicap_index_snapshot: 18 },
+      { id: 8604, round_id: opts.roundId, player_id: PLAYERS.dora.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+    ],
+    scores: opts.scores ?? [],
+  };
+}
+
+/**
  * Phase 1C — a NET team-card Texas Scramble round. ONE team of 2:
  *   Adam course_handicap 10, Betty course_handicap 20.
  *   Scramble 2p team handicap = 0.35*10 + 0.15*20 = 3.5 + 3 = 6.5 → 7 (.5 up).

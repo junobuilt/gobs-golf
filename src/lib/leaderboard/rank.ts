@@ -18,13 +18,23 @@ export function isStablefordFormat(format: Format): boolean {
   return STABLEFORD_FORMATS.includes(format);
 }
 
+// "Does this format rank teams DESCENDING (highest total wins)?" The Stableford
+// family (points) plus Par Competition (record vs the course). Deliberately
+// SEPARATE from isStablefordFormat: par_competition ranks descending at the TEAM
+// level, but its individuals are still ranked by net STROKES (ascending) via the
+// best-N branch in results.ts — widening isStablefordFormat would wrongly flip
+// individuals to a points ranking. Only the team sort direction is shared.
+export function ranksDescending(format: Format): boolean {
+  return isStablefordFormat(format) || format === "par_competition";
+}
+
 // Returns the input rows in display order with `rank` assigned. Pure: does
 // not mutate input. Stable for equal totals (preserves input order).
 export function rankTeams<T>(
   teams: ReadonlyArray<TeamWithTotal<T>>,
   format: Format,
 ): Array<RankedTeam<T>> {
-  const ascending = !isStablefordFormat(format);
+  const ascending = !ranksDescending(format);
 
   // Decorate-sort-undecorate to keep tie-break stable. Sort by total in the
   // direction the format requires; on equal totals, fall back to original

@@ -21,7 +21,20 @@ export type Format =
   // engine (computeHoleResult throws for them). Finalize via
   // finalize_round_team_card (every team scores every hole; no blind draw).
   | "texas_scramble"
-  | "alternate_shot";
+  | "alternate_shot"
+  // Par Competition — match play against the course. Individual scorecard (per-
+  // player `scores`), net-locked, allowance enabled. Per hole the team takes its
+  // best NET ball among the scores PRESENT (single ball, N=1, like Best Ball),
+  // then maps it vs the hole's par: best net < par → +1, = par → 0, > par → −1.
+  // A hole with ZERO scores present is UNRESOLVED (engine teamScore null, not
+  // −1) so the live record sums only resolved holes; the relaxed finalize floor
+  // (≥1 score/hole/team) guarantees every hole is resolved once finalized. The
+  // team headline is the summed record (highest wins → Stableford-family
+  // DESCENDING rank via ranksDescending(); NOT isStablefordFormat — individuals
+  // stay ranked by net strokes via the best-N branch). Relaxed close like
+  // Shambles (finalize_round_relaxed; short teams play short, no blind-draw
+  // receive). Individual season stats COUNT (NOT excludedFromIndividualStats).
+  | "par_competition";
 
 export type FormatConfig = {
   basis: "net" | "gross";

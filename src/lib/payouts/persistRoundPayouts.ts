@@ -45,7 +45,7 @@ import {
   FLOOR_PER_PLAYER,
   type TeamFinish,
 } from "@/lib/payoutEngine";
-import { isStablefordFormat } from "@/lib/leaderboard/rank";
+import { ranksDescending } from "@/lib/leaderboard/rank";
 
 const DEFAULT_BUY_IN = 10;
 const HIO_PER_PLAYER = 1; // §2 fixed contribution
@@ -119,7 +119,10 @@ export async function computeAndPersistRoundPayouts(
     }
 
     const balance = perPlayerPot * headcount;
-    const scoringBasis: TeamFinish["scoring_basis"] = isStablefordFormat(section.format)
+    // Par Competition ranks DESCENDING (highest record wins) like Stableford, so
+    // it takes the "stableford" basis — the payout engine sorts net_score
+    // descending for it. (`net_score` = team.total, already the signed record.)
+    const scoringBasis: TeamFinish["scoring_basis"] = ranksDescending(section.format)
       ? "stableford"
       : "best_n";
     const team_finishes: TeamFinish[] = teams.map((t) => ({

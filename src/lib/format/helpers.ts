@@ -54,11 +54,11 @@ export function excludedFromIndividualStats(
 }
 
 // Wave 1B follow-up — "does this format finalize even with score gaps?" True for
-// Shambles only. Shambles allows a relaxed close (players pick up; the team takes
-// the best N net among the scores PRESENT on each hole), so it finalizes via
-// finalize_round_relaxed (>=1 score per hole per team floor, no blind draw)
-// instead of finalize_round_with_blind_draws. Drives the INDIVIDUAL scorecard's
-// Submit-enable gate and finalize-RPC selection.
+// Shambles and Par Competition. Both allow a relaxed close (players pick up; the
+// team takes its best NET ball among the scores PRESENT on each hole), so they
+// finalize via finalize_round_relaxed (>=1 score per hole per team floor, no
+// blind draw) instead of finalize_round_with_blind_draws. Drives the INDIVIDUAL
+// scorecard's Submit-enable gate and finalize-RPC selection.
 //
 // Phase 1C: the NET team-card formats (Texas Scramble / Alternate Shot) are NOT
 // included — they are full-completion (every team scores every hole) and finalize
@@ -68,7 +68,7 @@ export function excludedFromIndividualStats(
 export function allowsIncompleteClose(
   format: Format | null | undefined,
 ): boolean {
-  return format === "shambles";
+  return format === "shambles" || format === "par_competition";
 }
 
 // Wave 1B — reads the per-round team-card ball count (1 or 2). Null/undefined

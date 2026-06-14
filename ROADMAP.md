@@ -243,6 +243,23 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 
 ---
 
+## Wave 1D — Par Competition ✅ (2026-06-14)
+
+*A net match-play-vs-the-course format. A recombination of shipped pieces: hole selection = best NET ball on the team (single ball, N=1, like Best Ball); the only new logic is the per-hole value (best net < par → +1, = par → 0, > par → −1; a hole with NO score present is UNRESOLVED → null, not −1); aggregation = sum the per-hole points into a team RECORD; ranking = highest record wins (Stableford-FAMILY descending). Path mirrors Shambles end-to-end: individual scorecard, net-locked, allowance enabled, relaxed close.*
+
+| # | Item | Status | Notes |
+| --- | --- | --- | --- |
+| 1D.format | **Par Competition** (`par_competition`) | ✅ | NEW `computeParCompetitionHole` reuses the best-ball NET selection then maps the best net vs par to ±1/0/−1; `accumulatesPar` excludes it (teamParAtScored stays 0 → `individualTeamTotal` collapses to the summed record); fills injected into the per-hole pool like best-N (defensive — teams play short, never receive). Registered across `Format`, `FORMAT_ORDER`/`FORMAT_LABELS`/`DEFAULT_FORMAT_CONFIG`, FormatPicker (net-locked, override-holes hidden/no-op, allowance enabled), `allowsIncompleteClose` (relaxed finalize). **Rank:** NEW narrow `ranksDescending(format)` predicate (Stableford family + par_competition) drives the team sort — deliberately NOT widening `isStablefordFormat`, so individuals stay ranked by NET STROKES via the best-N branch. **Individual season stats COUNT** (NOT in `excludedFromIndividualStats` — each player plays their own ball start-to-finish; picked-up holes post via the existing GHIN Net-Double-Bogey machinery). **Display:** `formatTeamTotal` record branch (+N / E / −N); `recordColor()` for the team headline + History row ONLY (OPPOSITE sign convention to best-N: green = positive/up on the course — per-player Net keeps best-N coloring); "vs course" caption on the leaderboard card + scorecard pill; F9/B9 leg records; History "RECORD" label; single "Ball 1" pill like Best Ball. **Migration `027_par_competition.sql`** (additive/reversible): widen `rounds_format_check` + `flights_format_check`; CREATE OR REPLACE `finalize_round_flights` classifying par_competition in the RELAXED family alongside Shambles (single-flight relaxed RPC 020 is format-agnostic → unchanged). Tests: engine goldens (±1/0/−1 boundaries, best-NET selection negative control, no-score=null, sum/descending, fill joins pool), cross-loader parity (list↔detail record + rank EQUAL, descending), copy/helpers/rank units, Playwright `e2e/parCompetition.spec.ts` (mirror Shambles: picker net-lock/override-no-op, /scorecard routing, per-hole record, no-score blocks finalize, finalize→summary Final + record + "vs course"). |
+
+**Wave 1D exit criteria:** Par Competition appears in the picker (net-locked, override-holes hidden), scores best-net ±1/0/−1 per hole, shows the record headline (+N / E / −N) with "vs course" + green-positive coloring, ranks descending, individuals rank by net strokes, finalizes via the relaxed path, and drives payouts (descending). Engine goldens + cross-surface parity + Playwright green; no existing prod golden moves. Migration 027 dry-run-validated then applied (additive + reversible).
+
+### Parked / future (Par Competition) — build only if Dad asks
+
+- **Challenge holes** — per-hole point weighting for Par Competition (recommended shape: double points ±2 on selected holes, reusing the override-holes multi-select grid + a special-hole banner). `format_config` is schemaless so deferring is structurally free; today `override_holes` is a no-op for par_competition, leaving the grid available for this later meaning.
+- **Bogey-target variant** — a "Bogey competition" (per-hole target = bogey instead of par); a near-free config flip in the same engine (the ±1/0/−1 comparison target becomes par+1).
+
+---
+
 ## Flights — sub-competitions within a round
 
 *Added 2026-05-26. "Flights" make a round a CONTAINER (date / course / season) and move format ownership to a per-flight row: a flight owns format, format_config (the format-behavior keys), the format lock, the handicap allowance, and — later — its own payout run. Foundation-first: Session 1 is schema + an ownership move behind a single resolution helper with ZERO behavior change (every round gets exactly one flight); Sessions 2–4 add the admin UX, read-surface sectioning, and flight-aware finalize. Spec lives in this track + Decisions Locked > Flights.*
@@ -638,6 +655,17 @@ Implications: GOBS Stableford can produce negative team totals when many double-
 - **Scoring basis:** net only. Format's purpose is handicap equalization; gross best ball undermines the equalizer in a mixed-handicap league. Net/gross toggle disabled in the picker for this format and labeled "Best Ball is always net." FormatPicker also force-flips local state back to "net" any time Best Ball is selected so a stale "gross" choice can't slip through.
 - **Override-holes:** apply normally. Best Ball is a best-N (N=1) family format, so an override turns the hole into "all scores count" exactly as it does for 2-Ball / 3-Ball.
 - **Engine:** `computeBestNHole` with N=1 via `defaultBestN("best_ball") === 1`.
+
+### Par Competition format (locked 2026-06-14)
+
+- **Selection rule:** best NET ball on the team per hole (single ball, N=1, exactly like Best Ball / Shambles best-among-present).
+- **Per-hole value:** map the best net vs the hole's par — `< par → +1` (win), `= par → 0` (halve), `> par → −1` (lose). The handicap stroke is already inside each net, so the target is the raw hole par.
+- **No-score hole:** a hole with NO score present from any team member is UNRESOLVED — the engine returns `null` (NOT −1), so the running record sums only resolved holes. The relaxed finalize floor (≥1 score per hole per team) guarantees every hole is resolved once finalized, so this converges to the literal "no-score = −1" rule post-finalize while keeping the LIVE record clean ("Option B", locked).
+- **Aggregation + rank:** sum the per-hole points into a team RECORD; HIGHEST record wins → Stableford-FAMILY descending via the NEW narrow `ranksDescending(format)` predicate. Deliberately NOT added to `isStablefordFormat` — individuals stay ranked by NET STROKES (best-N branch).
+- **Scoring basis / path:** net only (locked in the picker like Best Ball); allowance enabled; override-holes hidden/no-op (parked for "challenge holes"). Individual scorecard (`/scorecard`), relaxed close (`finalize_round_relaxed` single-flight; relaxed family in `finalize_round_flights`), short teams play short (no blind-draw receive — mirrors Shambles).
+- **Individual season stats:** COUNT (each player plays their own ball; picked-up holes post via GHIN Net-Double-Bogey). NOT in `excludedFromIndividualStats`.
+- **Display:** record style `+N / E / −N` with caption "vs course"; color OPPOSITE to best-N (green = positive/up on the course) on the team headline + History row only; per-player Net keeps best-N coloring.
+- **Engine:** `computeParCompetitionHole` (reuses the best-net selection + the ±1/0/−1 transform). Migration `027_par_competition.sql`.
 
 ### Format selection entry point (locked 2026-05-10, supersedes 2026-05-09)
 

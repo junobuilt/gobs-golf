@@ -42,6 +42,13 @@ function formatRowDate(d: string): string {
 
 function scoreColor(total: number, format: Format): string {
   if (isStablefordFormat(format)) return C.points;
+  // Par Competition record: OPPOSITE sign convention to best-N — positive (up on
+  // the course) is green, negative is red.
+  if (format === "par_competition") {
+    if (total > 0) return C.under;
+    if (total < 0) return C.over;
+    return C.ink;
+  }
   if (total < 0) return C.under;
   if (total > 0) return C.over;
   return C.ink;
@@ -240,7 +247,7 @@ function FilteredRow({ round, playerId }: { round: RoundListItem; playerId: numb
           {team.totalLabel}
         </div>
         <div style={{ fontSize: 10, fontWeight: 700, color: C.faint, letterSpacing: "0.4px" }}>
-          {isStableford ? "TEAM PTS" : "TEAM NET"}
+          {teamFormat === "par_competition" ? "RECORD" : isStableford ? "TEAM PTS" : "TEAM NET"}
         </div>
       </div>
     </Link>

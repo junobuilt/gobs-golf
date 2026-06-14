@@ -190,15 +190,19 @@ export default function FormatPicker({
   // are a no-op (one team score per hole), shown dimmed like Stableford.
   const isTeamCardNet =
     selectedFormat === "texas_scramble" || selectedFormat === "alternate_shot";
-  // Best Ball, Shambles, and the team-card NET formats are locked to net. Use a
-  // derived effective basis instead of mutating state in an effect — the toggle
-  // UI reads from this, and commitSave persists this value, so any stale choice
-  // from a previous format can't leak.
-  const isNetLocked = isBestBall || isShambles || isTeamCardNet;
+  // Par Competition: individual best-1 NET selection mapped to ±1/0/−1 vs par.
+  // Net-locked like Best Ball; override-holes are a no-op (record is per-hole vs
+  // par), shown dimmed like Stableford.
+  const isParCompetition = selectedFormat === "par_competition";
+  // Best Ball, Shambles, Par Competition, and the team-card NET formats are
+  // locked to net. Use a derived effective basis instead of mutating state in an
+  // effect — the toggle UI reads from this, and commitSave persists this value,
+  // so any stale choice from a previous format can't leak.
+  const isNetLocked = isBestBall || isShambles || isTeamCardNet || isParCompetition;
   const effectiveScoringBasis: "net" | "gross" =
     isNetLocked ? "net" : scoringBasis;
-  // Override-holes have no effect for Stableford or team-card formats.
-  const isOverrideNoOp = isStableford || isTeamCardNet;
+  // Override-holes have no effect for Stableford, team-card, or Par Competition.
+  const isOverrideNoOp = isStableford || isTeamCardNet || isParCompetition;
   // Alternate Shot is 2-person only. Block selecting it unless every assigned
   // team is exactly 2 (and at least one team exists).
   const teamSizeValues = Object.values(teamSizes);
@@ -496,6 +500,14 @@ export default function FormatPicker({
                     (team handicap — always net)
                   </span>
                 )}
+                {isParCompetition && (
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none", letterSpacing: 0,
+                  }}>
+                    (Par Competition is always net)
+                  </span>
+                )}
               </div>
               <div role="group" aria-label="Scoring basis"
                    style={{
@@ -603,6 +615,15 @@ export default function FormatPicker({
                     letterSpacing: 0,
                   }}>
                     (no effect — one team score per hole)
+                  </span>
+                )}
+                {isParCompetition && (
+                  <span style={{
+                    marginLeft: 8, fontSize: "0.7rem", fontWeight: 600,
+                    color: C.muted, textTransform: "none",
+                    letterSpacing: 0,
+                  }}>
+                    (no effect on Par Competition)
                   </span>
                 )}
               </div>

@@ -13,6 +13,7 @@ export const FORMAT_ORDER: Format[] = [
   "shambles",
   "texas_scramble",
   "alternate_shot",
+  "par_competition",
 ];
 
 export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> = {
@@ -48,6 +49,10 @@ export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> 
     title: "Alternate Shot",
     oneLiner: "Two-player teams, one ball per hole. Net off half the combined handicaps. Lowest net wins.",
   },
+  "par_competition": {
+    title: "Par Competition",
+    oneLiner: "Match play vs the course. Best net ball each hole: win (+1), halve (0), lose (−1). Highest record wins.",
+  },
 };
 
 // Format-aware team total display (C3). Caller passes the natural value for
@@ -57,6 +62,11 @@ export const FORMAT_LABELS: Record<Format, { title: string; oneLiner: string }> 
 //   - Stableford-family: `total` is absolute team points (engine teamScore).
 //     Renders "${total} pts" with Unicode minus on negative totals (GOBS
 //     Stableford defaults can dip below zero from double-bogey-or-worse).
+//   - Par Competition: `total` is the summed RECORD (+N up on the course / E /
+//     −N down). The STRING is identical to best-N (+N / E / −N) — the meaning
+//     (and color: green = positive, OPPOSITE to best-N) is the view's concern.
+//     Kept as an explicit branch so a future best-N string change can't silently
+//     alter the record display.
 //
 // Stableford and best-N have intentionally different input semantics — the
 // helper does not compute deltas, it formats them. Callers decide which value
@@ -69,6 +79,13 @@ export function formatTeamTotal(total: number, format: Format): string {
   if (isStableford) {
     if (total < 0) return `−${-total} pts`;
     return `${total} pts`;
+  }
+
+  if (format === "par_competition") {
+    // Record style: +N / E / −N. Same glyphs as best-N (see above).
+    if (total === 0) return "E";
+    if (total > 0) return `+${total}`;
+    return `−${-total}`;
   }
 
   // best-N stroke-delta
@@ -131,4 +148,8 @@ export const DEFAULT_FORMAT_CONFIG: Record<Format, FormatConfig> = {
   // any config key. override_holes is a no-op (one team score per hole).
   "texas_scramble": { basis: "net", scoring_basis: "net", override_holes: [] },
   "alternate_shot": { basis: "net", scoring_basis: "net", override_holes: [] },
+  // Par Competition: individual best-1 NET selection mapped to ±1/0/−1 vs par.
+  // Net-locked like Best Ball; no best_n/team_ball_count (N is always 1);
+  // override_holes is a no-op (hidden in the picker, like Stableford).
+  "par_competition": { basis: "net", scoring_basis: "net", override_holes: [] },
 };

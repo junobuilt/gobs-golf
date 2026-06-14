@@ -300,7 +300,7 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
     );
     const familyOf = (format: any): "team_card" | "relaxed" | "strict" =>
       format === "texas_scramble" || format === "alternate_shot" ? "team_card"
-        : format === "shambles" ? "relaxed" : "strict";
+        : format === "shambles" || format === "par_competition" ? "relaxed" : "strict";
     const flightOfTeam = (tn: any) => {
       const explicit = ft.find((t) => looseEq(t.team_number, tn));
       const fid = explicit ? explicit.flight_id : firstFlightId;

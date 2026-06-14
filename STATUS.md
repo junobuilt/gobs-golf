@@ -2,10 +2,55 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-11 (Per-team handicap allowance override — migration 026 applied)
-**Session purpose:** Admins can override the handicap allowance for ONE team within a flight (manual, opt-in, admin-only) without splitting the flight's pot or ranking scope. The override changes only that team's NET (so it may reorder the team within its flight — pot SIZE stays fixed). The rule lives once in `effectiveTeamConfig` (`format/helpers.ts`); stored on additive `flight_teams.handicap_allowance` (migration **026, applied + verified in prod**); threaded through the engine (`buildEnginePerTeam`) so the team's player CHs + its received blind-draw fill score under the team-effective allowance; written from the Round Setup team card AND the scorecard header (mid-round change gated by a team-scoped DangerModal). Hidden on team-card formats. 857/857 vitest, 38/38 Playwright, tsc clean.
+**Last updated:** 2026-06-14 (Par Competition format — migration 027 DRAFTED, awaiting relay)
+**Session purpose:** New net match-play-vs-the-course format `par_competition`. Best NET ball per hole mapped to a RECORD point (net < par → +1, = par → 0, > par → −1; no-score hole = unresolved/null); team headline = summed record, HIGHEST wins (Stableford-FAMILY descending via the NEW narrow `ranksDescending` predicate — NOT widening `isStablefordFormat`, so individuals stay ranked by net strokes). Mirrors Shambles end-to-end: individual scorecard, net-locked, allowance enabled, relaxed finalize, short teams play short. Individual season stats COUNT (NOT excluded). Display: `+N / E / −N` with "vs course" caption + green-positive coloring (OPPOSITE sign to best-N) on the team headline + History row only. **Migration 027 is DRAFTED only — NOT applied** (relay gate: dry-run + apply via the Supabase-MCP chat path). 877/877 vitest, 45/45 Playwright, tsc clean.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-14 (Par Competition format — migration 027 DRAFTED, awaiting relay)
+
+### Where we left off
+
+**Par Competition (`par_competition`) is built + green end-to-end; the code is committed but migration 027 is DRAFTED, NOT applied** — it must go through the relay (dry-run ending `ROLLBACK`, then prod apply) via the Supabase-MCP chat path. The format works against prod ONLY after 027 is applied (the `rounds`/`flights` CHECK constraints reject `'par_competition'` until then).
+
+- **Engine (`src/lib/scoring/engine.ts`).** NEW `computeParCompetitionHole` reuses the best-ball NET selection (best 1 net among present, roster-before-fills tie-break) then maps the best net vs hole par → +1/0/−1; a hole with zero present scores returns `teamScore: null` (UNRESOLVED — "Option B", NOT −1). `computeRoundResult`: `accumulatesPar` EXCLUDES par_competition (so `teamParAtScored` stays 0 → `individualTeamTotal` collapses to the summed record); fills are injected into the per-hole pool for par_competition like best-N (defensive — these teams play short and don't receive in practice).
+- **Format surfaces.** `Format` union; `FORMAT_ORDER`/`FORMAT_LABELS`/`DEFAULT_FORMAT_CONFIG` (`copy.ts`); `formatTeamTotal` record branch (`+N / E / −N`); FormatPicker net-lock + override-holes no-op caption + allowance enabled; `allowsIncompleteClose` now `shambles || par_competition` (relaxed finalize + Submit-gate). `excludedFromIndividualStats` deliberately UNCHANGED (par_competition COUNTS) and `isTeamCardFormat` UNCHANGED (individual scorecard).
+- **Rank (`src/lib/leaderboard/rank.ts`).** NEW `ranksDescending(format) = isStablefordFormat || par_competition`; `rankTeams` uses it. `isStablefordFormat` left literal (Stableford-only) so the per-player axis stays net-strokes. Payout ranking (`persistRoundPayouts.ts`) maps par_competition → `"stableford"` basis (descending) via `ranksDescending`.
+- **`results.ts`.** Added `isParCompetition` local; the `legTotal` par-subtraction gate now skips par_competition (per-hole value is already the record); `individualTeamTotal` needed NO change. The blind-draw fill recompute (BOTH same-flight + cross-flight branches) gained a par_competition arm → the fill value is the drawn player's RECORD over the range (defensive/source-side).
+- **Display.** `RoundResultsView`: `recordColor()` (green = positive) for the team headline ONLY + "vs course" caption; `fillScoreCopy` par_competition arm; per-player rows + `formatPlayerNet` keep best-N coloring (individual net strokes). `HistoryRoundList`: record-convention `scoreColor` + "RECORD" label. Scorecard pill: "Record" label + "vs course" caption (record string already flows through `formatTeamTotal`); par_competition added to the `isBestNFormat` ball-pill gate → single "Ball 1" like Best Ball.
+- **Migration `027_par_competition.sql` (DRAFTED).** Widens `rounds_format_check` + `flights_format_check`; CREATE OR REPLACE `finalize_round_flights` with par_competition in the RELAXED `fam`-CTE family (all 4 occurrences) — body otherwise byte-identical to 024. Single-flight relaxed RPC 020 is format-agnostic → unchanged. Additive + reversible.
+
+**Files:** NEW `supabase/migrations/027_par_competition.sql`, `tests/lib/scoring/engine-par-competition.test.ts`, `e2e/parCompetition.spec.ts`. MODIFIED `src/lib/scoring/{types,engine}.ts`, `src/lib/format/{copy,helpers}.ts`, `src/lib/leaderboard/rank.ts`, `src/lib/round/results.ts`, `src/lib/payouts/persistRoundPayouts.ts`, `src/components/round/RoundResultsView.tsx`, `src/components/history/HistoryRoundList.tsx`, `src/components/format/FormatPicker.tsx`, `src/app/round/[id]/scorecard/page.tsx`, `e2e/support/{fixtures,supabaseMock}.ts`, `tests/lib/format/{copy,helpers}.test.ts`, `tests/lib/leaderboard/rank.test.ts`, `tests/lib/round/loadRoundsList.test.ts`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(format): add Par Competition format
+
+### DB changes (today)
+
+- **Migration `027_par_competition.sql` DRAFTED, NOT applied.** Must go through the relay: a dry-run in a single transaction ending `ROLLBACK` (CHECK constraints accept `par_competition`; the `finalize_round_flights` fam-CTE classifies synthetic `par_competition` rows as `relaxed`; flights CHECK accepts), reviewed, then the prod apply via the Supabase-MCP chat path. After apply: `npm run db:backup` to regenerate + commit `schema.sql` (which already LAGS 019/020/021/023/024/025/026).
+
+### Tests / verification
+
+- **877/877 vitest** (+20 over 857: engine goldens — ±1/0/−1 boundaries, caps, best-NET-not-gross negative control, no-score=null, round sum + teamParAtScored 0 + holesScored skips unresolved, fill joins pool; `copy` record strings; `helpers` allowsIncompleteClose true / excludedFromIndividualStats false; `rank` ranksDescending + par_competition descending seeded ascending; cross-loader parity — list↔detail record + rank EQUAL, +10/−6). **45/45 Playwright** (+7: `e2e/parCompetition.spec.ts` — picker net-lock/override-no-op/allowance, /scorecard routing, per-hole record +1/E, best-NET-not-gross, no-score blocks finalize + names hole, finalize→summary Final + "+2" + "vs course"). `tsc --noEmit` clean. **Goldens byte-identical** (no prod golden is a par_competition round; display/refactor sites unchanged for other formats).
+
+### Tomorrow's priority
+
+1. **Relay migration 027** (dry-run → review → prod apply), then `npm run db:backup` to fold 027 (and the lagging 019–026) into `schema.sql` + commit.
+2. **Pre-implementation walkthrough items deferred by the spec:** the per-hole win/halve/lose MARK on the live scorecard (only the running-record pill was built this session) — confirm the desired per-hole treatment with Dad before building.
+3. Flights OPTIONAL remainder: Flights.6 (homepage team-formation flight targeting) + the cleanup migration dropping the frozen legacy RPCs (008/020/021) + frozen `rounds.format*` columns.
+
+### Considered but not changed (confession)
+
+- **Migration 027 NOT applied** (relay gate, per instruction) — drafted only; the format cannot be selected against prod until the CHECK widening lands. The e2e MockDb + FakeSupabase synthesize flights from `rounds.format`, so the suite exercises par_competition without the prod constraint.
+- **Blind-draw "receivers":** per the locked decision, par_competition MIRRORS Shambles (relaxed family → ZERO receive-slots → teams play short, never receive a fill). The engine fills-injection + the `results.ts` fill-recompute par_competition arms + `fillScoreCopy` are therefore DEFENSIVE/source-side correctness (a par_competition player drawn INTO another team renders correctly; the spec §4 "receivers" wording is satisfied as eligibility, not as generated receive-slots). The e2e mock's `familyOf` was updated to classify par_competition as relaxed (lockstep with migration 027), though no single-flight test exercises that branch.
+- **`isStablefordFormat` deliberately NOT widened** — `ranksDescending` is the new predicate so the per-player axis (netValue / individual rankings / `netTotal`) stays net-strokes (best-N branch) for par_competition; only the team sort direction + leg/total "no par subtraction" semantics are shared with Stableford (handled via `isParCompetition`).
+- **No-score hole = `null` (Option B), not stored −1** — the literal spec rule ("no score → −1") is unreachable post-finalize (the relaxed floor guarantees ≥1 score/hole/team), so the live record sums only resolved holes and converges to the literal rule once complete. Confirmed with the user before build.
+- **Scorecard pill color:** the pill renders white-on-blue (no per-value color on ANY format), so the opposite-sign coloring applies only on the leaderboard card / History row (where color is used); the pill gets the "Record"/"vs course" labels only. Per-hole win/halve/lose MARK intentionally NOT built (spec deferred it to the walkthrough).
+- **`isBestNFormat` (scorecard) now includes par_competition** for the ball-pill gate (single "Ball 1") — its other use (the override-hole banner) is inert because par_competition's `override_holes` is always empty.
+- **Out of scope (untouched):** pot size / payout distribution mechanics beyond rank direction; finalize RPC bodies other than the fam-CTE classifier; the frozen legacy RPCs/columns; homepage team-formation flight targeting; the "Format set (locked 2026-05-10)" historical Decisions-Locked count (new formats are added as separate waves without editing that dated line — consistent with shambles/texas/altshot). Pre-existing untracked/dirty files (`.claude/*`, `INVESTIGATION_2026-05-09.md`, `leaderboard-mockup.html`, `flights-round-setup-mockup.html`) left untouched; `.claude/settings.local.json` left dirty per instruction.
 
 ---
 

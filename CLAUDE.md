@@ -118,6 +118,11 @@ fetch it alongside `ROADMAP.md` before doing anything else.
   PowerShell here-string syntax (`@'...'@`) in bash commands — it leaks
   literal `@` characters (bit us on commit messages twice). Use bash
   heredocs (`<<'EOF' ... EOF`) for multi-line content.
+- **Relayed migration SQL (dry-run or apply) must be fully self-contained.**
+  When handing migration SQL to the user to relay via the Supabase-MCP chat,
+  inline every statement verbatim — no file-reference placeholders or "paste
+  the function body from migration X here" stubs — because the MCP relay path
+  cannot read repo files.
 
 ---
 

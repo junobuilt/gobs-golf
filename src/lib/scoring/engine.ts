@@ -241,6 +241,81 @@ function computeStablefordHole(input: HoleInput, table: StablefordPointTable): H
   };
 }
 
+// ─── Par Competition ─────────────────────────────────────────────────────────
+// Match play against the course. Reuses the best-ball NET selection (best 1 net
+// among the scores PRESENT, including any blind-draw fills, roster-before-fills
+// tie-break) then maps the best net vs the hole's par to a per-hole RECORD point:
+//   best net < par → +1   (win the hole)
+//   best net = par → 0     (halve)
+//   best net > par → −1    (lose the hole)
+// A hole with ZERO scores present is UNRESOLVED → teamScore null (NOT −1): the
+// running record sums only resolved holes, and the relaxed finalize floor
+// guarantees every hole is resolved once the round is complete (locked decision
+// "Option B"). The handicap stroke is already inside each net, so the comparison
+// target is just the hole's par. Single ball, so contributingPlayerIds holds the
+// one selected player (drives the scorecard's single "Ball 1" pill).
+function computeParCompetitionHole(input: HoleInput): HoleResult {
+  const { hole, players } = input;
+
+  const perPlayer: PlayerHoleResult[] = players.map(p => {
+    const handicapStrokes = getHandicapStrokes(p.courseHandicap, hole.strokeIndex);
+    const netScore = p.grossScore == null ? null : p.grossScore - handicapStrokes;
+    return {
+      playerId: p.playerId,
+      grossScore: p.grossScore,
+      netScore,
+      handicapStrokes,
+      isContributing: false,
+      points: null, // record points live on teamScore, not per-player
+    };
+  });
+
+  // Blind-draw fills join the per-hole pool as candidate balls (defensive: under
+  // the locked decision par_competition teams play short and never receive a
+  // fill, but if one ever lands it must score correctly). netScore precomputed
+  // from the DRAWN player's own tee by computeRoundResult — not re-derived here.
+  const fillResults: PlayerHoleResult[] = (input.fills ?? []).map(f => ({
+    playerId: f.playerId,
+    grossScore: f.grossScore,
+    netScore: f.netScore,
+    handicapStrokes:
+      f.grossScore != null && f.netScore != null ? f.grossScore - f.netScore : 0,
+    isContributing: false,
+    points: null,
+  }));
+
+  // Roster players first so input-order tie-breaking favors team members over
+  // fills (a roster player and a fill with equal net → the roster player).
+  const pool: PlayerHoleResult[] = [...perPlayer, ...fillResults];
+
+  const candidates = pool
+    .map((pp, idx) => ({ playerId: pp.playerId, netScore: pp.netScore, idx }))
+    .filter(c => c.netScore != null) as Array<{
+      playerId: string;
+      netScore: number;
+      idx: number;
+    }>;
+
+  // No score present on this hole → unresolved (Option B): null, not −1.
+  if (candidates.length === 0) {
+    return { teamScore: null, contributingPlayerIds: [], perPlayer };
+  }
+
+  candidates.sort((a, b) => a.netScore - b.netScore || a.idx - b.idx);
+  const best = candidates[0];
+  const point = best.netScore < hole.par ? 1 : best.netScore === hole.par ? 0 : -1;
+
+  for (const pp of perPlayer) {
+    pp.isContributing = pp.playerId === best.playerId;
+  }
+
+  return {
+    teamScore: point,
+    contributingPlayerIds: [best.playerId],
+    perPlayer,
+  };
+}
+
 export function computeHoleResult(input: HoleInput): HoleResult {
   switch (input.format) {
     case "2_ball":
@@ -260,6 +335,10 @@ export function computeHoleResult(input: HoleInput): HoleResult {
     // close; count-2 degrades to best-available). See computeBestNHole.
     case "shambles":
       return computeBestNHole(input);
+    // Par Competition: best NET ball per hole mapped to ±1/0/−1 vs par. Reuses
+    // the best-ball NET selection but a distinct per-hole value (see above).
+    case "par_competition":
+      return computeParCompetitionHole(input);
     // Phase 1C: NET team-card formats are scored at the TEAM level in
     // results.ts (one team ball per hole from `team_scores`), never through the
     // per-player engine. Reaching here means a caller misrouted a team-card
@@ -311,6 +390,12 @@ export function computeRoundResult(input: RoundInput): RoundResult {
   // for Stableford formats, which are points-based and have no team-level
   // "par" reference.
   const isBestN = format === "2_ball" || format === "3_ball" || format === "best_ball";
+  // Par Competition reuses the best-ball NET selection (so fills, if any, must be
+  // injected into the per-hole pool exactly like best-N), but its per-hole
+  // teamScore is already the ±1/0/−1 RECORD value — it must NOT accrue a par
+  // reference (teamParAtScored stays 0 so individualTeamTotal collapses to the
+  // summed record).
+  const isParCompetition = format === "par_competition";
   // Shambles (Wave 1B follow-up) is a net best-ball format: it accrues a par
   // reference like best-N (so the team total reads as a net delta vs par) but
   // takes NO blind-draw fills — short teams play short under the relaxed close.
@@ -327,9 +412,10 @@ export function computeRoundResult(input: RoundInput): RoundResult {
         courseHandicap: p.courseHandicap,
       })),
       manualContributors: manualContributors?.[hole.holeNumber],
-      // Best-N only: inject blind-draw fills into the per-hole pool. Stableford
-      // formats leave this undefined and accrue fills via blindDrawTotal below.
-      fills: isBestN ? resolveBestNFills(blindDraws, hole.holeNumber) : undefined,
+      // Best-N (and Par Competition, which reuses the best-net selection) inject
+      // blind-draw fills into the per-hole pool. Stableford formats leave this
+      // undefined and accrue fills via blindDrawTotal below.
+      fills: isBestN || isParCompetition ? resolveBestNFills(blindDraws, hole.holeNumber) : undefined,
     };
     const result = computeHoleResult(holeInput);
     perHole.push({ holeNumber: hole.holeNumber, result });

@@ -50,6 +50,12 @@ function seed(): FakeData {
         format: "2_ball", format_config: { basis: "net", best_n: 2, override_holes: [] },
         format_locked_at: null, created_at: "2026-05-27T00:00:00Z",
       },
+      // Par Competition round — record vs the course (highest wins, descending).
+      {
+        id: 4, played_on: "2026-06-03", course_id: 1, is_complete: true,
+        format: "par_competition", format_config: { basis: "net", override_holes: [] },
+        format_locked_at: "2026-06-03T00:00:00Z", created_at: "2026-06-03T00:00:00Z",
+      },
     ],
     tees: [{ id: 1, color: "White", slope_rating: 120, course_rating: 70, par: 72, sort_order: 1 }],
     holes: holes(),
@@ -64,6 +70,12 @@ function seed(): FakeData {
       { id: 202, round_id: 2, player_id: 202, tee_id: 1, team_number: 1, course_handicap: 10, dropped_after_hole: null },
       { id: 203, round_id: 2, player_id: 203, tee_id: 1, team_number: 2, course_handicap: 8, dropped_after_hole: null },
       { id: 204, round_id: 2, player_id: 204, tee_id: 1, team_number: 2, course_handicap: 12, dropped_after_hole: null },
+      // Round 4 — Par Competition. Team 1 (CH 6 / 10, gross 4) is up on the
+      // course; Team 2 (CH 8 / 12, gross 5) is down. Records: T1 +10, T2 −6.
+      { id: 401, round_id: 4, player_id: 201, tee_id: 1, team_number: 1, course_handicap: 6, dropped_after_hole: null },
+      { id: 402, round_id: 4, player_id: 202, tee_id: 1, team_number: 1, course_handicap: 10, dropped_after_hole: null },
+      { id: 403, round_id: 4, player_id: 203, tee_id: 1, team_number: 2, course_handicap: 8, dropped_after_hole: null },
+      { id: 404, round_id: 4, player_id: 204, tee_id: 1, team_number: 2, course_handicap: 12, dropped_after_hole: null },
     ],
     players: [
       { id: 201, full_name: "Alice Adams", display_name: "Alice", handicap_index: 6, preferred_tee_id: 1, is_active: true },
@@ -82,6 +94,11 @@ function seed(): FakeData {
       ...scoresFor(202, 4, 2100),
       ...scoresFor(203, 5, 2200),
       ...scoresFor(204, 6, 2300),
+      // Round 4: Team 1 gross 4 (up on the course), Team 2 gross 5 (down).
+      ...scoresFor(401, 4, 4000),
+      ...scoresFor(402, 4, 4100),
+      ...scoresFor(403, 5, 4200),
+      ...scoresFor(404, 5, 4300),
     ],
   };
 }
@@ -93,7 +110,7 @@ describe("loadRoundsList", () => {
 
   it("returns only finalized rounds (the in-progress round is excluded)", async () => {
     const items = await loadRoundsList();
-    expect(items.map(i => i.roundId).sort()).toEqual([1, 2]);
+    expect(items.map(i => i.roundId).sort()).toEqual([1, 2, 4]);
   });
 
   it("ranks teams and exposes playerIds for the player filter", async () => {
@@ -132,6 +149,33 @@ describe("loadRoundsList", () => {
       expect(t.totalLabel).toBe(detailByTeam.get(t.teamNumber));
     }
     expect(list.teams[0].totalLabel).toMatch(/pts$/);
+  });
+
+  // Par Competition cross-loader parity: list RANK and RECORD string must equal
+  // the detail, AND the descending rank must put the higher record first.
+  it("record + rank match the detail — par_competition (descending, record style)", async () => {
+    const list = (await loadRoundsList()).find(i => i.roundId === 4)!;
+    const detail = await loadRoundResults(4);
+    expect(detail.status).toBe("ok");
+    if (detail.status !== "ok") return;
+
+    // Higher record wins → Team 1 (+10) ranks above Team 2 (−6).
+    expect(list.teams[0].teamNumber).toBe(1);
+    expect(list.teams.map(t => t.rank)).toEqual([1, 2]);
+
+    const detailByTeam = new Map(
+      detail.data.teams.map(t => [t.id, { rank: t.rank, label: t.totalLabel }]),
+    );
+    for (const t of list.teams) {
+      expect(t.rank).toBe(detailByTeam.get(t.teamNumber)!.rank);
+      expect(t.totalLabel).toBe(detailByTeam.get(t.teamNumber)!.label);
+    }
+
+    // Record style (+N / E / −N), and the winner is genuinely positive (up on
+    // the course) — proving the opposite-sign convention, not a best-N delta.
+    expect(list.teams[0].totalLabel).toBe("+10");
+    expect(list.teams[1].totalLabel).toBe("−6");
+    expect(list.teams[0].total).toBeGreaterThan(0);
   });
 });
 

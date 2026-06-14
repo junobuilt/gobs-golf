@@ -32,4 +32,19 @@ describe("formatTeamTotal", () => {
   it("gobs_stableford: negative total renders with Unicode minus", () => {
     expect(formatTeamTotal(-3, "gobs_stableford")).toBe("−3 pts");
   });
+
+  // Par Competition: the input is a RECORD (up on the course = positive). The
+  // string is the same +N / E / −N glyphs as best-N (the meaning + color are the
+  // view's concern), with Unicode U+2212 on negatives.
+  it("par_competition: positive record renders as '+N'", () => {
+    expect(formatTeamTotal(3, "par_competition")).toBe("+3");
+  });
+
+  it("par_competition: zero record renders as 'E'", () => {
+    expect(formatTeamTotal(0, "par_competition")).toBe("E");
+  });
+
+  it("par_competition: negative record renders with Unicode minus (U+2212)", () => {
+    expect(formatTeamTotal(-2, "par_competition")).toBe("−2");
+  });
 });
