@@ -42,6 +42,10 @@ export interface SeedData {
   // Blind-draw fills (migration 008). Written by the finalize RPCs; seedable so a
   // finalized round can render a cross-flight draw on the summary.
   blind_draws?: Row[];
+  // Backup Admin PIN (migration 028). Written by the mint server action; seedable
+  // so a backup-PIN status can be rendered without minting first.
+  admin_backup_pin?: Row[];
+  admin_backup_audit?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -61,6 +65,9 @@ const KNOWN_TABLES = [
   "flight_teams",
   // Blind-draw fills (Session 4 finalize writes these).
   "blind_draws",
+  // Backup Admin PIN (migration 028).
+  "admin_backup_pin",
+  "admin_backup_audit",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */

@@ -2,10 +2,52 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-14 (Par Competition format — migration 027 DRAFTED, awaiting relay)
-**Session purpose:** New net match-play-vs-the-course format `par_competition`. Best NET ball per hole mapped to a RECORD point (net < par → +1, = par → 0, > par → −1; no-score hole = unresolved/null); team headline = summed record, HIGHEST wins (Stableford-FAMILY descending via the NEW narrow `ranksDescending` predicate — NOT widening `isStablefordFormat`, so individuals stay ranked by net strokes). Mirrors Shambles end-to-end: individual scorecard, net-locked, allowance enabled, relaxed finalize, short teams play short. Individual season stats COUNT (NOT excluded). Display: `+N / E / −N` with "vs course" caption + green-positive coloring (OPPOSITE sign to best-N) on the team headline + History row only. **Migration 027 is DRAFTED only — NOT applied** (relay gate: dry-run + apply via the Supabase-MCP chat path). 877/877 vitest, 45/45 Playwright, tsc clean.
+**Last updated:** 2026-06-14 (Backup Admin PIN — migration 028 DRAFTED, awaiting relay)
+**Session purpose:** Self-serve expiring **Backup Admin PIN** (H9). Primary admin mints a temporary 4-digit substitute PIN (1/3/7-day preset, default 3) from Admin Settings → Security; one-time reveal; "Disable now". Peppered-scrypt hash at rest; `admin_backup_session` cookie HMAC-signed with `b.`-domain-separation prefix + `maxAge` bound to credential expiry; middleware immediate-revoke re-check on the **backup path only** (primary path untouched — R6). Migration 028 (`admin_backup_pin` + `admin_backup_audit`, allow-all RLS to match repo posture) is **DRAFTED only — NOT applied** (relay gate). 900/900 vitest, 46/46 Playwright, tsc clean. **⚠ TWO migrations now await relay: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first.**
+
+*Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-14 (Backup Admin PIN — migration 028 DRAFTED, awaiting relay)
+
+### Where we left off
+
+**Backup Admin PIN (H9) is built + green end-to-end; code committed, migration 028 DRAFTED, NOT applied.** Two migrations now sit in the relay queue — **027 (Par Competition) must be relayed before 028.**
+
+- **What it does.** A second, temporary admin credential. Primary admin opens Admin → Settings → **Security → "Backup Admin Access"**, enters a 4-digit PIN, picks 1/3/7 days (default 3), taps **Enable** → the PIN + expiry are revealed ONCE (stays until "Done — I've saved it"). Status line shows "Active until …" / "Inactive". **"Disable now"** revokes immediately. The primary PIN flow (D1, `828bbf1`) is byte-for-byte unchanged.
+- **Hashing (`src/lib/backupPin.ts`, Node).** `scrypt(pin + pepper, salt)` → stored `scrypt$N$salt$hash`. Pepper = the server-only `ADMIN_COOKIE_SECRET` (NOT in the DB). Rationale: under the repo's allow-all RLS the hash is anon-readable and a 4-digit PIN is 10⁴ candidates — bare scrypt would be reversible; the pepper (an anon reader lacks it) makes the at-rest hash meaningful. Expiry window remains the primary control.
+- **Cookie (`src/lib/adminAuth.ts`, Edge-safe Web Crypto).** NEW `signBackupSession`/`verifyBackupSession`. Value `b.<credId>.<expiresAtMs>.<hmac>`, signed with `ADMIN_COOKIE_SECRET`; the `b.` prefix is folded into the signed message → a primary cookie can't be replayed as backup or vice-versa (tested both ways). Verify checks HMAC + expiry with NO DB. `maxAge = min(90d, secondsUntilExpiry)` (R3).
+- **Login (`src/app/admin/login/actions.ts`).** Primary path FIRST, unchanged (R6). On primary miss → `tryBackupLogin`: anon-client read of the single active row (`revoked_at IS NULL AND expires_at > now()`), `verifyBackupPin` scrypt compare, set `admin_backup_session`, insert an `admin_backup_audit` row (ip/ua from `headers()`, best-effort), redirect.
+- **Middleware (`src/middleware.ts`, Edge).** Primary cookie first (no new cost). On primary miss → `verifyBackupSession` (HMAC+expiry) then `backupCredentialLive(credId)` — an Edge `fetch` re-check that the row is still unrevoked + unexpired (R4 immediate-revoke). **Backup path only**; **fails CLOSED** on any error.
+- **Server actions (`src/app/admin/settings/backupActions.ts`, Node).** `mintBackupPin` (validate 4-digit + clamp days to 1/3/7, revoke-then-insert supersede, return PIN+expiry once), `disableBackupPin`, `getBackupPinStatus` — all via the normal anon client.
+- **UI (`src/app/admin/tabs/Settings.tsx`).** NEW `BackupAdminCard` under a "Security" SectionHeader above "Coming Soon". Calls the server actions only (never touches the table from the client). Matches existing Card/SettingRow/navy-green conventions; large tap targets.
+- **Migration `028_backup_admin_pin.sql` (DRAFTED).** `admin_backup_pin` (id, pin_hash, expires_at, created_at, revoked_at) + `admin_backup_audit` (id, credential_id FK, logged_in_at, ip, user_agent), both `ENABLE ROW LEVEL SECURITY + "Allow all"` to match the repo posture. Additive + reversible; no backup needed.
+
+### Coverage note (honest boundary)
+
+The backup-PIN **data path is entirely server-side** (server actions + Edge middleware fetch). The e2e harness mocks Supabase at the **browser layer only**, so it cannot intercept these — that's also why the primary login works in e2e (it touches zero Supabase). Faithful end-to-end drive would need a server-reachable mock (new infra, out of LEAN scope). So **vitest carries the logic**; Playwright covers only what it can drive faithfully (card render inside the intact primary gate). This is documented in `e2e/backupPin.spec.ts`. → tracked: holistic RLS hardening + the server-mock gap (ROADMAP TD34).
+
+**Files:** NEW `src/lib/backupPin.ts`, `src/app/admin/settings/backupActions.ts`, `supabase/migrations/028_backup_admin_pin.sql`, `tests/lib/{backupPin,adminAuth-backup,middleware-backup,backupActions}.test.ts`, `e2e/backupPin.spec.ts`. MODIFIED `src/lib/adminAuth.ts`, `src/middleware.ts`, `src/app/admin/login/actions.ts`, `src/app/admin/tabs/Settings.tsx`, `e2e/support/supabaseMock.ts`, `ROADMAP.md`, `STATUS.md`.
+
+### Today's commits
+
+- (this session) feat(admin): add expiring Backup Admin PIN
+
+### DB changes (today)
+
+- **Migration `028_backup_admin_pin.sql` DRAFTED, NOT applied.** Relay AFTER 027: dry-run in one transaction ending `ROLLBACK` (creates both tables + allow-all policies, verifies, rolls back), then prod apply via the Supabase-MCP chat path. After apply: `npm run db:backup` to regenerate + commit `schema.sql`.
+
+### Tests / verification
+
+- **900/900 vitest** (+23: `backupPin` hash-not-plaintext/roundtrip/pepper-load-bearing; `adminAuth-backup` expiry-binding/domain-separation-both-ways/tamper/forged-cred; `middleware-backup` immediate-revoke grant+deny+fail-closed; `backupActions` mint-stores-verifying-hash/supersede/duration-clamp). **46/46 Playwright** (+1: `backupPin.spec.ts` card render inside intact primary gate). `tsc --noEmit` clean. Goldens untouched (no scoring-engine change).
+
+### Tomorrow's priority
+
+- **Relay migration 027 (Par Competition) THEN 028 (Backup PIN)** via the Supabase-MCP chat path (dry-run → apply each). Then `npm run db:backup` + commit the regenerated `schema.sql` (already lagging 019–026).
+- Optional follow-on: holistic RLS hardening (TD34); Flights.6 homepage flight targeting.
 
 ---
 

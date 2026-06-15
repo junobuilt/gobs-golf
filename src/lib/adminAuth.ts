@@ -73,3 +73,60 @@ export async function verifySession(
   const expected = await hmacHex(tsStr, secret);
   return timingSafeEqual(sig, expected);
 }
+
+// ── Backup admin session (expiring substitute credential) ────────────────────
+// Distinct cookie from `admin_session`. Value shape: `b.<credId>.<expiresAtMs>.<hmac>`.
+// The `b.` prefix is folded into the signed message so a primary-session cookie
+// (whose message is pure digits) can never be replayed as a backup cookie, and
+// vice-versa — domain separation while reusing ADMIN_COOKIE_SECRET. Like the
+// primary helpers this is pure Web Crypto so middleware (Edge) can verify it
+// with NO DB round-trip (expiry + signature only); the per-request credential
+// re-check that gives immediate-revoke lives in the middleware itself.
+
+function backupMessage(credId: number, expiresAtMs: number): string {
+  return `b.${credId}.${expiresAtMs}`;
+}
+
+export async function signBackupSession(
+  credId: number,
+  expiresAtMs: number
+): Promise<string> {
+  const secret = getSecret();
+  if (!secret) return "";
+  const message = backupMessage(credId, expiresAtMs);
+  const sig = await hmacHex(message, secret);
+  return `${message}.${sig}`;
+}
+
+/**
+ * Verify a backup-session cookie's signature + expiry (no DB). Returns the
+ * decoded `{ credId, expiresAtMs }` when authentic and unexpired, else null so
+ * the caller can branch. The credential's *live* status (revoked / superseded)
+ * is NOT checked here — that's the middleware's per-request DB re-check.
+ */
+export async function verifyBackupSession(
+  value: string | undefined | null
+): Promise<{ credId: number; expiresAtMs: number } | null> {
+  if (!value) return null;
+  const secret = getSecret();
+  if (!secret) return null;
+
+  const parts = value.split(".");
+  if (parts.length !== 4) return null;
+  const [prefix, credStr, tsStr, sig] = parts;
+
+  if (prefix !== "b") return null;
+  if (!/^\d+$/.test(credStr)) return null;
+  if (!/^\d+$/.test(tsStr)) return null;
+  if (sig.length !== HEX_HMAC_LEN) return null;
+  if (!/^[0-9a-f]+$/.test(sig)) return null;
+
+  const credId = Number(credStr);
+  const expiresAtMs = Number(tsStr);
+  if (!Number.isFinite(credId) || !Number.isFinite(expiresAtMs)) return null;
+  if (expiresAtMs <= Date.now()) return null;
+
+  const expected = await hmacHex(backupMessage(credId, expiresAtMs), secret);
+  if (!timingSafeEqual(sig, expected)) return null;
+  return { credId, expiresAtMs };
+}
