@@ -2,12 +2,45 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-14 (Backup Admin PIN — migration 028 DRAFTED, awaiting relay)
+**Last updated:** 2026-06-16 (Team Recommendation Engine I6 — fully shipped, no migration)
 **Session purpose:** Self-serve expiring **Backup Admin PIN** (H9). Primary admin mints a temporary 4-digit substitute PIN (1/3/7-day preset, default 3) from Admin Settings → Security; one-time reveal; "Disable now". Peppered-scrypt hash at rest; `admin_backup_session` cookie HMAC-signed with `b.`-domain-separation prefix + `maxAge` bound to credential expiry; middleware immediate-revoke re-check on the **backup path only** (primary path untouched — R6). Migration 028 (`admin_backup_pin` + `admin_backup_audit`, allow-all RLS to match repo posture) is **DRAFTED only — NOT applied** (relay gate). 900/900 vitest, 46/46 Playwright, tsc clean. **⚠ TWO migrations now await relay: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first.**
 
 *Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-16 (Team Recommendation Engine — I6 shipped, no migration)
+
+### Where we left off
+
+**I6 Team Recommendation Engine is fully built and green — no migration required.** Pure function over existing reads.
+
+- **Engine (`src/lib/teamRecommend/recommend.ts`).** `recommendTeams(input)` pure function. Snake-draft seed (CH desc, tier-shuffled by seeded PRNG for re-roll); **two-phase local search**: feasible branch (seed in band) minimizes noveltyCost while keeping `spread ≤ toleranceCH`; infeasible branch (seed over band) lex-minimizes `(spread, novelty)` then hands off to feasible loop if it drops into band. 500-iteration cap each. Mulberry32 PRNG — same seed → identical output (re-roll = new seed). `partitionSizes` evens the remainder across k teams.
+- **`computePairMatrix` (`src/lib/playedWith/compute.ts`).** New pure export. Builds a symmetric pair-count closure from `RoundPlayerRow[]` using the same round+team partnership semantics as `computeBuckets`. Engine pair counts now match the Played-With tab exactly.
+- **CH derivation in modal.** `round_players.course_handicap` snapshot preferred; when null (common pre-scorecard), the modal derives CH on-the-fly via `computeCourseHandicap(handicap_index, slope, rating, par)` + tee fallback chain `round_players.tee_id ?? players.preferred_tee_id ?? DEFAULT_TEE_ID`. Only players with null `handicap_index` excluded. Engine always receives concrete CH.
+- **`RecommendTeamsModal` (`src/components/admin/RecommendTeamsModal.tsx`).** Bottom-sheet modal with: Split-by segmented toggle + stepper (Team size | # of teams), Balance tolerance stepper (default 2.5), SeasonToggle scope (This season / All-time). Generate fetches `fetchPlayedWithRows` + builds pair matrix + runs engine. Preview: per-team cards with avg CH, spread + repeat-pairings header, amber infeasible warning, "Why these teams?" disclosure. Re-roll button. Apply writes via the A.2 `autosaveAssignment` write path; routes through `DangerModal` if teams already exist.
+- **RoundSetup wiring.** New `activeSeasonId` + `activeSeason` state (captured from `ensureSeasonAndRoundShell` and round load). `playerRpInfo` extended with `teeId`. "Recommend Teams" secondary green button above "Edit Teams" in active view. `applyRecommendation` handler clears existing assignments, writes new ones, awaits `drainWrites()`, switches to edit mode.
+- **Spec:** `docs/SPEC_I6_team_recommendation_engine.md`.
+
+### Today's commits
+
+- (this session) feat(admin): I6 team recommendation engine
+
+### DB changes (today)
+
+- **None.** Pure code change. No migration.
+
+### Tests / verification
+
+- **922/922 vitest** (+22: `pairMatrix.test.ts` 7 cases, `recommend.test.ts` 15 cases). `tsc --noEmit` clean (only pre-existing `playwright.config.ts` Playwright-type error). Playwright suite NOT run (no e2e spec added — this feature requires a live Supabase round with players for meaningful e2e, and the pure-function coverage is comprehensive).
+
+### Tomorrow's priority
+
+- **Relay migration 027 (Par Competition) THEN 028 (Backup PIN)** (still pending from prior session).
+- Optional: holistic RLS hardening (TD34); Flights.6 homepage flight targeting.
+- Size-mode rounding followup: confirm with Thomas/Dad that 10 @ size 4 → `[4,3,3]` (even-out) matches mental model, or one-line flip to `[4,4,2]`.
 
 ---
 

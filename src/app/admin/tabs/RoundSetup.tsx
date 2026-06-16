@@ -23,6 +23,8 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import type { Format, FormatConfig } from "@/lib/scoring/types";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 import SeasonStartModal from "@/components/season/SeasonStartModal";
+import RecommendTeamsModal from "@/components/admin/RecommendTeamsModal";
+import type { RecommendResult } from "@/lib/teamRecommend";
 
 interface Props {
   allPlayers: Player[];
@@ -48,6 +50,8 @@ export default function RoundSetup({ allPlayers }: Props) {
   const [roster, setRoster] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Record<number, Player[]>>({});
   const [existingRoundId, setExistingRoundId] = useState<number | null>(null);
+  const [activeSeasonId, setActiveSeasonId] = useState<number | null>(null);
+  const [activeSeason, setActiveSeason] = useState<import("@/lib/seasons").Season | null>(null);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
   const [roundFormat, setRoundFormat] = useState<Format | null>(null);
   const [roundFormatConfig, setRoundFormatConfig] = useState<FormatConfig | null>(null);
@@ -62,6 +66,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   // the new season is named.
   const [seasonPromptOpen, setSeasonPromptOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<"format" | "teams" | null>(null);
+  const [recommendModalOpen, setRecommendModalOpen] = useState(false);
   // Phase D.2: was_finalized is the latch from migration 012 that tells the
   // banner + reopen flow whether this round was ever finalized. A reopened
   // round is is_complete=false AND was_finalized=true. Used to decide
@@ -112,7 +117,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   // join, not the round_players row). Refreshed by refreshDropoutStates()
   // after a mark/undo write.
   const [playerRpInfo, setPlayerRpInfo] = useState<
-    Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null }>
+    Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null; teeId: number | null }>
   >({});
 
   // Per-player serialization for round_players writes. toggleInRoster fires
@@ -144,7 +149,7 @@ export default function RoundSetup({ allPlayers }: Props) {
     if (!existingRoundId) return;
     const { data } = await supabase
       .from("round_players")
-      .select("id, player_id, dropped_after_hole, course_handicap")
+      .select("id, player_id, dropped_after_hole, course_handicap, tee_id")
       .eq("round_id", existingRoundId);
     if (!data) return;
     setPlayerRpInfo(prev => {
@@ -154,6 +159,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           rpId: r.id,
           droppedAfterHole: r.dropped_after_hole ?? null,
           courseHandicap: r.course_handicap ?? null,
+          teeId: r.tee_id ?? null,
         };
       });
       return next;
@@ -205,14 +211,19 @@ export default function RoundSetup({ allPlayers }: Props) {
       setBottomSheetPlayer(null);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
-      const { data: rounds } = await supabase
-        .from("rounds").select("id, is_complete, was_finalized").eq("played_on", date)
-        .order("played_on", { ascending: false }).limit(1);
+      const [{ data: rounds }, loadedActiveSeason] = await Promise.all([
+        supabase
+          .from("rounds").select("id, is_complete, was_finalized, season_id").eq("played_on", date)
+          .order("played_on", { ascending: false }).limit(1),
+        import("@/lib/seasons").then(({ getActiveSeason }) => getActiveSeason()),
+      ]);
 
       if (!rounds || rounds.length === 0) return;
 
       const round = rounds[0];
       setExistingRoundId(round.id);
+      setActiveSeasonId((round as any).season_id ?? null);
+      setActiveSeason(loadedActiveSeason);
       setIsRoundComplete(round.is_complete);
       setWasFinalized(!!(round as any).was_finalized);
       // Session 2 (Flights): load ALL flights + each team's resolved flight.
@@ -254,7 +265,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       // already-in concern.
       const { data: rps } = await supabase
         .from("round_players")
-        .select("id, player_id, team_number, dropped_after_hole, course_handicap, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
+        .select("id, player_id, team_number, dropped_after_hole, course_handicap, tee_id, players ( id, full_name, display_name, handicap_index, is_active, preferred_tee_id )")
         .eq("round_id", round.id);
 
       if (!rps || rps.length === 0) {
@@ -265,7 +276,7 @@ export default function RoundSetup({ allPlayers }: Props) {
 
       const loadedRoster: Player[] = [];
       const loadedTeams: Record<number, Player[]> = {};
-      const loadedRpInfo: Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null }> = {};
+      const loadedRpInfo: Record<number, { rpId: number; droppedAfterHole: number | null; courseHandicap: number | null; teeId: number | null }> = {};
 
       rps.forEach((rp: any) => {
         // PostgREST embed returns the joined row as either an object (single
@@ -286,6 +297,7 @@ export default function RoundSetup({ allPlayers }: Props) {
           rpId: rp.id as number,
           droppedAfterHole: rp.dropped_after_hole ?? null,
           courseHandicap: rp.course_handicap ?? null,
+          teeId: rp.tee_id ?? null,
         };
         const tn = rp.team_number;
         if (tn >= 1) {
@@ -375,6 +387,34 @@ export default function RoundSetup({ allPlayers }: Props) {
     setUndoAction(null);
   }, [undoAction, autosaveAssignment]);
 
+  // ── Apply recommendation from I6 engine ────────────────────────────────────
+  const applyRecommendation = useCallback(async (result: RecommendResult) => {
+    // First clear all current team assignments (team_number → 0) so players
+    // not in the recommendation end up unassigned, not stale.
+    const clearWrites = roster.map(p => autosaveAssignment(p.id, 0));
+    await Promise.all(clearWrites);
+
+    // Build new local team state and fire autosaves.
+    const newTeams: Record<number, Player[]> = {};
+    result.teams.forEach((team, idx) => {
+      const teamNum = idx + 1;
+      const teamPlayers: Player[] = [];
+      team.playerIds.forEach(pid => {
+        const player = roster.find(p => p.id === pid);
+        if (player) {
+          teamPlayers.push(player);
+          autosaveAssignment(pid, teamNum);
+        }
+      });
+      if (teamPlayers.length > 0) newTeams[teamNum] = teamPlayers;
+    });
+    setTeams(newTeams);
+    await drainWrites();
+    setRecommendModalOpen(false);
+    setViewMode("edit");
+    setMobileStep("checkin");
+  }, [roster, autosaveAssignment, drainWrites]);
+
   // ── Toggle player in roster (autosaves in edit mode) ──────────────────────
   const toggleInRoster = (player: Player) => {
     const isChecked = !!roster.find(p => p.id === player.id);
@@ -449,6 +489,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       const id = res.roundId;
       setSaving(false);
       setExistingRoundId(id);
+      setActiveSeasonId(res.seasonId);
       // Explicit reset of format state. In a fresh-mount path these are already
       // null from loadRoundForDate, but the in-place "delete round → tap Edit
       // Teams → ensureRoundShell" path can land here with stale format values
@@ -501,6 +542,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       setSaving(false);
       if (res.status !== "ok") return;
       setExistingRoundId(res.roundId);
+      setActiveSeasonId(res.seasonId);
       setRoundFormat(null);
       setRoundFormatConfig(null);
       setRoundFormatLockedAt(null);
@@ -1142,6 +1184,23 @@ export default function RoundSetup({ allPlayers }: Props) {
     />
   ) : null;
 
+  const recommendModal = recommendModalOpen ? (
+    <RecommendTeamsModal
+      activeSeasonId={activeSeasonId}
+      activeSeason={activeSeason}
+      roster={roster}
+      playerRpInfo={Object.fromEntries(
+        Object.entries(playerRpInfo).map(([id, info]) => [
+          id,
+          { courseHandicap: info.courseHandicap, teeId: info.teeId },
+        ]),
+      )}
+      hasExistingTeams={Object.values(teams).some(t => t.length > 0)}
+      onApply={applyRecommendation}
+      onClose={() => setRecommendModalOpen(false)}
+    />
+  ) : null;
+
   // ── Session 2: render one team card (optionally with a flight chip) ─────────
   const renderTeamCard = (num: string, players: Player[], flight: Flight | null, multi: boolean) => {
     const tn = parseInt(num);
@@ -1434,6 +1493,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         {teamAllowanceDangerModal}
         {formatPicker}
         {seasonModal}
+        {recommendModal}
       </div>
     );
   }
@@ -1493,6 +1553,24 @@ export default function RoundSetup({ allPlayers }: Props) {
             }}
           >
             + Add Flight
+          </button>
+
+          {/* I6: Recommend Teams — suggest balanced, novel team assignments. */}
+          <button
+            onClick={() => setRecommendModalOpen(true)}
+            disabled={saving || initialLoading || roster.length === 0}
+            style={{
+              width: "100%", padding: "11px 14px", borderRadius: "10px", marginBottom: "10px",
+              background: "white", border: "1.5px solid #276e34", color: "#276e34",
+              fontSize: "0.9rem", fontWeight: 600,
+              opacity: initialLoading || roster.length === 0 ? 0.4 : 1,
+              cursor: saving || initialLoading || roster.length === 0 ? "default" : "pointer",
+              fontFamily: C.font, textAlign: "left",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}
+          >
+            <span>Recommend Teams</span>
+            <span style={{ fontSize: "0.9rem" }}>✦</span>
           </button>
 
           {/* Round-level team builder (unchanged; new teams land in the first
@@ -1598,6 +1676,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         })()}
         {formatPicker}
         {seasonModal}
+        {recommendModal}
       </div>
     );
   }

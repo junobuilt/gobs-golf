@@ -509,7 +509,7 @@ Behavior preserved across all three changes: tap-to-expand, multi-expand, chevro
 | I3 | Player profile — season stats summary | ✅ (2026-05-10) | Rounds played, avg gross, avg net, best/worst, last-5 vs all-time comparison with trend label, inline SVG sparkline of all rounds, recent-5 scores list. |
 | I4 | Player profile — performance chart | 💡 | Line chart of scores over time |
 | I5 | Player profile — winnings/losses | 💡 | Deferred. Don't want it competitive. May add later if Dad asks. |
-| I6 | Team recommendation engine | 💡 | Suggest balanced teams based on handicap spread + played-with history. **This is where pair-balance math lives, not in played-with view.** |
+| I6 | Team recommendation engine | ✅ (2026-06-16) | "Recommend Teams" button in Round Setup active view. Snake-draft seed + balance-constrained local search minimizes repeat pairings within a CH-spread band. Pure engine (`src/lib/teamRecommend/recommend.ts`) + `computePairMatrix` in played-with lib + `RecommendTeamsModal` UI. CH derived on-the-fly when snapshot null. Overwrite DangerModal guard. Spec: `docs/SPEC_I6_team_recommendation_engine.md`. |
 | I7 | Custom domain | 💡 | gobsgolf.com or similar |
 | I8 | PWA install polish | 💡 | "Add to home screen" prompts |
 | I9 | SWAT format | ❓ | Blocked. Need rules from Dad. |

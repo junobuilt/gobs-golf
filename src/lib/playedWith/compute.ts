@@ -1,10 +1,14 @@
-// Played With — shared bucket computation (Phase E).
+// Played With — shared bucket computation (Phase E) + pair-matrix for I6.
 //
 // Extracted 2026-06-06 (E6) from the player-profile inline `loadPlayedWith`
 // so the player profile (E5) and the admin Played-With tab (E6) share ONE
 // implementation of the fragile PostgREST query + bucket math. The logic here
 // is byte-faithful to the shipped E5 profile version — see ROADMAP "Played
 // With v2 (locked 2026-05-24)" for the rules:
+//
+// computePairMatrix (I6) shares the same RoundPlayerRow shape and round+team
+// partnership semantics so engine pair counts are identical to what the
+// Played-With tab shows.
 //
 //   - "Played with" = same team, same round (the round+team pair is the unit).
 //   - Buckets 6+ / 3–5 / 1–2 / 0 (bucketing happens in PlayedWithPanel).
@@ -144,6 +148,42 @@ export async function loadPlayedWith(
 ): Promise<PlayedWithBuckets> {
   const { rpRows, allPlayers } = await fetchPlayedWithRows(seasonId);
   return computeBuckets(focalId, rpRows, allPlayers);
+}
+
+// Symmetric pair-count matrix over pre-fetched rpRows. Each key is
+// `${min(a,b)}:${max(a,b)}`; value is the number of rounds they shared a team.
+// A pair not in the map contributes 0 (never played together).
+// Used by the I6 team recommendation engine to score novelty cost.
+export function computePairMatrix(
+  rpRows: RoundPlayerRow[],
+): (a: number, b: number) => number {
+  // Group player IDs by round+team slot.
+  const bySlot = new Map<string, number[]>();
+  for (const rp of rpRows) {
+    const key = `${rp.round_id}:${rp.team_number}`;
+    const slot = bySlot.get(key);
+    if (slot) slot.push(rp.player_id);
+    else bySlot.set(key, [rp.player_id]);
+  }
+
+  // Emit one count per within-team pair per round.
+  const counts = new Map<string, number>();
+  for (const ids of bySlot.values()) {
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = Math.min(ids[i], ids[j]);
+        const b = Math.max(ids[i], ids[j]);
+        const k = `${a}:${b}`;
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+    }
+  }
+
+  return (a: number, b: number): number => {
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    return counts.get(`${lo}:${hi}`) ?? 0;
+  };
 }
 
 // One shared round between two players: same round AND same team (the
