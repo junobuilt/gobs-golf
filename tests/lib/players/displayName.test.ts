@@ -86,6 +86,27 @@ describe("getDisplayName", () => {
     expect(getDisplayName(roster[0], roster, { activeOnly: false })).toBe("Wayne H");
   });
 
+  it("recomputes both short names when a rename newly creates a collision", () => {
+    // Models the admin Edit-Player-Name behavior note: disambiguation is a pure
+    // render-time recompute, so renaming a player into a collision grows BOTH
+    // players' short names on next render — no special-casing, no frozen state.
+    const before: PlayerLike[] = [
+      { id: 1, full_name: "Mike Williams", is_active: true },
+      { id: 2, full_name: "Dave Wilson", is_active: true },
+    ];
+    // Unique first names → single initials.
+    expect(getDisplayName(before[0], before)).toBe("Mike W");
+
+    // Rename player 2 to "Mike Wilson" → two Mikes now collide. "Williams" vs
+    // "Wilson" share "Wil" and diverge at the 4th char, so each grows to 4.
+    const after: PlayerLike[] = [
+      { id: 1, full_name: "Mike Williams", is_active: true },
+      { id: 2, full_name: "Mike Wilson", is_active: true },
+    ];
+    expect(getDisplayName(after[0], after)).toBe("Mike Will");
+    expect(getDisplayName(after[1], after)).toBe("Mike Wils");
+  });
+
   it("handles apostrophes and hyphens in the last name", () => {
     const roster: PlayerLike[] = [
       { id: 1, full_name: "Dave O'Brien", is_active: true },

@@ -2,12 +2,52 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-16 (Team Recommendation Engine I6 — fully shipped, no migration)
-**Session purpose:** Self-serve expiring **Backup Admin PIN** (H9). Primary admin mints a temporary 4-digit substitute PIN (1/3/7-day preset, default 3) from Admin Settings → Security; one-time reveal; "Disable now". Peppered-scrypt hash at rest; `admin_backup_session` cookie HMAC-signed with `b.`-domain-separation prefix + `maxAge` bound to credential expiry; middleware immediate-revoke re-check on the **backup path only** (primary path untouched — R6). Migration 028 (`admin_backup_pin` + `admin_backup_audit`, allow-all RLS to match repo posture) is **DRAFTED only — NOT applied** (relay gate). 900/900 vitest, 46/46 Playwright, tsc clean. **⚠ TWO migrations now await relay: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first.**
+**Last updated:** 2026-06-17 (Admin: Edit Player Name — I17 shipped, no migration)
+**Session purpose:** Admin can fix a typo in a player's name from **admin → Players** without delete-and-re-add (which would destroy history). Per-row **Edit name** card editor mirrors the Add Player form's two name fields — `full_name` (required) + `display_name` (optional). Save is a single `UPDATE players SET full_name, display_name WHERE id`. **No migration, no cascade, no HI touch:** `round_players` stores no name column and names are never snapshotted, so a rename propagates by join-on-`player_id` everywhere on next load (history intact). 928/928 vitest, 46/46 Playwright, tsc clean. **⚠ TWO migrations STILL await relay from prior sessions: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first. This session added no migration.**
 
 *Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-17 (Admin: Edit Player Name — I17 shipped, no migration)
+
+### Where we left off
+
+**Admin Edit-Player-Name (I17) is fully built and green — no migration required.** Renames touch zero history.
+
+- **The problem it solves.** Fixing a name typo previously meant delete + re-add, which destroys the player's history. Now there's a per-row **Edit name** affordance in the admin Players tab.
+- **UI (`src/app/admin/tabs/Players.tsx`).** New `EditingState` + `editing`/`savingEdit` state. Per-row **Edit name** button (desktop: `actionBtnStyle(C.navy)` in the Actions cell beside Edit HI / Deactivate; mobile: underlined action link beside Edit HI). Opens a white card editor — `data-testid="edit-name-form"` — mirroring the Add Player card with two inputs: **Full name \*** (`edit-name-fullname`, required) + **Display name** (`edit-name-displayname`, optional). Same validation as Add: Save disabled when `full_name.trim()` is blank.
+- **Save (`saveEditName`).** Single `supabase.from("players").update({ full_name: trimmed, display_name: trimmed || null }).eq("id", editing.id)` → close editor → `onRefresh()`. **No HI write** (HI keeps its own inline editor + snapshot cascade — untouched), **no cascade, no migration.**
+- **Why it's history-safe.** `round_players` stores no name column and names are never snapshotted (unlike HI), so every surface joins to `players` by `player_id`; a rename propagates on next load. The two `full_name`/`display_name` hits outside the `players` table in `schema.sql` are VIEWs (`player_course_handicaps`, `season_financials`) that JOIN to players — they auto-reflect renames. `flights.name` / `round_payouts.flight_name` are FLIGHT labels, not player names (verified, untouched).
+- **Disambiguation.** Render-time `getDisplayName()` recomputes short names for BOTH players when a rename newly collides/un-collides — correct by design, not special-cased.
+
+**Files:** MODIFIED `src/app/admin/tabs/Players.tsx`, `tests/lib/players/displayName.test.ts`, `ROADMAP.md`, `STATUS.md`. NEW `tests/components/edit-player-name-flow.test.tsx`, `tests/lib/round/results-rename-history.test.ts`.
+
+### Today's commits
+
+- (this session) feat(admin): edit player name without history loss (I17)
+
+### DB changes (today)
+
+- **None.** Pure code change. No migration. The existing `players` "Allow all" RLS already permits the update.
+
+### Tests / verification
+
+- **928/928 vitest** (+6: `edit-player-name-flow` — right-id-only write + null display_name on blank + blank-name validation/disabled-Save; `results-rename-history` — finalized round renders the NEW name with `grossTotal` unchanged via the join-by-id path; `displayName` rename-into-collision recompute). **46/46 Playwright** (unchanged — no e2e drives the admin Players tab; my change alters no query shape an e2e drives). `tsc --noEmit` clean. Goldens untouched (no scoring-engine change).
+
+### Tomorrow's priority
+
+- **Relay migration 027 (Par Competition) THEN 028 (Backup PIN)** — still pending from prior sessions; this session added no migration.
+- Optional: holistic RLS hardening (TD34); Flights.6 homepage flight targeting.
+
+### Considered but not changed (confession)
+
+- **HI inline editor + snapshot cascade, Add flow, Deactivate/Reactivate, `getDisplayName` source** — out of scope, untouched.
+- **`flights.name` / `round_payouts.flight_name`** — flight labels, not player names; not modified.
+- **I13** (admin edit `preferred_tee_id`) remains 📋 — same Players tab, but a separate ask; not bundled.
+- **No "rename guard" for in-flight rounds** — a rename is always safe (no snapshot), so unlike deactivate it needs no live-round check.
 
 ---
 

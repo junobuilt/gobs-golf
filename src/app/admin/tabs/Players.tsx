@@ -20,6 +20,7 @@ const C = {
 
 type DeactivateTarget = { id: number; name: string };
 type AddingState = { full_name: string; display_name: string; handicap_index: string };
+type EditingState = { id: number; full_name: string; display_name: string };
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
@@ -41,6 +42,8 @@ export default function Players({ players, onRefresh }: Props) {
   const [adding, setAdding] = useState(false);
   const [newPlayer, setNewPlayer] = useState<AddingState>({ full_name: "", display_name: "", handicap_index: "" });
   const [savingNew, setSavingNew] = useState(false);
+  const [editing, setEditing] = useState<EditingState | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const filtered = players.filter(p =>
     p.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -89,6 +92,30 @@ export default function Players({ players, onRefresh }: Props) {
 
   const reactivate = async (id: number) => {
     await supabase.from("players").update({ is_active: true }).eq("id", id);
+    onRefresh();
+  };
+
+  const startEditName = (p: Player) => {
+    setEditing({ id: p.id, full_name: p.full_name, display_name: p.display_name || "" });
+  };
+
+  const cancelEditName = () => setEditing(null);
+
+  // Name edit: no snapshot, no cascade — every surface joins to players by id,
+  // so a rename propagates everywhere on next load. HI is intentionally NOT
+  // touched here (it has its own inline editor + snapshot cascade).
+  const saveEditName = async () => {
+    if (!editing || !editing.full_name.trim()) return;
+    setSavingEdit(true);
+    await supabase
+      .from("players")
+      .update({
+        full_name: editing.full_name.trim(),
+        display_name: editing.display_name.trim() || null,
+      })
+      .eq("id", editing.id);
+    setEditing(null);
+    setSavingEdit(false);
     onRefresh();
   };
 
@@ -195,6 +222,56 @@ export default function Players({ players, onRefresh }: Props) {
         </div>
       )}
 
+      {/* Edit name form */}
+      {editing && (
+        <div
+          data-testid="edit-name-form"
+          style={{
+            background: "white", borderRadius: "10px", border: `1px solid ${C.border}`,
+            padding: "20px", marginBottom: "20px",
+          }}
+        >
+          <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "14px" }}>
+            Edit Player
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "10px" }}>
+            <input
+              data-testid="edit-name-fullname"
+              placeholder="Full name *"
+              value={editing.full_name}
+              onChange={e => setEditing(s => s && ({ ...s, full_name: e.target.value }))}
+              style={inputStyle}
+            />
+            <input
+              data-testid="edit-name-displayname"
+              placeholder="Display name"
+              value={editing.display_name}
+              onChange={e => setEditing(s => s && ({ ...s, display_name: e.target.value }))}
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
+            <button data-testid="edit-name-save" onClick={saveEditName} disabled={savingEdit || !editing.full_name.trim()} style={{
+              padding: "8px 20px", borderRadius: "8px", border: "none",
+              background: C.green, color: "white",
+              fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
+              opacity: savingEdit || !editing.full_name.trim() ? 0.5 : 1,
+              fontFamily: "system-ui, sans-serif",
+            }}>
+              {savingEdit ? "Saving…" : "Save"}
+            </button>
+            <button data-testid="edit-name-cancel" onClick={cancelEditName} style={{
+              padding: "8px 16px", borderRadius: "8px",
+              border: `1.5px solid ${C.border}`, background: "white",
+              fontSize: "0.85rem", fontWeight: 600, color: "#6b7280", cursor: "pointer",
+              fontFamily: "system-ui, sans-serif",
+            }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Player list */}
       <div style={{ background: "white", borderRadius: "10px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
 
@@ -275,6 +352,15 @@ export default function Players({ players, onRefresh }: Props) {
                   }}>
                     {p.is_active ? "Active" : "Inactive"}
                   </span>
+                  {!isEditing && (
+                    <button
+                      data-testid={`edit-name-link-${p.id}`}
+                      onClick={() => startEditName(p)}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "0.75rem", color: C.navy, fontWeight: 600, textDecoration: "underline" }}
+                    >
+                      Edit name
+                    </button>
+                  )}
                   {!isEditing && (
                     <button
                       onClick={() => startEditHC(p)}
@@ -363,6 +449,13 @@ export default function Players({ players, onRefresh }: Props) {
 
               {/* Actions */}
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  data-testid={`edit-name-link-${p.id}`}
+                  onClick={() => startEditName(p)}
+                  style={actionBtnStyle(C.navy)}
+                >
+                  Edit name
+                </button>
                 <button
                   onClick={() => isEditing ? cancelEditHC(p.id) : startEditHC(p)}
                   style={actionBtnStyle(C.navy)}
