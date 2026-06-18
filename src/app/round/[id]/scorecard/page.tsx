@@ -1199,7 +1199,13 @@ export default function ScorecardPage() {
       // else → the blind-draw RPC. Either path may write blind_draws, so refresh
       // fills on success unless we KNOW none were written (single-flight relaxed).
       const relaxed = allowsIncompleteClose(roundFormat);
-      const drawsPossible = isMultiFlightRound || !relaxed;
+      // Spec 2 (migration 029): single-flight relaxed-close formats now DRAW —
+      // par_competition + shambles fill short teams via finalize_round_relaxed.
+      // drawsPossible gates the post-finalize fill refresh: true for every
+      // non-team-card format, plus always-true for multi-flight (a mixed
+      // multi-flight round may draw in a non-primary flight even when the
+      // primary format is team-card).
+      const drawsPossible = isMultiFlightRound || !isTeamCardFormat(roundFormat);
       const { data, error } = await supabase.rpc(
         isMultiFlightRound
           ? "finalize_round_flights"

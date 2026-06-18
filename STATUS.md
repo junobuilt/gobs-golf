@@ -2,12 +2,54 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-17 (Admin: Edit Player Name — I17 shipped, no migration)
-**Session purpose:** Admin can fix a typo in a player's name from **admin → Players** without delete-and-re-add (which would destroy history). Per-row **Edit name** card editor mirrors the Add Player form's two name fields — `full_name` (required) + `display_name` (optional). Save is a single `UPDATE players SET full_name, display_name WHERE id`. **No migration, no cascade, no HI touch:** `round_players` stores no name column and names are never snapshotted, so a rename propagates by join-on-`player_id` everywhere on next load (history intact). 928/928 vitest, 46/46 Playwright, tsc clean. **⚠ TWO migrations STILL await relay from prior sessions: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first. This session added no migration.**
+**Last updated:** 2026-06-17 (Relaxed-close blind draw — Spec 2, migration 029 already on prod)
+**Session purpose:** Fix the bug where a short **Par Competition** team got no blind-draw fill (and the identical latent **Shambles** gap): single-flight relaxed-close formats route to `finalize_round_relaxed`, which had zero draw logic. **Migration 029 (the shared `apply_blind_draws_single_flight` helper + relaxed finalize now drawing) was ALREADY authored, relayed, and APPLIED to prod by the planning chat — CC wrote NO migration this session.** CC scope: client `drawsPossible = isMultiFlightRound || !isTeamCardFormat(roundFormat)`; new `fillsShortTeams(format) = !isTeamCardFormat(format)` predicate; e2e MockDb relaxed branch ported to the deployed contract; tests; two new CLAUDE.md rules (#8 designed≠works, #9 deployed-def is source of truth). 940/940 vitest, 48/48 Playwright, tsc clean. **⚠ TWO migrations STILL await relay from prior sessions: 027 (Par Competition) AND 028 (Backup PIN) — relay 027 first. Also TD37: commit the 029 SQL + `db:backup` to un-lag `schema.sql`.**
+
+*Prior session (also 2026-06-17):* Admin Edit Player Name (I17) — see the section below. No migration.
 
 *Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-17 (Relaxed-close blind draw — Spec 2, migration 029 already on prod)
+
+### Where we left off
+
+**Par Competition + Shambles short teams now blind-draw a fill. Migration 029 was applied to prod by the planning chat BEFORE this CC session — CC authored no migration.** This session was client + e2e-mock + tests + docs only.
+
+- **The bug.** Single-flight relaxed-close formats (`par_competition`, `shambles`) route to `finalize_round_relaxed` (migration 020), which had **zero draw logic**. A short Par Competition team got no fill; Shambles had the identical latent gap. Strict single-flight (008) + multi-flight (024/027) already drew — out of scope, not regressed.
+- **The policy (single source of truth).** `fillsShortTeams(format) = !isTeamCardFormat(format)` in `src/lib/format/helpers.ts` — blind draw fills wherever team size is a raw scoring advantage (best-N + Stableford + Par Competition), NOT team-card. Deliberately **independent of** `allowsIncompleteClose` (relaxed-close ≠ draw-eligibility).
+- **Migration 029 (already on prod, NOT authored by CC).** Lifts the strict draw block VERBATIM into `apply_blind_draws_single_flight(p_round_id)`; both `finalize_round_with_blind_draws` (strict, byte-identical) and `finalize_round_relaxed` (now draws) call it. **Locked decision:** relaxed `pool_too_small` → finalize anyway, no fill (relaxed never blocks close), diverging from strict's non-finalizing return.
+- **CC changes.** Client `drawsPossible = isMultiFlightRound || !isTeamCardFormat(roundFormat)` (`src/app/round/[id]/scorecard/page.tsx`; single-flight relaxed false→true, multi-flight term kept for mixed-flight safety). `fillsShortTeams` predicate. e2e MockDb (`e2e/support/supabaseMock.ts`) relaxed-finalize branch ported to the deployed contract (full-18 pool, insufficient pool → finalize anyway, best-effort empty-subpool skip, max-roster benchmark); `handleRpc` exported for unit tests.
+- **Investigation #1 confirmed (no added scope):** `results.ts` already values par_competition (explicit arms) + shambles (net branch) fills format-agnostically — the migration only adds `blind_draws` rows; display untouched.
+
+**Files:** MODIFIED `src/lib/format/helpers.ts`, `src/app/round/[id]/scorecard/page.tsx`, `e2e/support/supabaseMock.ts`, `e2e/parCompetition.spec.ts`, `e2e/shambles.spec.ts`, `CLAUDE.md`, `ROADMAP.md`, `STATUS.md`. NEW `tests/lib/format/fillsShortTeams.test.ts`, `tests/integration/relaxed-finalize-blinddraw.test.ts`, `tests/lib/round/results-relaxed-blinddraw.test.ts`.
+
+### Today's commits
+
+- (this session) feat(scoring): blind draw for relaxed formats (Par Competition + Shambles)
+
+### DB changes (today)
+
+- **None authored by CC.** Migration 029 was authored, relayed (dry-run → apply), and applied to prod by the planning chat before this session. **TD37 logged:** the 029 SQL is not yet committed to `supabase/migrations/`, and `schema.sql` lags (019–029) — follow-up is to commit the 029 file + `npm run db:backup`.
+
+### Tests / verification
+
+- **940/940 vitest** (+12: `fillsShortTeams` predicate all-9 + floor-independence; mock policy matrix relaxed-draws/team-card-doesn't + source-eligibility full-18 + pool-too-small finalizes-zero; loadRoundResults relaxed fill valuation +2 (par_comp record) / −2 (shambles net) + 🎲 + cross-surface displayed==canonical). **48/48 Playwright** (+2: short-team→finalize→fill on `parCompetition.spec.ts` + `shambles.spec.ts` — relaxed RPC fired, 1 fill for the short team, 🎲 + value on summary). `tsc --noEmit` clean. Goldens untouched (no engine change; display path already handled these fills). **Honest boundary (new rule #8):** the SQL draw itself is proven by the migration-029 relay dry-run on prod, NOT by CC vitest (no Postgres in vitest).
+
+### Tomorrow's priority
+
+- **Relay migrations 027 (Par Competition) THEN 028 (Backup PIN)** — still pending from prior sessions.
+- **TD37:** commit the applied 029 SQL to `supabase/migrations/` + `npm run db:backup` to un-lag `schema.sql` (019–029).
+- After this ships: planning chat reopens round **185** → refinalize (now routes through the fixed relaxed path → Team 1 gets a fill) → verify new record + payout shift.
+
+### Considered but not changed (confession)
+
+- **`finalize_round_flights` + `finalize_round_team_card`** — untouched (multi-flight + team-card out of scope).
+- **The spec's bare `!isTeamCardFormat(roundFormat)` for `drawsPossible`** — I kept the `isMultiFlightRound ||` term so a mixed multi-flight round whose primary format is team-card still refreshes fills drawn in a non-primary flight (the bare form would regress that). Flagged + approved in plan mode.
+- **Strict single-flight finalize has no e2e mock branch** — so the mock policy-matrix covers the 4 mock-implemented formats (relaxed + team-card); strict draw stays covered by the deployed SQL + existing valuation fixtures + the multi-flight mock. Noted in the test header.
 
 ---
 

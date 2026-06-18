@@ -71,6 +71,20 @@ export function allowsIncompleteClose(
   return format === "shambles" || format === "par_competition";
 }
 
+// Spec 2 (migration 029) — THE canonical predicate for "does blind draw fill a
+// short team in this format?" Blind draw fills wherever team size is a raw
+// scoring advantage: formats that select among players' individual balls
+// (best-N family) or sum individual scores (Stableford / Par Competition). It
+// does NOT apply to team-card formats (one team ball; team size is already
+// handled by the team-handicap formula). Deliberately INDEPENDENT of the
+// completion-floor family (allowsIncompleteClose): relaxed close and blind-draw
+// eligibility are orthogonal — par_competition + shambles are BOTH relaxed-close
+// AND fill short teams. Every finalize/routing site that gates blind draw, and
+// the policy-matrix test, read this predicate as the single source of truth.
+export function fillsShortTeams(format: Format | null | undefined): boolean {
+  return !isTeamCardFormat(format);
+}
+
 // Wave 1B — reads the per-round team-card ball count (1 or 2). Null/undefined
 // config, a missing key, or any non-finite/out-of-range value falls back to 1
 // (back-compat for every non-team-card and pre-1B round). Clamped to [1, 2]

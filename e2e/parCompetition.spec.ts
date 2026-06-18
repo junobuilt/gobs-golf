@@ -10,10 +10,51 @@
 // course" caption beneath. The VALUE is the div immediately after the "Record"
 // label; it renders via formatTeamTotal → "+N" / "E" / "−N".
 
-import { test, expect, seed, seedParCompetitionRound } from "./support/fixtures";
+import { test, expect, seed, seedParCompetitionRound, PLAYERS, SEASON, todayLocal } from "./support/fixtures";
+import type { SeedData } from "./support/supabaseMock";
 
 const recordValue = (page: import("@playwright/test").Page) =>
   page.getByText("Record", { exact: true }).locator("xpath=following-sibling::div[1]");
+
+// Spec 2 (migration 029) — a SHORT-team Par Competition round so finalize draws.
+// Team 1 (Adam + Betty, full) vs Team 2 (Carl, short by 1 → one round-start
+// fill). Team 1 is pre-submitted via round-level submitted_teams; the UI drives
+// Team 2's submit, which makes the round all-submitted and fires
+// finalize_round_relaxed. Adam (lowest rp id → deterministic first-eligible) is
+// drawn for Team 2; his birdies on holes 1 & 10 (gross 3 → +1 each, par
+// elsewhere) make his fill record +2.
+function shortTeamParCompSeed(roundId: number): SeedData {
+  const today = todayLocal();
+  const RP = [
+    { id: 8651, player_id: PLAYERS.adam.id, team_number: 1 },
+    { id: 8652, player_id: PLAYERS.betty.id, team_number: 1 },
+    { id: 8653, player_id: PLAYERS.carl.id, team_number: 2 }, // short team
+  ];
+  const scores: any[] = [];
+  let sid = 76500;
+  for (const rp of RP) {
+    for (let h = 1; h <= 18; h++) {
+      const birdie = rp.id === 8651 && (h === 1 || h === 10);
+      scores.push({ id: sid++, round_player_id: rp.id, hole_number: h, strokes: birdie ? 3 : 4 });
+    }
+  }
+  return {
+    players: Object.values(PLAYERS),
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: Array.from({ length: 18 }, (_, i) => ({ id: 7700 + i, tee_id: 1, hole_number: i + 1, par: 4, yardage: 350, stroke_index: i + 1 })),
+    rounds: [{
+      id: roundId, played_on: today, is_complete: false, season_id: SEASON.id,
+      format: "par_competition",
+      // Team 1 already submitted; submitting Team 2 in the UI finalizes.
+      format_config: { basis: "net", scoring_basis: "net", override_holes: [], submitted_teams: [1] },
+      format_locked_at: `${today}T00:00:00Z`,
+    }],
+    round_players: RP.map((r) => ({ ...r, round_id: roundId, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 })),
+    scores,
+  } as SeedData;
+}
 
 test("FormatPicker: Par Competition selectable, net locked, override no-op; allowance enabled", async ({ page, db }) => {
   seed(db, seedParCompetitionRound({ roundId: 600 }));
@@ -134,4 +175,37 @@ test("finalize (>=1 score per hole) → summary renders Final and the correct RE
   await expect(page.getByText("Final", { exact: true })).toBeVisible();
   await expect(page.getByText("+2", { exact: true })).toBeVisible();
   await expect(page.getByText("vs course").first()).toBeVisible();
+});
+
+test("short team → finalize via finalize_round_relaxed → blind-draw fill (🎲) on summary", async ({ page, db }) => {
+  seed(db, shortTeamParCompSeed(660));
+  await page.goto("/round/660/scorecard?team=2");
+
+  // Team 2 (Carl) submits → round becomes all-submitted → finalize fires.
+  const submit = page.getByRole("button", { name: "Submit Final Scores" });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  const confirm = page.getByRole("button", { name: "Submit", exact: true });
+  await expect(confirm).toBeEnabled({ timeout: 4000 });
+  await confirm.click();
+
+  await expect.poll(() => db.tables.rounds.find((r) => r.id === 660)?.is_complete).toBe(true);
+
+  // The RELAXED RPC fired (NOT the strict or flight one) — single-flight relaxed
+  // now draws (Spec 2 / migration 029).
+  expect(db.rpcCalls.some((c) => c.name === "finalize_round_relaxed")).toBe(true);
+  expect(db.rpcCalls.some((c) => c.name === "finalize_round_with_blind_draws")).toBe(false);
+  expect(db.rpcCalls.some((c) => c.name === "finalize_round_flights")).toBe(false);
+
+  // Exactly one fill, for the short team (2), drawn from Team 1's full-18 pool.
+  const draws = (db.tables.blind_draws ?? []).filter((b) => b.round_id === 660);
+  expect(draws).toHaveLength(1);
+  expect(draws[0].short_team_number).toBe(2);
+  expect(draws[0].drawn_player_id).toBe(PLAYERS.adam.id); // lowest rp id, eligible
+
+  // Summary renders the 🎲 fill line valued as Adam's record (+2 vs course).
+  await page.goto("/round/660/summary");
+  await expect(page.getByText("Final", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("🎲", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("+2 vs course").first()).toBeVisible();
 });

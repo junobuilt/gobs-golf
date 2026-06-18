@@ -556,3 +556,11 @@ This includes the **data fetch**, not just the math. A surface that re-runs the 
 ### 7. Cross-surface agreement tests
 
 Any value shown in two or more places gets a test asserting the surfaces are **equal**, not merely that each renders. "A number rendered" is not a passing bar — "the number matches the canonical source" is. And the fixture must be at **realistic scale / shape**: the F.1 cross-loader parity test passed while prod was broken because it seeded ~144 score rows — far under the 1000-row cap that caused the bug. Seed enough (or structure the test) so the failure mode can actually occur.
+
+### 8. Designed ≠ works — verify before claiming
+
+Claims that a feature *works* (vs. is *designed*) require verification: read the actual code path, cite a behavior-asserting test, or run it. Architectural classification — "it's in the relaxed family," "it routes through the shared finalize," "the helper handles that" — is **never** proof of behavior. The Spec 2 bug is the canonical example: Par Competition was *classified* as a relaxed-close format and *assumed* to draw, but `finalize_round_relaxed` contained zero draw logic — the design was sound and the behavior was absent. If you have not verified, label the claim **"unverified"** rather than stating it as fact.
+
+### 9. CREATE OR REPLACE: the deployed definition is the source of truth
+
+For any DB object that is mutated by `CREATE OR REPLACE` (functions, views) rather than versioned only by additive migrations, **the authoritative definition is what is deployed to prod, NOT the latest repo migration file.** A migration file shows the state *as of that migration*; a later `CREATE OR REPLACE` (possibly applied via the Supabase MCP relay, which does not touch repo files) can supersede it, and `supabase/schema.sql` lags until the next `db:backup`. Before reasoning about or porting (e.g. into the e2e mock) such an object's behavior, read the deployed definition (`pg_get_functiondef` / the relayed contract), or explicitly note you are matching a relayed contract rather than the repo file. Repo↔prod drift here is a silent-divergence class.

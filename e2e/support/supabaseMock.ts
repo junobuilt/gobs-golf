@@ -186,7 +186,7 @@ function tableFromPath(pathname: string): { kind: "rest"; table: string } | { ki
   return null;
 }
 
-function handleRpc(name: string, args: Row, db: MockDb): { status: number; body: any } {
+export function handleRpc(name: string, args: Row, db: MockDb): { status: number; body: any } {
   db.rpcCalls.push({ name, args });
 
   if (name === "create_team_with_players") {
@@ -213,11 +213,13 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
   }
 
   // Wave 1B follow-up: relaxed-close finalize for Shambles (migration 020).
-  // Replicate the RPC's OBSERVABLE effect for the display layer: a round is
-  // finalized iff it exists, isn't already complete, and every assigned team
-  // (team_number > 0) has at least one score on every hole 1..18. On success
-  // set is_complete = true and return "finalized"; otherwise return the same
-  // status strings the scorecard branches on.
+  // Spec 2 (migration 029): relaxed-close now ALSO blind-draws short teams
+  // (par_competition + shambles). Replicate the RPC's OBSERVABLE effect for the
+  // display layer: a round is finalized iff it exists, isn't already complete,
+  // and every assigned team (team_number > 0) has at least one score on every
+  // hole 1..18. On success set is_complete = true, WRITE blind_draws fills for
+  // short teams, and return "finalized"; otherwise return the same status
+  // strings the scorecard branches on.
   if (name === "finalize_round_relaxed") {
     const roundId = args.p_round_id;
     const round = (db.tables.rounds ?? []).find((r) => looseEq(r.id, roundId));
@@ -233,6 +235,7 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
       (scoredHolesByRp[String(s.round_player_id)] ??= new Set()).add(String(s.hole_number));
     }
     const teams = [...new Set(teamRps.map((rp) => rp.team_number))];
+    // Relaxed completion FLOOR: every assigned team has >=1 score on every hole.
     for (const team of teams) {
       const ids = teamRps.filter((rp) => rp.team_number === team).map((rp) => String(rp.id));
       for (let h = 1; h <= 18; h++) {
@@ -240,6 +243,61 @@ function handleRpc(name: string, args: Row, db: MockDb): { status: number; body:
         if (!anyScored) return { status: 200, body: "not_yet" };
       }
     }
+
+    // Spec 2 (migration 029) — single-flight blind draw on the relaxed path.
+    // Faithful JS mirror of the APPLIED apply_blind_draws_single_flight contract
+    // (the DEPLOYED SQL is the source of truth; this matches its OBSERVABLE
+    // effect for the display layer):
+    //   * short-team benchmark = MAX roster across all assigned teams in the round
+    //   * slots/team = (maxRoster - roster) round-start + one per dropout
+    //   * source pool = players with ALL 18 scores (picked-up/dropped excluded),
+    //     ordered by id ASC — deterministic first-eligible pick (the mock can't
+    //     replicate Postgres setseed/random; reproducibility/order are the SQL's
+    //     job, verified by the migration-029 relay dry-run on prod)
+    //   * insufficient pool → finalize ANYWAY with zero fills (relaxed never
+    //     blocks close — no pool_too_small return on this path)
+    //   * best-effort: an empty per-team subpool skips that slot, never blocks
+    const rosterOf = (tn: any) => teamRps.filter((rp) => rp.team_number === tn).length;
+    const maxRoster = teams.reduce((m, tn) => Math.max(m, rosterOf(tn)), 0);
+    const pool = teamRps
+      .filter((rp) => rp.dropped_after_hole == null
+        && (scoredHolesByRp[String(rp.id)]?.size ?? 0) >= 18)
+      .map((rp) => rp.id)
+      .sort((a, b) => Number(a) - Number(b));
+
+    const draws: Array<{ team: any; start: number }> = [];
+    for (const tn of [...teams].sort((a, b) => Number(a) - Number(b))) {
+      const startSlots = maxRoster - rosterOf(tn);
+      for (let i = 0; i < startSlots; i++) draws.push({ team: tn, start: 1 });
+      for (const rp of teamRps.filter((r) => r.team_number === tn && r.dropped_after_hole != null)) {
+        draws.push({ team: tn, start: (rp.dropped_after_hole as number) + 1 });
+      }
+    }
+
+    // Insufficient pool → finalize with zero fills (relaxed never blocks close).
+    if (draws.length <= pool.length) {
+      const available = [...pool];
+      db.tables.blind_draws ??= [];
+      for (const d of draws) {
+        const teamRosterIds = teamRps
+          .filter((rp) => rp.team_number === d.team)
+          .map((rp) => String(rp.id));
+        const idx = available.findIndex((id) => !teamRosterIds.includes(String(id)));
+        if (idx < 0) continue; // best-effort: empty per-team subpool → skip slot
+        const pickedRpId = available.splice(idx, 1)[0];
+        const drawnPlayerId = teamRps.find((rp) => looseEq(rp.id, pickedRpId))?.player_id;
+        db.tables.blind_draws.push({
+          id: db.allocId("blind_draws"),
+          round_id: roundId,
+          short_team_number: d.team,
+          drawn_player_id: drawnPlayerId,
+          hole_range_start: d.start,
+          hole_range_end: 18,
+          random_seed: 1,
+        });
+      }
+    }
+
     round.is_complete = true;
     return { status: 200, body: "finalized" };
   }
