@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict yondieXvwNzBzJSkmmT6fLEAmf0Fo2ehH0IsK7aWn2sqpvTynfgdzbgXF1ki3Rv
+\restrict P5rXuN0V7T7pd6xJe3iTibx1McIoy3xWFOc063fNaKValcd7o1iVXgjblmj9Iof
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10
@@ -69,6 +69,293 @@ $$;
 
 
 --
+-- Name: finalize_round_flights(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalize_round_flights(p_round_id bigint) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_is_complete       boolean;
+  v_not_ready         boolean;
+  v_pool              bigint[];
+  v_pool_size         integer;
+  v_temp_pool         bigint[];
+  v_seed_bigint       bigint;
+  v_seed_float        double precision;
+  v_total_slots       integer := 0;
+  v_team              RECORD;
+  v_round_start_slots integer;
+  v_dropout_holes     integer[];
+  v_pick_idx          integer;
+  v_drawn_rp_id       bigint;
+  v_drawn_player_id   bigint;
+  i                   integer;
+BEGIN
+  SELECT COALESCE(r.is_complete, false) INTO v_is_complete
+    FROM rounds r WHERE r.id = p_round_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'round_not_found' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_is_complete THEN RETURN 'already_complete'; END IF;
+
+  WITH tf AS (
+    SELECT DISTINCT rp.team_number,
+           COALESCE(ft.flight_id,
+                    (SELECT id FROM flights WHERE round_id = p_round_id
+                     ORDER BY sort_order ASC LIMIT 1)) AS flight_id
+    FROM round_players rp
+    LEFT JOIN flight_teams ft
+      ON ft.round_id = p_round_id AND ft.team_number = rp.team_number
+    WHERE rp.round_id = p_round_id AND rp.team_number > 0
+  ),
+  fam AS (
+    SELECT f.id AS flight_id,
+      CASE WHEN f.format IN ('texas_scramble','alternate_shot') THEN 'team_card'
+           WHEN f.format IN ('shambles','par_competition') THEN 'relaxed'
+           ELSE 'strict' END AS family
+    FROM flights f WHERE f.round_id = p_round_id
+  ),
+  tff AS (
+    SELECT tf.team_number, tf.flight_id, fam.family
+    FROM tf JOIN fam ON fam.flight_id = tf.flight_id
+  )
+  SELECT
+    EXISTS (
+      SELECT 1 FROM round_players rp
+      JOIN tff ON tff.team_number = rp.team_number
+      WHERE rp.round_id = p_round_id AND rp.team_number > 0 AND tff.family = 'strict'
+        AND (SELECT COUNT(*) FROM scores s
+             WHERE s.round_player_id = rp.id
+               AND s.hole_number BETWEEN 1 AND COALESCE(rp.dropped_after_hole, 18))
+            < COALESCE(rp.dropped_after_hole, 18)
+    )
+    OR EXISTS (
+      SELECT 1 FROM tff
+      CROSS JOIN generate_series(1, 18) AS h(hole)
+      WHERE tff.family = 'relaxed'
+        AND NOT EXISTS (
+          SELECT 1 FROM round_players rp
+          JOIN scores s ON s.round_player_id = rp.id
+          WHERE rp.round_id = p_round_id AND rp.team_number = tff.team_number
+            AND s.hole_number = h.hole
+        )
+    )
+    OR EXISTS (
+      SELECT 1 FROM tff
+      CROSS JOIN generate_series(1, 18) AS h(hole)
+      WHERE tff.family = 'team_card'
+        AND NOT EXISTS (
+          SELECT 1 FROM team_scores ts
+          WHERE ts.round_id = p_round_id AND ts.team_number = tff.team_number
+            AND ts.hole_number = h.hole
+        )
+    )
+  INTO v_not_ready;
+
+  IF v_not_ready THEN RETURN 'not_yet'; END IF;
+
+  WITH tf AS (
+    SELECT DISTINCT rp.team_number,
+           COALESCE(ft.flight_id,
+                    (SELECT id FROM flights WHERE round_id = p_round_id
+                     ORDER BY sort_order ASC LIMIT 1)) AS flight_id
+    FROM round_players rp
+    LEFT JOIN flight_teams ft
+      ON ft.round_id = p_round_id AND ft.team_number = rp.team_number
+    WHERE rp.round_id = p_round_id AND rp.team_number > 0
+  ),
+  fam AS (
+    SELECT f.id AS flight_id,
+      CASE WHEN f.format IN ('texas_scramble','alternate_shot') THEN 'team_card'
+           WHEN f.format IN ('shambles','par_competition') THEN 'relaxed'
+           ELSE 'strict' END AS family
+    FROM flights f WHERE f.round_id = p_round_id
+  ),
+  tff AS (
+    SELECT tf.team_number, tf.flight_id, fam.family
+    FROM tf JOIN fam ON fam.flight_id = tf.flight_id
+  ),
+  team_roster AS (
+    SELECT rp.team_number, COUNT(*) AS roster,
+           COUNT(*) FILTER (WHERE rp.dropped_after_hole IS NOT NULL) AS dropouts
+    FROM round_players rp
+    WHERE rp.round_id = p_round_id AND rp.team_number > 0
+    GROUP BY rp.team_number
+  ),
+  flight_max AS (
+    SELECT tff.flight_id, MAX(tr.roster) AS fmax
+    FROM tff JOIN team_roster tr ON tr.team_number = tff.team_number
+    WHERE tff.family = 'strict'
+    GROUP BY tff.flight_id
+  )
+  SELECT COALESCE(SUM((fm.fmax - tr.roster) + tr.dropouts), 0)
+    INTO v_total_slots
+    FROM tff
+    JOIN team_roster tr ON tr.team_number = tff.team_number
+    JOIN flight_max fm ON fm.flight_id = tff.flight_id
+    WHERE tff.family = 'strict';
+
+  IF v_total_slots = 0 THEN
+    UPDATE rounds SET is_complete = true WHERE id = p_round_id;
+    RETURN 'finalized';
+  END IF;
+
+  WITH tf AS (
+    SELECT DISTINCT rp.team_number,
+           COALESCE(ft.flight_id,
+                    (SELECT id FROM flights WHERE round_id = p_round_id
+                     ORDER BY sort_order ASC LIMIT 1)) AS flight_id
+    FROM round_players rp
+    LEFT JOIN flight_teams ft
+      ON ft.round_id = p_round_id AND ft.team_number = rp.team_number
+    WHERE rp.round_id = p_round_id AND rp.team_number > 0
+  ),
+  fam AS (
+    SELECT f.id AS flight_id,
+      CASE WHEN f.format IN ('texas_scramble','alternate_shot') THEN 'team_card'
+           WHEN f.format IN ('shambles','par_competition') THEN 'relaxed'
+           ELSE 'strict' END AS family
+    FROM flights f WHERE f.round_id = p_round_id
+  ),
+  tff AS (
+    SELECT tf.team_number, tf.flight_id, fam.family
+    FROM tf JOIN fam ON fam.flight_id = tf.flight_id
+  )
+  SELECT ARRAY(
+    SELECT rp.id FROM round_players rp
+    JOIN tff ON tff.team_number = rp.team_number
+    WHERE rp.round_id = p_round_id AND rp.team_number > 0
+      AND tff.family <> 'team_card'
+      AND rp.dropped_after_hole IS NULL
+      AND (SELECT COUNT(DISTINCT s.hole_number) FROM scores s
+           WHERE s.round_player_id = rp.id AND s.hole_number BETWEEN 1 AND 18) = 18
+    ORDER BY rp.id ASC
+  ) INTO v_pool;
+  v_pool_size := COALESCE(array_length(v_pool, 1), 0);
+  IF v_pool_size < v_total_slots THEN RETURN 'pool_too_small'; END IF;
+
+  v_seed_bigint := floor(random() * 9223372036854775807)::bigint;
+  v_seed_float  := v_seed_bigint::double precision / 9223372036854775807::double precision;
+  PERFORM setseed(v_seed_float);
+
+  FOR v_team IN
+    WITH tf AS (
+      SELECT DISTINCT rp.team_number,
+             COALESCE(ft.flight_id,
+                      (SELECT id FROM flights WHERE round_id = p_round_id
+                       ORDER BY sort_order ASC LIMIT 1)) AS flight_id
+      FROM round_players rp
+      LEFT JOIN flight_teams ft
+        ON ft.round_id = p_round_id AND ft.team_number = rp.team_number
+      WHERE rp.round_id = p_round_id AND rp.team_number > 0
+    ),
+    fam AS (
+      SELECT f.id AS flight_id, f.sort_order,
+        CASE WHEN f.format IN ('texas_scramble','alternate_shot') THEN 'team_card'
+             WHEN f.format IN ('shambles','par_competition') THEN 'relaxed'
+             ELSE 'strict' END AS family
+      FROM flights f WHERE f.round_id = p_round_id
+    ),
+    tff AS (
+      SELECT tf.team_number, tf.flight_id, fam.family, fam.sort_order
+      FROM tf JOIN fam ON fam.flight_id = tf.flight_id
+    ),
+    team_roster AS (
+      SELECT rp.team_number, COUNT(*) AS roster
+      FROM round_players rp
+      WHERE rp.round_id = p_round_id AND rp.team_number > 0
+      GROUP BY rp.team_number
+    ),
+    flight_max AS (
+      SELECT tff.flight_id, MAX(tr.roster) AS fmax
+      FROM tff JOIN team_roster tr ON tr.team_number = tff.team_number
+      WHERE tff.family = 'strict'
+      GROUP BY tff.flight_id
+    )
+    SELECT
+      tff.team_number, tff.sort_order,
+      (fm.fmax - tr.roster)::int AS round_start_slots,
+      COALESCE(
+        ARRAY(
+          SELECT dropped_after_hole FROM round_players
+            WHERE round_id = p_round_id AND team_number = tff.team_number
+              AND dropped_after_hole IS NOT NULL
+            ORDER BY dropped_after_hole ASC
+        ), ARRAY[]::int[]
+      ) AS dropout_holes
+    FROM tff
+    JOIN team_roster tr ON tr.team_number = tff.team_number
+    JOIN flight_max fm ON fm.flight_id = tff.flight_id
+    WHERE tff.family = 'strict'
+      AND ((fm.fmax - tr.roster) > 0
+           OR EXISTS (SELECT 1 FROM round_players rp2
+                      WHERE rp2.round_id = p_round_id AND rp2.team_number = tff.team_number
+                        AND rp2.dropped_after_hole IS NOT NULL))
+    ORDER BY tff.sort_order ASC, tff.team_number ASC
+  LOOP
+    v_round_start_slots := v_team.round_start_slots;
+    v_dropout_holes := v_team.dropout_holes;
+
+    IF v_round_start_slots > 0 THEN
+      FOR i IN 1..v_round_start_slots LOOP
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_temp_pool
+          FROM unnest(v_pool) AS rp_id
+          WHERE rp_id NOT IN (
+            SELECT id FROM round_players
+              WHERE round_id = p_round_id AND team_number = v_team.team_number
+          );
+        IF v_temp_pool IS NULL OR array_length(v_temp_pool, 1) IS NULL THEN
+          RAISE EXCEPTION 'pool_too_small_runtime'
+            USING ERRCODE = 'P0001', HINT = 'Per-team eligible pool is empty mid-draw.';
+        END IF;
+        v_pick_idx := floor(random() * array_length(v_temp_pool, 1))::int + 1;
+        v_drawn_rp_id := v_temp_pool[v_pick_idx];
+        SELECT player_id INTO v_drawn_player_id FROM round_players WHERE id = v_drawn_rp_id;
+        INSERT INTO blind_draws
+          (round_id, short_team_number, drawn_player_id,
+           hole_range_start, hole_range_end, random_seed)
+        VALUES (p_round_id, v_team.team_number, v_drawn_player_id, 1, 18, v_seed_bigint);
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_pool
+          FROM unnest(v_pool) AS rp_id WHERE rp_id <> v_drawn_rp_id;
+        v_pool := COALESCE(v_pool, ARRAY[]::bigint[]);
+      END LOOP;
+    END IF;
+
+    IF array_length(v_dropout_holes, 1) IS NOT NULL THEN
+      FOR i IN 1..array_length(v_dropout_holes, 1) LOOP
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_temp_pool
+          FROM unnest(v_pool) AS rp_id
+          WHERE rp_id NOT IN (
+            SELECT id FROM round_players
+              WHERE round_id = p_round_id AND team_number = v_team.team_number
+          );
+        IF v_temp_pool IS NULL OR array_length(v_temp_pool, 1) IS NULL THEN
+          RAISE EXCEPTION 'pool_too_small_runtime'
+            USING ERRCODE = 'P0001', HINT = 'Per-team eligible pool is empty mid-draw.';
+        END IF;
+        v_pick_idx := floor(random() * array_length(v_temp_pool, 1))::int + 1;
+        v_drawn_rp_id := v_temp_pool[v_pick_idx];
+        SELECT player_id INTO v_drawn_player_id FROM round_players WHERE id = v_drawn_rp_id;
+        INSERT INTO blind_draws
+          (round_id, short_team_number, drawn_player_id,
+           hole_range_start, hole_range_end, random_seed)
+        VALUES (p_round_id, v_team.team_number, v_drawn_player_id,
+                v_dropout_holes[i] + 1, 18, v_seed_bigint);
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_pool
+          FROM unnest(v_pool) AS rp_id WHERE rp_id <> v_drawn_rp_id;
+        v_pool := COALESCE(v_pool, ARRAY[]::bigint[]);
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  UPDATE rounds SET is_complete = true WHERE id = p_round_id;
+  RETURN 'finalized';
+END;
+$$;
+
+
+--
 -- Name: finalize_round_relaxed(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -76,47 +363,81 @@ CREATE FUNCTION public.finalize_round_relaxed(p_round_id bigint) RETURNS text
     LANGUAGE plpgsql
     AS $$
 DECLARE
-  v_is_complete boolean;
+  v_is_complete boolean; v_max_team_size integer; v_pool bigint[]; v_pool_size integer;
+  v_temp_pool bigint[]; v_seed_bigint bigint; v_seed_float double precision;
+  v_total_slots integer := 0; v_team RECORD; v_round_start_slots integer;
+  v_dropout_holes integer[]; v_pick_idx integer; v_drawn_rp_id bigint;
+  v_drawn_player_id bigint; i integer;
 BEGIN
-  -- Serialize concurrent finalize attempts on the same round.
-  SELECT COALESCE(r.is_complete, false) INTO v_is_complete
-    FROM rounds r
-    WHERE r.id = p_round_id
-    FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'round_not_found' USING ERRCODE = 'P0002';
-  END IF;
-
-  IF v_is_complete THEN
-    RETURN 'already_complete';
-  END IF;
-
-  -- Relaxed completion FLOOR: every assigned team must have at least one score
-  -- on every hole 1..18. A team-hole with zero scores blocks finalize.
+  SELECT COALESCE(r.is_complete, false) INTO v_is_complete FROM rounds r WHERE r.id = p_round_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'round_not_found' USING ERRCODE = 'P0002'; END IF;
+  IF v_is_complete THEN RETURN 'already_complete'; END IF;
+  -- Relaxed completion FLOOR (unchanged): every assigned team has >=1 score on every hole 1..18.
   IF EXISTS (
-    SELECT 1
-    FROM (
-      SELECT DISTINCT team_number
-        FROM round_players
-        WHERE round_id = p_round_id AND team_number > 0
-    ) teams
-    CROSS JOIN generate_series(1, 18) AS h(hole)
-    WHERE NOT EXISTS (
-      SELECT 1
-        FROM round_players rp
-        JOIN scores s ON s.round_player_id = rp.id
-        WHERE rp.round_id = p_round_id
-          AND rp.team_number = teams.team_number
-          AND s.hole_number = h.hole
-    )
-  ) THEN
-    RETURN 'not_yet';
-  END IF;
-
-  -- No blind draw for relaxed close — short teams play short.
-  UPDATE rounds SET is_complete = true WHERE id = p_round_id;
-  RETURN 'finalized';
+    SELECT 1 FROM (SELECT DISTINCT team_number FROM round_players WHERE round_id = p_round_id AND team_number > 0) teams
+    CROSS JOIN generate_series(1,18) AS h(hole)
+    WHERE NOT EXISTS (SELECT 1 FROM round_players rp JOIN scores s ON s.round_player_id = rp.id
+      WHERE rp.round_id = p_round_id AND rp.team_number = teams.team_number AND s.hole_number = h.hole)
+  ) THEN RETURN 'not_yet'; END IF;
+  -- ===== Blind draw (NEW for relaxed; mirrors deployed strict draw) =====
+  SELECT COALESCE(MAX(c),0) INTO v_max_team_size FROM (SELECT COUNT(*) AS c FROM round_players
+    WHERE round_id = p_round_id AND team_number > 0 GROUP BY team_number) t;
+  IF v_max_team_size = 0 THEN UPDATE rounds SET is_complete = true WHERE id = p_round_id; RETURN 'finalized'; END IF;
+  SELECT COALESCE(SUM(slots),0) INTO v_total_slots FROM (SELECT team_number,
+    (v_max_team_size - COUNT(*)) + COUNT(*) FILTER (WHERE dropped_after_hole IS NOT NULL) AS slots
+    FROM round_players WHERE round_id = p_round_id AND team_number > 0 GROUP BY team_number) t;
+  -- Source pool = full-18 players, not dropouts (Decision 2: picked-up players excluded).
+  v_pool := ARRAY(SELECT rp.id FROM round_players rp WHERE rp.round_id = p_round_id AND rp.team_number > 0
+    AND rp.dropped_after_hole IS NULL
+    AND (SELECT COUNT(*) FROM scores s WHERE s.round_player_id = rp.id AND s.hole_number BETWEEN 1 AND 18) = 18
+    ORDER BY rp.id ASC);
+  v_pool_size := COALESCE(array_length(v_pool,1),0);
+  -- Relaxed divergence: insufficient pool -> finalize anyway, no fill.
+  IF v_total_slots = 0 OR v_pool_size < v_total_slots THEN
+    UPDATE rounds SET is_complete = true WHERE id = p_round_id; RETURN 'finalized'; END IF;
+  v_seed_bigint := floor(random() * 9223372036854775807)::bigint;
+  v_seed_float := v_seed_bigint::double precision / 9223372036854775807::double precision;
+  PERFORM setseed(v_seed_float);
+  FOR v_team IN
+    SELECT team_number, (v_max_team_size - COUNT(*))::int AS round_start_slots,
+      COALESCE(ARRAY(SELECT dropped_after_hole FROM round_players WHERE round_id = p_round_id
+        AND team_number = rp_outer.team_number AND dropped_after_hole IS NOT NULL
+        ORDER BY dropped_after_hole ASC), ARRAY[]::int[]) AS dropout_holes
+    FROM round_players rp_outer WHERE round_id = p_round_id AND team_number > 0
+    GROUP BY team_number ORDER BY team_number ASC
+  LOOP
+    v_round_start_slots := v_team.round_start_slots; v_dropout_holes := v_team.dropout_holes;
+    IF v_round_start_slots > 0 THEN
+      FOR i IN 1..v_round_start_slots LOOP
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_temp_pool FROM unnest(v_pool) AS rp_id
+          WHERE rp_id NOT IN (SELECT id FROM round_players WHERE round_id = p_round_id AND team_number = v_team.team_number);
+        -- Relaxed best-effort: no eligible source left for this team -> skip the slot (play short), do not abort.
+        EXIT WHEN v_temp_pool IS NULL OR array_length(v_temp_pool,1) IS NULL;
+        v_pick_idx := floor(random() * array_length(v_temp_pool,1))::int + 1;
+        v_drawn_rp_id := v_temp_pool[v_pick_idx];
+        SELECT player_id INTO v_drawn_player_id FROM round_players WHERE id = v_drawn_rp_id;
+        INSERT INTO blind_draws (round_id, short_team_number, drawn_player_id, hole_range_start, hole_range_end, random_seed)
+        VALUES (p_round_id, v_team.team_number, v_drawn_player_id, 1, 18, v_seed_bigint);
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_pool FROM unnest(v_pool) AS rp_id WHERE rp_id <> v_drawn_rp_id;
+        v_pool := COALESCE(v_pool, ARRAY[]::bigint[]);
+      END LOOP;
+    END IF;
+    IF array_length(v_dropout_holes,1) IS NOT NULL THEN
+      FOR i IN 1..array_length(v_dropout_holes,1) LOOP
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_temp_pool FROM unnest(v_pool) AS rp_id
+          WHERE rp_id NOT IN (SELECT id FROM round_players WHERE round_id = p_round_id AND team_number = v_team.team_number);
+        EXIT WHEN v_temp_pool IS NULL OR array_length(v_temp_pool,1) IS NULL;
+        v_pick_idx := floor(random() * array_length(v_temp_pool,1))::int + 1;
+        v_drawn_rp_id := v_temp_pool[v_pick_idx];
+        SELECT player_id INTO v_drawn_player_id FROM round_players WHERE id = v_drawn_rp_id;
+        INSERT INTO blind_draws (round_id, short_team_number, drawn_player_id, hole_range_start, hole_range_end, random_seed)
+        VALUES (p_round_id, v_team.team_number, v_drawn_player_id, v_dropout_holes[i] + 1, 18, v_seed_bigint);
+        SELECT ARRAY_AGG(rp_id ORDER BY rp_id ASC) INTO v_pool FROM unnest(v_pool) AS rp_id WHERE rp_id <> v_drawn_rp_id;
+        v_pool := COALESCE(v_pool, ARRAY[]::bigint[]);
+      END LOOP;
+    END IF;
+  END LOOP;
+  UPDATE rounds SET is_complete = true WHERE id = p_round_id; RETURN 'finalized';
 END;
 $$;
 
@@ -423,19 +744,28 @@ BEGIN
   SELECT season_id INTO v_season_id FROM rounds WHERE id = p_round_id;
   DELETE FROM round_payouts WHERE round_id = p_round_id;
   INSERT INTO round_payouts
-    (round_id, season_id, team_number, place, per_player, team_size, total_for_team, is_tied, below_floor)
-  SELECT p_round_id, v_season_id, x.team_number, x.place, x.per_player, x.team_size, x.total_for_team, x.is_tied, x.below_floor
+    (round_id, season_id, team_number, place, per_player, team_size,
+     total_for_team, is_tied, below_floor, flight_id, flight_name,
+     redirected_share_count)
+  SELECT
+    p_round_id, v_season_id, x.team_number, x.place, x.per_player, x.team_size,
+    x.total_for_team, x.is_tied, x.below_floor, x.flight_id, x.flight_name,
+    COALESCE(x.redirected_share_count, 0)
   FROM jsonb_to_recordset(p_payload -> 'payouts') AS x(
     team_number integer, place integer, per_player integer, team_size integer,
-    total_for_team integer, is_tied boolean, below_floor boolean);
+    total_for_team integer, is_tied boolean, below_floor boolean,
+    flight_id bigint, flight_name text, redirected_share_count integer
+  );
   IF NOT EXISTS (
-    SELECT 1 FROM fund_transactions WHERE round_id = p_round_id GROUP BY fund HAVING SUM(amount) <> 0
+    SELECT 1 FROM fund_transactions WHERE round_id = p_round_id
+    GROUP BY fund HAVING SUM(amount) <> 0
   ) THEN
     INSERT INTO fund_transactions (fund, amount, reason, round_id, source)
     SELECT f.fund, f.amount, f.reason, p_round_id, 'finalize'
     FROM jsonb_to_recordset(p_payload -> 'funds') AS f(fund text, amount integer, reason text);
   END IF;
-END; $$;
+END;
+$$;
 
 
 --
@@ -564,6 +894,60 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: admin_backup_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.admin_backup_audit (
+    id bigint NOT NULL,
+    credential_id bigint,
+    logged_in_at timestamp with time zone DEFAULT now() NOT NULL,
+    ip text,
+    user_agent text
+);
+
+
+--
+-- Name: admin_backup_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.admin_backup_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.admin_backup_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: admin_backup_pin; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.admin_backup_pin (
+    id bigint NOT NULL,
+    pin_hash text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone
+);
+
+
+--
+-- Name: admin_backup_pin_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.admin_backup_pin ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.admin_backup_pin_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: blind_draws; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -616,6 +1000,67 @@ CREATE TABLE public.courses (
 
 ALTER TABLE public.courses ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.courses_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: flight_teams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flight_teams (
+    id bigint NOT NULL,
+    flight_id bigint NOT NULL,
+    round_id bigint NOT NULL,
+    team_number integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    handicap_allowance integer,
+    CONSTRAINT flight_teams_handicap_allowance_check CHECK (((handicap_allowance IS NULL) OR ((handicap_allowance >= 10) AND (handicap_allowance <= 100)))),
+    CONSTRAINT flight_teams_team_number_check CHECK ((team_number > 0))
+);
+
+
+--
+-- Name: flight_teams_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.flight_teams ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.flight_teams_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: flights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flights (
+    id bigint NOT NULL,
+    round_id bigint NOT NULL,
+    name text NOT NULL,
+    sort_order integer NOT NULL,
+    format text,
+    format_config jsonb,
+    format_locked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flights_format_check CHECK (((format IS NULL) OR (format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text, 'texas_scramble'::text, 'alternate_shot'::text, 'par_competition'::text]))))
+);
+
+
+--
+-- Name: flights_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.flights ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.flights_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -805,8 +1250,12 @@ CREATE TABLE public.round_payouts (
     import_source text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     override_reason text,
+    flight_id bigint,
+    flight_name text,
+    redirected_share_count integer DEFAULT 0 NOT NULL,
     CONSTRAINT round_payouts_per_player_check CHECK ((per_player >= 0)),
     CONSTRAINT round_payouts_place_check CHECK (((place >= 1) AND (place <= 4))),
+    CONSTRAINT round_payouts_redirected_share_count_check CHECK ((redirected_share_count >= 0)),
     CONSTRAINT round_payouts_team_number_check CHECK ((team_number > 0)),
     CONSTRAINT round_payouts_team_size_check CHECK (((team_size >= 2) AND (team_size <= 4))),
     CONSTRAINT round_payouts_total_for_team_check CHECK ((total_for_team >= 0))
@@ -910,7 +1359,7 @@ CREATE TABLE public.rounds (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     was_finalized boolean DEFAULT false NOT NULL,
     season_id integer,
-    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text, 'texas_scramble'::text, 'alternate_shot'::text])))
+    CONSTRAINT rounds_format_check CHECK ((format = ANY (ARRAY['2_ball'::text, '3_ball'::text, 'best_ball'::text, 'stableford_standard'::text, 'gobs_stableford'::text, 'shambles'::text, 'texas_scramble'::text, 'alternate_shot'::text, 'par_competition'::text])))
 );
 
 
@@ -1060,6 +1509,22 @@ ALTER TABLE ONLY public.seasons ALTER COLUMN id SET DEFAULT nextval('public.seas
 
 
 --
+-- Name: admin_backup_audit admin_backup_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_backup_audit
+    ADD CONSTRAINT admin_backup_audit_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admin_backup_pin admin_backup_pin_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_backup_pin
+    ADD CONSTRAINT admin_backup_pin_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: blind_draws blind_draws_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1073,6 +1538,38 @@ ALTER TABLE ONLY public.blind_draws
 
 ALTER TABLE ONLY public.courses
     ADD CONSTRAINT courses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flight_teams flight_teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flight_teams
+    ADD CONSTRAINT flight_teams_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flight_teams flight_teams_round_team_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flight_teams
+    ADD CONSTRAINT flight_teams_round_team_key UNIQUE (round_id, team_number);
+
+
+--
+-- Name: flights flights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flights
+    ADD CONSTRAINT flights_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flights flights_round_sort_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flights
+    ADD CONSTRAINT flights_round_sort_key UNIQUE (round_id, sort_order);
 
 
 --
@@ -1212,10 +1709,38 @@ ALTER TABLE ONLY public.tees
 
 
 --
+-- Name: admin_backup_audit_cred_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX admin_backup_audit_cred_idx ON public.admin_backup_audit USING btree (credential_id);
+
+
+--
+-- Name: admin_backup_pin_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX admin_backup_pin_active_idx ON public.admin_backup_pin USING btree (expires_at) WHERE (revoked_at IS NULL);
+
+
+--
 -- Name: blind_draws_round_team_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX blind_draws_round_team_idx ON public.blind_draws USING btree (round_id, short_team_number);
+
+
+--
+-- Name: flight_teams_flight_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flight_teams_flight_idx ON public.flight_teams USING btree (flight_id);
+
+
+--
+-- Name: flights_round_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flights_round_idx ON public.flights USING btree (round_id);
 
 
 --
@@ -1324,6 +1849,14 @@ CREATE TRIGGER trg_rounds_was_finalized_latch BEFORE UPDATE OF is_complete ON pu
 
 
 --
+-- Name: admin_backup_audit admin_backup_audit_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_backup_audit
+    ADD CONSTRAINT admin_backup_audit_credential_id_fkey FOREIGN KEY (credential_id) REFERENCES public.admin_backup_pin(id) ON DELETE SET NULL;
+
+
+--
 -- Name: blind_draws blind_draws_drawn_player_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1337,6 +1870,30 @@ ALTER TABLE ONLY public.blind_draws
 
 ALTER TABLE ONLY public.blind_draws
     ADD CONSTRAINT blind_draws_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flight_teams flight_teams_flight_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flight_teams
+    ADD CONSTRAINT flight_teams_flight_id_fkey FOREIGN KEY (flight_id) REFERENCES public.flights(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flight_teams flight_teams_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flight_teams
+    ADD CONSTRAINT flight_teams_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flights flights_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flights
+    ADD CONSTRAINT flights_round_id_fkey FOREIGN KEY (round_id) REFERENCES public.rounds(id) ON DELETE CASCADE;
 
 
 --
@@ -1361,6 +1918,14 @@ ALTER TABLE ONLY public.holes
 
 ALTER TABLE ONLY public.players
     ADD CONSTRAINT players_preferred_tee_id_fkey FOREIGN KEY (preferred_tee_id) REFERENCES public.tees(id) ON DELETE SET NULL;
+
+
+--
+-- Name: round_payouts round_payouts_flight_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_payouts
+    ADD CONSTRAINT round_payouts_flight_id_fkey FOREIGN KEY (flight_id) REFERENCES public.flights(id);
 
 
 --
@@ -1452,10 +2017,38 @@ ALTER TABLE ONLY public.tees
 
 
 --
+-- Name: admin_backup_audit Allow all on admin_backup_audit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow all on admin_backup_audit" ON public.admin_backup_audit USING (true) WITH CHECK (true);
+
+
+--
+-- Name: admin_backup_pin Allow all on admin_backup_pin; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow all on admin_backup_pin" ON public.admin_backup_pin USING (true) WITH CHECK (true);
+
+
+--
 -- Name: courses Allow all on courses; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Allow all on courses" ON public.courses USING (true) WITH CHECK (true);
+
+
+--
+-- Name: flight_teams Allow all on flight_teams; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow all on flight_teams" ON public.flight_teams USING (true) WITH CHECK (true);
+
+
+--
+-- Name: flights Allow all on flights; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow all on flights" ON public.flights USING (true) WITH CHECK (true);
 
 
 --
@@ -1522,10 +2115,34 @@ CREATE POLICY "Anyone can update settings" ON public.league_settings FOR UPDATE 
 
 
 --
+-- Name: admin_backup_audit; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.admin_backup_audit ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: admin_backup_pin; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.admin_backup_pin ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: courses; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.courses ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: flight_teams; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.flight_teams ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: flights; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.flights ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: fund_transactions; Type: ROW SECURITY; Schema: public; Owner: -
@@ -1605,5 +2222,5 @@ ALTER TABLE public.tees ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict yondieXvwNzBzJSkmmT6fLEAmf0Fo2ehH0IsK7aWn2sqpvTynfgdzbgXF1ki3Rv
+\unrestrict P5rXuN0V7T7pd6xJe3iTibx1McIoy3xWFOc063fNaKValcd7o1iVXgjblmj9Iof
 
