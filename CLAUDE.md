@@ -480,6 +480,20 @@ allowance computation.
 
 ---
 
+### Money read screens read canonical payout data only
+
+**Money read screens** (admin Money: By Player, By Round) read canonical
+persisted payout data only — `round_payouts` + `fund_balances`/`fund_transactions`
+via `loadWinnings.ts`, per-player net = Σ team `per_player` − Σ `rounds.buy_in`.
+**Never recompute** payouts/fund math in a read screen; agreement is asserted
+EQUAL across By Player drill ↔ By Round ↔ persisted `round_payouts`
+(`tests/lib/payouts/crossSurface.test.ts`). Skims ($1 HiO/$2 BFB) come from
+`winningsMoney.ts` constants, never inlined. The whole `/admin/*` tree is
+middleware-gated — NO money figure may render on any player-facing surface
+(home / leaderboard / summary / profile).
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

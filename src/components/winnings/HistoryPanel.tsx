@@ -20,17 +20,11 @@ import {
   revertRoundPayout,
 } from "@/lib/payouts/overrideRoundPayout";
 import DangerModal from "@/app/admin/components/DangerModal";
+import { MONEY } from "./moneyTokens";
 
-const C = {
-  navyDeep: "#042C53",
-  navy: "#0c3057",
-  textSec: "#6b6b6b",
-  textMuted: "#9a9a9a",
-  border: "#e2e0db",
-  bgWarm: "#f5f4f0",
-  money: "#166534",
-  gold: "#d4a017",
-};
+// Tokens come from the shared money palette (was a raw-hex `C` object). `money`
+// is the canonical positive/green; everything else maps 1:1.
+const C = { ...MONEY, money: MONEY.pos };
 
 function formatDate(d: string): string {
   return new Date(d + "T12:00:00").toLocaleDateString("en-US", {
@@ -280,7 +274,7 @@ export default function HistoryPanel({
                   </span>
                   {r.hasOverride && <span style={overrideBadgeStyle}>Admin Override</span>}
                 </div>
-                <div style={{ color: C.money, fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap" }}>
+                <div style={{ color: C.money, fontWeight: 700, fontSize: "14px", whiteSpace: "nowrap" }}>
                   ${r.paid} paid · ${r.sweepToBfb} to BFB
                 </div>
               </div>
@@ -329,7 +323,7 @@ export default function HistoryPanel({
                               </div>
                             </div>
                             <div style={{ textAlign: "right" }}>
-                              <div style={{ color: C.money, fontWeight: 700, fontSize: "13px", fontVariantNumeric: "tabular-nums" }}>
+                              <div style={{ color: C.money, fontWeight: 700, fontSize: "15px", fontVariantNumeric: "tabular-nums" }}>
                                 ${t.totalForTeam}
                               </div>
                               <div style={{ fontSize: "10px", color: C.textMuted, fontWeight: 500 }}>
@@ -357,7 +351,7 @@ export default function HistoryPanel({
                                   style={editBtnStyle}
                                   data-testid="payout-edit-btn"
                                 >
-                                  Edit
+                                  Edit payout
                                 </button>
                                 {t.wasOverridden && (
                                   <button
@@ -366,7 +360,7 @@ export default function HistoryPanel({
                                     style={revertBtnStyle}
                                     data-testid="payout-revert-btn"
                                   >
-                                    Revert
+                                    Revert override
                                   </button>
                                 )}
                               </div>
@@ -527,6 +521,7 @@ const statStyle: React.CSSProperties = { display: "flex", alignItems: "baseline"
 const statStrong: React.CSSProperties = {
   color: C.navyDeep,
   fontWeight: 700,
+  fontSize: "14px", // data value ≥14px (labels stay caption-sized)
   fontVariantNumeric: "tabular-nums",
 };
 const expandedStyle: React.CSSProperties = {
@@ -589,10 +584,12 @@ const editBtnStyle: React.CSSProperties = {
   background: "white",
   border: `1px solid ${C.navy}`,
   color: C.navy,
-  fontSize: "10px",
+  fontSize: "13px",
   fontWeight: 600,
-  padding: "3px 9px",
-  borderRadius: "5px",
+  // ≥44px tap target (frontend-design floor) for these mid-round money edits.
+  minHeight: "44px",
+  padding: "10px 14px",
+  borderRadius: "8px",
   cursor: "pointer",
   fontFamily: "inherit",
 };

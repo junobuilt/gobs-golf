@@ -50,13 +50,15 @@ describe("ensureRoundShell", () => {
   });
 
   it("inserts and returns new id when no round exists", async () => {
-    // First call: SELECT returns nothing; second: INSERT returns new id; third:
-    // flights upsert (ensurePrimaryFlight).
+    // First call: SELECT returns nothing; second: league_settings buy-in read;
+    // third: INSERT returns new id; fourth: flights upsert (ensurePrimaryFlight).
     const selectChain = makeChain({ data: null, error: null });
+    const buyInChain = makeChain({ data: { value: "10" }, error: null });
     const insertChain = makeChain({ data: { id: 99 }, error: null });
 
     fromMock
-      .mockReturnValueOnce(selectChain) // SELECT
+      .mockReturnValueOnce(selectChain) // SELECT rounds
+      .mockReturnValueOnce(buyInChain) // SELECT league_settings (F2.5)
       .mockReturnValueOnce(insertChain) // INSERT
       .mockReturnValueOnce(makeFlightChain()); // flights upsert
 
@@ -96,8 +98,10 @@ describe("ensureRoundShell", () => {
     expect(upsertOpts).toMatchObject({ onConflict: "round_id,sort_order", ignoreDuplicates: true });
   });
 
-  it("insert payload includes format: null and DEFAULT_FORMAT_CONFIG_SHELL", async () => {
+  it("insert payload includes format: null, DEFAULT_FORMAT_CONFIG_SHELL, and the snapshotted buy_in", async () => {
     const selectChain = makeChain({ data: null, error: null });
+    // F2.5: buy-in setting is "12" here → must be stamped onto the round.
+    const buyInChain = makeChain({ data: { value: "12" }, error: null });
 
     let capturedPayload: unknown = null;
     const insertChain: Record<string, unknown> = {};
@@ -112,6 +116,7 @@ describe("ensureRoundShell", () => {
 
     fromMock
       .mockReturnValueOnce(selectChain)
+      .mockReturnValueOnce(buyInChain) // league_settings buy-in read
       .mockReturnValueOnce(insertChain)
       .mockReturnValueOnce(makeFlightChain()); // flights upsert
 
@@ -121,16 +126,19 @@ describe("ensureRoundShell", () => {
       course_id: 1,
       format: null,
       format_config: DEFAULT_FORMAT_CONFIG_SHELL,
+      buy_in: 12,
     });
   });
 
   it("handles 23505 unique-violation by re-fetching and returning that id", async () => {
     const selectChain = makeChain({ data: null, error: null });
+    const buyInChain = makeChain({ data: { value: "10" }, error: null });
     const insertChain = makeChain({ data: null, error: { code: "23505", message: "unique violation" } });
     const refetchChain = makeChain({ data: { id: 55 }, error: null });
 
     fromMock
       .mockReturnValueOnce(selectChain)  // initial SELECT
+      .mockReturnValueOnce(buyInChain)   // league_settings buy-in read
       .mockReturnValueOnce(insertChain)  // INSERT → 23505
       .mockReturnValueOnce(refetchChain) // re-SELECT after race
       .mockReturnValueOnce(makeFlightChain()); // flights upsert
@@ -142,10 +150,12 @@ describe("ensureRoundShell", () => {
 
   it("throws on non-23505 insert errors", async () => {
     const selectChain = makeChain({ data: null, error: null });
+    const buyInChain = makeChain({ data: { value: "10" }, error: null });
     const insertChain = makeChain({ data: null, error: { code: "42P01", message: "table missing" } });
 
     fromMock
       .mockReturnValueOnce(selectChain)
+      .mockReturnValueOnce(buyInChain) // league_settings buy-in read
       .mockReturnValueOnce(insertChain);
 
     await expect(ensureRoundShell("2026-05-24")).rejects.toThrow("table missing");

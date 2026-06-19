@@ -1,6 +1,6 @@
-// E2E #1 — the Winnings what-if calculator. Pure compute, no DB writes. Proves
+// E2E #1 — the Money what-if calculator. Pure compute, no DB writes. Proves
 // the whole harness end-to-end: admin auth (reused storageState) → admin shell
-// (Supabase mocked) → Winnings tab → real CalculatorPanel render.
+// (Supabase mocked) → Money tab → Funds sub-view → real CalculatorPanel render.
 //
 // Expected values are INDEPENDENTLY known (not snapshotted from prod):
 //   24 players, 2-per-team, $10 buy-in → perPlayerPot = 10 - 1(HiO) - 2(BFB) = 7
@@ -18,7 +18,8 @@ test("Winnings calculator renders 24/2 payouts: 25/23/20/16, $168 total, $0 swee
   });
 
   await page.goto("/admin");
-  await page.getByRole("button", { name: "Winnings" }).click();
+  await page.getByRole("button", { name: "Money" }).click();
+  // Calculator lives under the default "Funds" sub-view of the Money tab.
 
   // Drive the inputs explicitly (also exercises the interaction layer).
   await page.getByLabel("Number of players").fill("24");

@@ -143,8 +143,9 @@ function embedRound(payoutRow: any): any {
 
 /**
  * One entry per finalized round that has round_payouts rows, newest first.
- * `seasonId` scopes to one season; pass null for all-time. `buyIn` drives the
- * per-round money stats (mirrors S2's derivation).
+ * `seasonId` scopes to one season; pass null for all-time. `buyIn` is only a
+ * FALLBACK for rows missing rounds.buy_in — each round's money is derived from
+ * its own snapshotted rounds.buy_in (migration 030) when present.
  */
 export async function loadWinningsHistory(
   seasonId: number | null,
@@ -156,7 +157,7 @@ export async function loadWinningsHistory(
       "round_id, team_number, place, per_player, team_size, total_for_team, " +
         "is_tied, flight_id, flight_name, redirected_share_count, " +
         "was_overridden, original_amount, override_reason, " +
-        "rounds!inner ( played_on, format, season_id, is_complete )",
+        "rounds!inner ( played_on, format, season_id, is_complete, buy_in )",
     )
     .eq("rounds.is_complete", true);
   if (seasonId != null) {
@@ -206,7 +207,12 @@ export async function loadWinningsHistory(
     const round = embedRound(rows[0]);
     const headcount = headcountByRound[rid] ?? 0;
     const numTeams = teamSetByRound[rid]?.size ?? 0;
-    const money = deriveRoundMoney(headcount, buyIn);
+    // F2.5: money is derived from the round's OWN snapshotted buy-in
+    // (rounds.buy_in, migration 030) so changing the global league setting
+    // never retroactively recomputes history. `buyIn` is only a fallback for
+    // pre-migration rows whose column is somehow null (none in prod).
+    const perRoundBuyIn = round?.buy_in != null ? Number(round.buy_in) : buyIn;
+    const money = deriveRoundMoney(headcount, perRoundBuyIn);
     const paid = rows.reduce((s, r) => s + (r.total_for_team as number), 0);
     const teamSize = rows.length > 0 ? (rows[0].team_size as number) : null;
     const hasOverride = rows.some((r) => r.was_overridden === true);

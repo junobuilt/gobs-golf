@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { DEFAULT_FORMAT_CONFIG_SHELL } from "@/lib/format/copy";
 import { ensurePrimaryFlight } from "@/lib/flights/resolve";
+import { resolveBuyIn } from "@/lib/payouts/winningsMoney";
 
 // Find-or-create a round shell for the given date. Returns the round id.
 //
@@ -32,6 +33,17 @@ export async function ensureRoundShell(date: string): Promise<number> {
     return existing.id;
   }
 
+  // F2.5: snapshot the buy-in that is in effect right now onto the round so
+  // money for this round is derived from its own amount, not the live global
+  // (rounds.buy_in defaults to 10 in the DB; this captures a changed global at
+  // creation time). Read the setting on the insert branch only.
+  const { data: buyInSetting } = await supabase
+    .from("league_settings")
+    .select("value")
+    .eq("key", "buy_in_amount")
+    .maybeSingle();
+  const buyIn = resolveBuyIn(buyInSetting?.value);
+
   const { data: round, error } = await supabase
     .from("rounds")
     .insert({
@@ -39,6 +51,7 @@ export async function ensureRoundShell(date: string): Promise<number> {
       course_id: 1,
       format: null,
       format_config: DEFAULT_FORMAT_CONFIG_SHELL,
+      buy_in: buyIn,
     })
     .select("id")
     .single();

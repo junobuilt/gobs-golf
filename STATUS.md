@@ -2,14 +2,57 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-17 (Relaxed-close blind draw — Spec 2; migration 029 on prod + now committed)
-**Session purpose:** Fix the bug where a short **Par Competition** team got no blind-draw fill (and the identical latent **Shambles** gap): single-flight relaxed-close formats route to `finalize_round_relaxed`, which had zero draw logic. **Migration 029 was ALREADY authored, relayed, and APPLIED to prod by the planning chat** (CC wrote no NEW migration); the EXACT deployed body is **now committed** at `supabase/migrations/029_blind_draw_relaxed_finalize.sql`. **⚠ Deployed shape ≠ planned design (rule #9):** 029 is a single `CREATE OR REPLACE finalize_round_relaxed` with the draw copied in — **NO shared helper**, and `finalize_round_with_blind_draws` is untouched (hash-identical). CC scope: client `drawsPossible = isMultiFlightRound || !isTeamCardFormat(roundFormat)`; `fillsShortTeams(format) = !isTeamCardFormat(format)`; e2e MockDb relaxed branch ported to the deployed contract; tests; two new CLAUDE.md rules (#8 designed≠works, #9 deployed-def is source of truth). 940/940 vitest, 48/48 Playwright, tsc clean. **⚠ Remaining: `npm run db:backup` to un-lag `schema.sql` (019–029) — TD37. And TWO migrations STILL await relay from prior sessions: 027 (Par Competition) THEN 028 (Backup PIN).**
+**Last updated:** 2026-06-18 (Admin Money surface — F.2; migration 030 DRAFTED only, NOT applied)
+**Session purpose:** Unify all money/payout features into one admin-only **Money** tab (renamed from **Winnings**) with a 3-sub-view switcher (**Funds | By Player | By Round**) under a season totals strip. NEW **By Player** read screen (per-player season net ranked by net desc + per-round drill) via `loadPlayerWinnings.ts` — a read-only projection of canonical `round_payouts.per_player` − `rounds.buy_in` (no recompute). **By Round** = the existing `HistoryPanel` relocated with frontend-design polish (≥44px tap targets, ≥14px data values, shared `moneyTokens`, active-voice copy). **Funds** = `FundsPanel` + `CalculatorPanel` stacked. **Migration 030** (`rounds.buy_in numeric NOT NULL DEFAULT 10` — per-round buy-in snapshot, F2.5) is **DRAFTED + dry-run handed back; NOT applied** — STOP at the migration gate. 951/951 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover from prior sessions still pending: relay migrations 027 (Par Competition) THEN 028 (Backup PIN); `npm run db:backup` to un-lag `schema.sql` (019–029) — TD37.**
+
+*Prior session (2026-06-17):* Relaxed-close blind draw (Spec 2; migration 029 on prod + committed) — see the section below.
 
 *Prior session (also 2026-06-17):* Admin Edit Player Name (I17) — see the section below. No migration.
 
 *Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-18 (Admin Money surface — F.2 + G read screens; migration 030 DRAFTED only)
+
+### Where we left off
+
+**The admin Winnings tab is now the unified admin-only Money tab.** Everything builds + tests green; **migration 030 is drafted and handed back for the gated dry-run — NOT applied.** The owner must relay it (same protocol as 027/028) before the per-round buy-in snapshot is live in prod.
+
+- **What shipped (code, on master after push).**
+  - **Tab rename + restructure.** `src/app/admin/tabs/Winnings.tsx` → `Money.tsx`; `TABS` label `Winnings` → `Money` (`admin/page.tsx`). New **season strip** (4 totals: buy-in collected = Σ contributed, paid out = Σ paid, HiO fund, BFB fund) above a 3-sub-view switcher (`role="tab"`: Funds | By Player | By Round). Season-scoped strip; fund balances global.
+  - **By Player (NEW, F2.1/F2.2).** `src/lib/payouts/loadPlayerWinnings.ts` + `src/components/winnings/ByPlayerPanel.tsx`. Per-player rows: name · rounds played · net (green won / red lost, AA-contrast) · avg (net ÷ rounds ACTUALLY played). Default sort **net descending**. Tap → per-round drill (date · format · +/−$). Read-only projection of `round_payouts.per_player` − `rounds.buy_in`; **never recomputes**. All-time scope chunks the `round_players` `.in()` (25 rounds/chunk) to dodge the 1000-row cap.
+  - **By Round (F2.4).** `HistoryPanel` relocated near-verbatim with frontend-design polish: Edit/Revert → "Edit payout"/"Revert override" + ≥44px tap targets; team total 15px / paid·BFB 14px / stat values 14px (data ≥14px floor); raw-hex `C` object → shared `src/components/winnings/moneyTokens.ts`.
+  - **Funds (F2.6 already shipped via S4b).** `FundsPanel` + `CalculatorPanel` stacked under the Funds sub-view.
+  - **Buy-in snapshot read-path (F2.5).** `deriveRoundMoney` reads each round's own `rounds.buy_in` (global `league_settings.buy_in_amount` is only a fallback). `ensureRoundShell` stamps the current global onto new rounds at creation. **G1 deferred:** code comment at the `loadPlayerWinnings` net-calc site marks where the future per-player buy-in column on `round_players` will be read instead of the flat round buy-in.
+  - **Admin-only (F2.7).** Whole `/admin/*` middleware-gated; verified no money figure renders on home / leaderboard / summary / profile. `docs/payout_ui_mockups.html`'s leaderboard/summary payout pills stay UNIMPLEMENTED (admin-only rule).
+
+- **Mocks update.** The named mock files DID land on origin since the spec was written (`a22dc14`): `docs/mockups/gobs-money-byplayer-mock.html` + `docs/mockups/gobs-money-byround-mock. html` (note the space in the byround filename). Used as visual reference; current design language, not v2.
+
+**Files:** NEW `supabase/migrations/030_round_buy_in_snapshot.sql` (drafted, NOT applied), `src/app/admin/tabs/Money.tsx`, `src/components/winnings/ByPlayerPanel.tsx`, `src/components/winnings/moneyTokens.ts`, `src/lib/payouts/loadPlayerWinnings.ts`, `tests/lib/payouts/loadPlayerWinnings.test.ts`, `tests/lib/payouts/crossSurface.test.ts`, `tests/components/winnings/ByPlayerPanel.test.tsx`, `e2e/money.spec.ts`. MODIFIED `src/app/admin/page.tsx`, `src/lib/payouts/loadWinnings.ts`, `src/lib/round/ensureRoundShell.ts`, `src/components/winnings/HistoryPanel.tsx`, `e2e/calculator.spec.ts`, `tests/lib/round/ensureRoundShell.test.ts`, `tests/lib/payouts/loadWinnings.test.ts`, `CLAUDE.md`, `ROADMAP.md`, `STATUS.md`. DELETED `src/app/admin/tabs/Winnings.tsx`.
+
+### DB changes (today)
+
+- **Migration 030 DRAFTED, NOT applied.** `ALTER TABLE public.rounds ADD COLUMN buy_in numeric NOT NULL DEFAULT 10;` — additive + reversible; the `NOT NULL DEFAULT 10` atomically backfills every existing round (all historically $10). Self-contained dry-run SQL handed back at the migration gate per the CLAUDE.md relay rule. `schema.sql` will lag until applied + `npm run db:backup`.
+
+### Tests / verification
+
+- **951/951 vitest** (+ loadPlayerWinnings unit, cross-surface agreement EQUAL, ByPlayerPanel render/drill/sort/empty, per-round buy_in derivation, ensureRoundShell buy_in stamp). **50/50 Playwright** (+ `money.spec.ts`: Money tab renders strip + switcher + By Player empty state; admin-only guard unauth `/admin` → `/admin/login`). `tsc --noEmit` clean.
+- **Cross-surface agreement (CLAUDE.md #7):** `crossSurface.test.ts` asserts per-team `$` EQUAL across By Round `perPlayer` ↔ By Player drill `won` ↔ persisted `round_payouts.per_player`.
+
+### Tomorrow's priority
+
+- **Relay migration 030** (per-round buy-in snapshot) — gated dry-run handed back this session; apply, then `npm run db:backup` to fold it + 019–029 into `schema.sql`.
+- **Still pending from prior sessions:** relay 027 (Par Competition) THEN 028 (Backup PIN) THEN 030; TD37 backup.
+
+### Considered but not changed (confession)
+
+- **`FundsPanel` / `CalculatorPanel` local `C` hex objects** — left as-is (out of scope; only `HistoryPanel` was named for the token swap). They render under the Funds sub-view unchanged.
+- **The named mock files** (`gobs-money-byplayer/byround`) — the spec said they don't exist; they were pushed to origin (`a22dc14`) before this session. Used as reference; not chased as missing.
+- **Stat-row labels in By Round** stay 11px (captions); only their dollar VALUES were bumped to 14px to meet the data-value floor without forcing the dense row to wrap harder. Minor judgment call.
+- **`F2.8` (BFB total on home page)** — left `📋`; it conflicts with the admin-only money rule (F2.7) and was explicitly deferred.
 
 ---
 

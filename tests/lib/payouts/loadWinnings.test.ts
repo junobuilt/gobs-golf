@@ -181,6 +181,24 @@ describe("loadWinningsHistory", () => {
     expect(t1.totalForTeam).toBe(25);
   });
 
+  it("derives money from the round's OWN buy_in, not the passed fallback (F2.5)", async () => {
+    seedHistory();
+    // Stamp round 501 with a $15 buy-in; pass a $10 fallback. Money for 501
+    // must come from 15 (the snapshot), proving per-round buy_in wins.
+    (dataRef.current.round_payouts as any[])
+      .filter((r) => r.round_id === 501)
+      .forEach((r) => {
+        r.rounds = { ...r.rounds, buy_in: 15 };
+      });
+    const rounds = await loadWinningsHistory(null, 10);
+    const r501 = rounds.find((r) => r.roundId === 501)!;
+    expect(r501.contributed).toBe(24 * 15); // 360 — from rounds.buy_in, not 10
+    expect(r501.balance).toBe(24 * (15 - 1 - 2)); // 288
+    // round 502 keeps the fallback (no buy_in on its embedded round).
+    const r502 = rounds.find((r) => r.roundId === 502)!;
+    expect(r502.contributed).toBe(18 * 10);
+  });
+
   it("season scope filters rounds (negative control: other-season round excluded)", async () => {
     seedHistory();
     const seasonOne = await loadWinningsHistory(1, 10);
