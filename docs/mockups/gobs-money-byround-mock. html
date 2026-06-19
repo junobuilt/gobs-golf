@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOBS — Money / By Round (mock)</title>
+<style>
+  :root{
+    --navy:#042C53;
+    --accent:#c2410c;
+    --muted:#94a3b8;
+    --gold:#b8860b;
+    --pos:#15803d;
+    --neg:#b91c1c;
+    --amber:#b45309;
+    --amber-bg:#fef3c7;
+    --page:#f1f5f9;
+    --card:#ffffff;
+    --line:#e2e8f0;
+    --ink:#0f172a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--page);color:var(--ink);display:flex;justify-content:center;}
+  .phone{width:100%;max-width:430px;min-height:100vh;background:var(--page);padding-bottom:30px;}
+
+  .topbar{background:var(--navy);color:#fff;padding:16px 18px 14px;}
+  .topbar .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9db4cf;margin:0 0 2px;}
+  .topbar h1{font-size:21px;margin:0;font-weight:700;}
+  .topbar .breadcrumb{font-size:12px;color:#9db4cf;margin-top:2px;}
+  .adminchip{display:inline-block;margin-top:8px;font-size:11px;font-weight:600;letter-spacing:.04em;
+    background:rgba(255,255,255,.12);color:#cbd5e1;padding:3px 9px;border-radius:999px;}
+
+  .subnav{display:flex;background:var(--navy);padding:0 10px;gap:4px;}
+  .subnav button{flex:1;background:none;border:none;color:#9db4cf;font-size:14px;font-weight:600;
+    padding:12px 6px 14px;cursor:pointer;border-bottom:3px solid transparent;min-height:46px;}
+  .subnav button.active{color:#fff;border-bottom-color:var(--accent);}
+
+  .toolrow{display:flex;align-items:center;justify-content:space-between;padding:12px 18px 6px;}
+  .toolrow .scope{font-size:13px;color:var(--muted);font-weight:600;}
+  .toolrow .scope b{color:var(--navy);}
+  .csv{font-size:13px;font-weight:600;color:var(--navy);border:1px solid var(--line);
+    background:#fff;border-radius:9px;padding:8px 12px;min-height:38px;cursor:pointer;}
+
+  .list{margin:6px 14px 0;display:flex;flex-direction:column;gap:10px;}
+  .round{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;}
+
+  .rhead{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;min-height:60px;}
+  .rhead .date{font-weight:700;font-size:16px;color:var(--ink);}
+  .fmtchip{font-size:11px;font-weight:600;color:var(--navy);background:#e8eef5;border-radius:6px;padding:3px 8px;letter-spacing:.02em;}
+  .dice{font-size:14px;}
+  .rhead .spacer{flex:1;}
+  .rhead .totals{text-align:right;font-size:13px;color:var(--muted);font-weight:600;line-height:1.4;}
+  .rhead .totals b{color:var(--ink);font-size:15px;}
+  .chev{color:var(--muted);font-size:13px;width:14px;text-align:center;transition:transform .15s;}
+  .round.open .chev{transform:rotate(90deg);}
+
+  .body{display:none;border-top:1px solid var(--line);}
+  .round.open .body{display:block;}
+
+  .section-l{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+    font-weight:700;padding:12px 16px 4px;}
+
+  .calc{padding:0 16px 6px;}
+  .calc .row{display:flex;justify-content:space-between;font-size:14px;padding:6px 0;color:var(--ink);}
+  .calc .row .lbl{color:var(--ink);}
+  .calc .row .sub{color:var(--muted);font-size:12px;margin-left:6px;}
+  .calc .row.skim .val{color:var(--neg);}
+  .calc .pot{display:flex;justify-content:space-between;font-size:15px;font-weight:700;
+    padding:9px 0 4px;border-top:1px solid var(--line);margin-top:2px;}
+  .calc .pot .val{color:var(--navy);}
+
+  .payouts{padding:2px 16px 10px;}
+  .team{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eef2f7;}
+  .team:last-child{border-bottom:none;}
+  .rank{width:22px;text-align:center;font-size:15px;}
+  .rank.gold{color:var(--gold);}
+  .tinfo{flex:1;min-width:0;}
+  .tinfo .tn{font-size:14px;font-weight:600;color:var(--ink);}
+  .tinfo .tsub{font-size:12px;color:var(--muted);margin-top:1px;}
+  .tpay{text-align:right;font-weight:700;font-size:15px;color:var(--ink);white-space:nowrap;}
+  .tpay.zero{color:var(--muted);font-weight:600;}
+  .badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;border-radius:5px;padding:2px 6px;margin-left:6px;vertical-align:middle;}
+  .badge.ovr{background:#ede9fe;color:#6d28d9;}
+  .was{font-size:12px;color:var(--muted);text-decoration:line-through;margin-right:4px;}
+
+  .flag{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;
+    background:var(--amber-bg);color:var(--amber);border-radius:9px;padding:9px 11px;margin:4px 0 2px;font-weight:600;}
+  .redirect{font-size:12px;color:var(--accent);font-weight:600;margin-top:2px;}
+
+  .acts{display:flex;gap:8px;padding:8px 16px 14px;}
+  .acts button{flex:1;font-size:13px;font-weight:600;border-radius:9px;padding:10px;min-height:42px;cursor:pointer;}
+  .acts .edit{background:var(--navy);color:#fff;border:none;}
+  .acts .revert{background:#fff;color:var(--navy);border:1px solid var(--line);}
+
+  .note{font-size:12px;color:var(--muted);text-align:center;padding:16px 24px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="topbar">
+    <p class="eyebrow">GOBS · Admin · Settings</p>
+    <h1>Money</h1>
+    <div class="breadcrumb">Admin only · not visible to players</div>
+    <span class="adminchip">Season 2026</span>
+  </div>
+
+  <div class="subnav">
+    <button>Funds</button>
+    <button>By Player</button>
+    <button class="active">By Round</button>
+  </div>
+
+  <div class="toolrow">
+    <span class="scope">Scope: <b>This season</b> · 21 rounds</span>
+    <button class="csv">Export CSV</button>
+  </div>
+
+  <div class="list">
+
+    <!-- clean round, pre-expanded -->
+    <div class="round open" onclick="this.classList.toggle('open')">
+      <div class="rhead">
+        <span class="date">Jun 16</span>
+        <span class="fmtchip">2-Ball</span>
+        <span class="spacer"></span>
+        <span class="totals"><b>$84</b> pot<br>$84 paid</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="body" onclick="event.stopPropagation()">
+
+        <div class="section-l">Money breakdown</div>
+        <div class="calc">
+          <div class="row"><span class="lbl">Buy-in collected<span class="sub">12 × $10</span></span><span class="val">$120</span></div>
+          <div class="row skim"><span class="lbl">→ HiO fund<span class="sub">$1 × 12</span></span><span class="val">−$12</span></div>
+          <div class="row skim"><span class="lbl">→ BFB fund<span class="sub">$2 × 12</span></span><span class="val">−$24</span></div>
+          <div class="pot"><span>Pot to players</span><span class="val">$84</span></div>
+        </div>
+
+        <div class="section-l">Payouts</div>
+        <div class="payouts">
+          <div class="team">
+            <span class="rank gold">🥇</span>
+            <div class="tinfo"><div class="tn">Reilly · Doyle · Pruitt</div><div class="tsub">$16/player × 3</div></div>
+            <div class="tpay">$48</div>
+          </div>
+          <div class="team">
+            <span class="rank">2</span>
+            <div class="tinfo"><div class="tn">Brennan · Tibbets · Sturgeon</div><div class="tsub">$12/player × 3</div></div>
+            <div class="tpay">$36</div>
+          </div>
+          <div class="team">
+            <span class="rank">3</span>
+            <div class="tinfo"><div class="tn">Kowalski · Harmon · Webb</div><div class="tsub">—</div></div>
+            <div class="tpay zero">$0</div>
+          </div>
+          <div class="team">
+            <span class="rank">4</span>
+            <div class="tinfo"><div class="tn">Olsen · Frey · Dunn</div><div class="tsub">—</div></div>
+            <div class="tpay zero">$0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- override + discrepancy round -->
+    <div class="round" onclick="this.classList.toggle('open')">
+      <div class="rhead">
+        <span class="date">Jun 12</span>
+        <span class="fmtchip">GOBS Stableford</span>
+        <span class="spacer"></span>
+        <span class="totals"><b>$70</b> pot<br>$80 paid</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="body" onclick="event.stopPropagation()">
+
+        <div class="section-l">Money breakdown</div>
+        <div class="calc">
+          <div class="row"><span class="lbl">Buy-in collected<span class="sub">10 × $10</span></span><span class="val">$100</span></div>
+          <div class="row skim"><span class="lbl">→ HiO fund<span class="sub">$1 × 10</span></span><span class="val">−$10</span></div>
+          <div class="row skim"><span class="lbl">→ BFB fund<span class="sub">$2 × 10</span></span><span class="val">−$20</span></div>
+          <div class="pot"><span>Pot to players</span><span class="val">$70</span></div>
+        </div>
+
+        <div class="section-l">Payouts</div>
+        <div class="payouts">
+          <div class="team">
+            <span class="rank gold">🥇</span>
+            <div class="tinfo"><div class="tn">Reilly · Doyle<span class="badge ovr">OVERRIDDEN</span></div>
+              <div class="tsub"><span class="was">$30</span>$40/player × 2</div></div>
+            <div class="tpay">$80</div>
+          </div>
+          <div class="team">
+            <span class="rank">2</span>
+            <div class="tinfo"><div class="tn">Harmon · Webb</div><div class="tsub">—</div></div>
+            <div class="tpay zero">$0</div>
+          </div>
+          <div class="flag">⚠ Paid $80 exceeds pot $70 — a manual override added $10. Confirm this was intended.</div>
+        </div>
+
+        <div class="acts">
+          <button class="edit">Edit payout</button>
+          <button class="revert">Revert override</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- blind draw round -->
+    <div class="round" onclick="this.classList.toggle('open')">
+      <div class="rhead">
+        <span class="date">Jun 9</span>
+        <span class="fmtchip">Best Ball</span>
+        <span class="dice">🎲</span>
+        <span class="spacer"></span>
+        <span class="totals"><b>$98</b> pot<br>$98 paid</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="body" onclick="event.stopPropagation()">
+
+        <div class="section-l">Money breakdown</div>
+        <div class="calc">
+          <div class="row"><span class="lbl">Buy-in collected<span class="sub">14 × $10</span></span><span class="val">$140</span></div>
+          <div class="row skim"><span class="lbl">→ HiO fund<span class="sub">$1 × 14</span></span><span class="val">−$14</span></div>
+          <div class="row skim"><span class="lbl">→ BFB fund<span class="sub">$2 × 14</span></span><span class="val">−$28</span></div>
+          <div class="pot"><span>Pot to players</span><span class="val">$98</span></div>
+        </div>
+
+        <div class="section-l">Payouts</div>
+        <div class="payouts">
+          <div class="team">
+            <span class="rank gold">🥇</span>
+            <div class="tinfo"><div class="tn">Doyle · Pruitt · Frey</div><div class="tsub">$18/player × 3</div></div>
+            <div class="tpay">$54</div>
+          </div>
+          <div class="team">
+            <span class="rank">2</span>
+            <div class="tinfo"><div class="tn">Reilly · Brennan <span class="dice">🎲</span></div>
+              <div class="tsub">$14/player × 2 <span class="redirect">· −1 share ($14) → BFB</span></div></div>
+            <div class="tpay">$28</div>
+          </div>
+        </div>
+        <div class="payouts" style="padding-top:0;">
+          <div class="redirect">🎲 Blind draw: a drawn player's higher share counted on his own team; this team forfeited one share to the BFB fund.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note">Mock — placeholder data, current design language (not v2). Tap any round to expand its breakdown + payouts.</p>
+
+</div>
+</body>
+</html>
