@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GOBS — Money / By Player (mock)</title>
+<style>
+  :root{
+    --navy:#042C53;
+    --accent:#c2410c;
+    --muted:#94a3b8;
+    --gold:#b8860b;
+    --pos:#15803d;
+    --neg:#b91c1c;
+    --page:#f1f5f9;
+    --card:#ffffff;
+    --line:#e2e8f0;
+    --ink:#0f172a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--page);color:var(--ink);
+    display:flex;justify-content:center;
+  }
+  .phone{width:100%;max-width:430px;min-height:100vh;background:var(--page);padding-bottom:76px;position:relative;}
+
+  /* top bar */
+  .topbar{background:var(--navy);color:#fff;padding:16px 18px 14px;}
+  .topbar .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9db4cf;margin:0 0 2px;}
+  .topbar h1{font-size:21px;margin:0;font-weight:700;}
+  .adminchip{display:inline-block;margin-top:8px;font-size:11px;font-weight:600;letter-spacing:.04em;
+    background:rgba(255,255,255,.12);color:#cbd5e1;padding:3px 9px;border-radius:999px;}
+
+  /* sub nav */
+  .subnav{display:flex;background:var(--navy);padding:0 10px;gap:4px;}
+  .subnav button{flex:1;background:none;border:none;color:#9db4cf;font-size:14px;font-weight:600;
+    padding:12px 6px 14px;cursor:pointer;border-bottom:3px solid transparent;min-height:46px;}
+  .subnav button.active{color:#fff;border-bottom-color:var(--accent);}
+
+  /* season strip */
+  .strip{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);
+    margin:14px;border-radius:14px;overflow:hidden;border:1px solid var(--line);}
+  .stat{background:var(--card);padding:14px 16px;}
+  .stat .label{font-size:12px;color:var(--muted);font-weight:600;margin:0 0 4px;letter-spacing:.02em;}
+  .stat .val{font-size:22px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.01em;}
+  .stat .val.fund{color:var(--navy);}
+
+  .seasonline{display:flex;align-items:center;justify-content:space-between;padding:0 18px 4px;}
+  .seasonline .s{font-size:13px;color:var(--muted);font-weight:600;}
+
+  /* list header */
+  .listhead{display:flex;justify-content:space-between;align-items:baseline;padding:10px 18px 6px;}
+  .listhead h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:700;}
+  .listhead .sort{font-size:13px;color:var(--navy);font-weight:600;}
+
+  /* player rows */
+  .list{margin:0 14px;background:var(--card);border-radius:14px;border:1px solid var(--line);overflow:hidden;}
+  .prow{border-bottom:1px solid var(--line);}
+  .prow:last-child{border-bottom:none;}
+  .phead{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;min-height:60px;}
+  .name{flex:1;min-width:0;}
+  .name .n{font-size:16px;font-weight:600;color:var(--ink);margin:0;}
+  .name .sub{font-size:13px;color:var(--muted);margin:2px 0 0;}
+  .money{text-align:right;}
+  .money .amt{font-size:18px;font-weight:700;letter-spacing:-.01em;}
+  .money .amt.pos{color:var(--pos);}
+  .money .amt.neg{color:var(--neg);}
+  .money .avg{font-size:12px;color:var(--muted);margin-top:2px;}
+  .chev{color:var(--muted);font-size:13px;width:14px;text-align:center;transition:transform .15s;}
+  .prow.open .chev{transform:rotate(90deg);}
+
+  /* drill */
+  .drill{display:none;background:#f8fafc;border-top:1px solid var(--line);padding:4px 16px 10px;}
+  .prow.open .drill{display:block;}
+  .rline{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eef2f7;font-size:14px;}
+  .rline:last-child{border-bottom:none;}
+  .rline .date{width:62px;color:var(--ink);font-weight:600;}
+  .rline .fmt{flex:1;color:var(--muted);}
+  .rline .wl{font-weight:700;}
+  .rline .wl.pos{color:var(--pos);}
+  .rline .wl.neg{color:var(--neg);}
+  .rline .wl.zero{color:var(--muted);}
+
+  /* bottom nav */
+  .botnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;
+    background:#fff;border-top:1px solid var(--line);display:flex;height:62px;}
+  .botnav .item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:3px;color:var(--muted);font-size:11px;font-weight:600;}
+  .botnav .item.active{color:var(--navy);}
+  .botnav .dot{width:20px;height:20px;border-radius:6px;background:currentColor;opacity:.85;}
+
+  .note{font-size:12px;color:var(--muted);text-align:center;padding:14px 24px 6px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="topbar">
+    <p class="eyebrow">GOBS · Admin</p>
+    <h1>Money</h1>
+    <span class="adminchip">Season 2026 · admin only</span>
+  </div>
+
+  <div class="subnav">
+    <button>Funds</button>
+    <button class="active">By Player</button>
+    <button>By Round</button>
+  </div>
+
+  <div class="seasonline"><span class="s">Season totals</span><span class="s">21 rounds</span></div>
+  <div class="strip">
+    <div class="stat"><p class="label">Buy-in collected</p><p class="val">$2,940</p></div>
+    <div class="stat"><p class="label">Paid out to players</p><p class="val">$2,058</p></div>
+    <div class="stat"><p class="label">HiO fund</p><p class="val fund">$214</p></div>
+    <div class="stat"><p class="label">BFB fund</p><p class="val fund">$588</p></div>
+  </div>
+
+  <div class="listhead">
+    <h2>Per player</h2>
+    <span class="sort">Net ▾</span>
+  </div>
+
+  <div class="list">
+
+    <!-- pre-expanded to show the drill -->
+    <div class="prow open" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Bill Harmon</p><p class="sub">19 rounds</p></div>
+        <div class="money"><div class="amt pos">+$142</div><div class="avg">avg +$7.47</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()">
+        <div class="rline"><span class="date">Jun 16</span><span class="fmt">2-Ball</span><span class="wl pos">+$24</span></div>
+        <div class="rline"><span class="date">Jun 12</span><span class="fmt">GOBS Stableford</span><span class="wl neg">−$10</span></div>
+        <div class="rline"><span class="date">Jun 9</span><span class="fmt">Best Ball</span><span class="wl pos">+$36</span></div>
+        <div class="rline"><span class="date">Jun 5</span><span class="fmt">3-Ball</span><span class="wl neg">−$10</span></div>
+        <div class="rline"><span class="date">Jun 2</span><span class="fmt">Par Competition</span><span class="wl pos">+$18</span></div>
+        <div class="rline"><span class="date">May 29</span><span class="fmt">2-Ball</span><span class="wl zero">$0</span></div>
+      </div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Gord Reilly</p><p class="sub">21 rounds</p></div>
+        <div class="money"><div class="amt pos">+$88</div><div class="avg">avg +$4.19</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()">
+        <div class="rline"><span class="date">Jun 16</span><span class="fmt">2-Ball</span><span class="wl neg">−$10</span></div>
+        <div class="rline"><span class="date">Jun 12</span><span class="fmt">GOBS Stableford</span><span class="wl pos">+$28</span></div>
+        <div class="rline"><span class="date">Jun 9</span><span class="fmt">Best Ball</span><span class="wl pos">+$14</span></div>
+      </div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Roy Tibbets</p><p class="sub">12 rounds</p></div>
+        <div class="money"><div class="amt pos">+$54</div><div class="avg">avg +$4.50</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()"><div class="rline"><span class="date">Jun 16</span><span class="fmt">2-Ball</span><span class="wl pos">+$24</span></div></div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Hank Doyle</p><p class="sub">17 rounds</p></div>
+        <div class="money"><div class="amt pos">+$31</div><div class="avg">avg +$1.82</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()"><div class="rline"><span class="date">Jun 9</span><span class="fmt">Best Ball</span><span class="wl pos">+$31</span></div></div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Stan Pruitt</p><p class="sub">20 rounds</p></div>
+        <div class="money"><div class="amt neg">−$12</div><div class="avg">avg −$0.60</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()"><div class="rline"><span class="date">Jun 16</span><span class="fmt">2-Ball</span><span class="wl neg">−$10</span></div></div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Mel Sturgeon</p><p class="sub">16 rounds</p></div>
+        <div class="money"><div class="amt neg">−$23</div><div class="avg">avg −$1.44</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()"><div class="rline"><span class="date">Jun 12</span><span class="fmt">GOBS Stableford</span><span class="wl neg">−$10</span></div></div>
+    </div>
+
+    <div class="prow" onclick="this.classList.toggle('open')">
+      <div class="phead">
+        <div class="name"><p class="n">Walt Brennan</p><p class="sub">18 rounds</p></div>
+        <div class="money"><div class="amt neg">−$67</div><div class="avg">avg −$3.72</div></div>
+        <div class="chev">▶</div>
+      </div>
+      <div class="drill" onclick="event.stopPropagation()"><div class="rline"><span class="date">Jun 16</span><span class="fmt">2-Ball</span><span class="wl neg">−$10</span></div></div>
+    </div>
+
+  </div>
+
+  <p class="note">Mock — placeholder data. Functional layout in current design language, not the v2 look.<br>Tap any player to expand their per-round history.</p>
+
+  <div class="botnav">
+    <div class="item"><div class="dot"></div>Home</div>
+    <div class="item"><div class="dot"></div>Leaderboard</div>
+    <div class="item"><div class="dot"></div>History</div>
+    <div class="item"><div class="dot"></div>Players</div>
+    <div class="item active"><div class="dot"></div>Money</div>
+  </div>
+
+</div>
+</body>
+</html>
