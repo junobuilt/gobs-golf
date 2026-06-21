@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { computePairMatrix, fetchPlayedWithRows } from "@/lib/playedWith/compute";
 import { recommendTeams, type RecommendResult, type PartitionMode } from "@/lib/teamRecommend";
+import { buildNotes } from "@/lib/teamRecommend/notes";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import SeasonToggle, { type SeasonFilter } from "@/components/season/SeasonToggle";
@@ -27,6 +28,7 @@ interface Props {
   roster: Player[];                             // checked-in players
   playerRpInfo: Record<number, PlayerRpInfo>;   // snapshot CH + per-round tee
   hasExistingTeams: boolean;                    // drives overwrite DangerModal
+  roundId?: number | string | null;            // deterministic seed source
   onApply: (result: RecommendResult) => void;
   onClose: () => void;
 }
@@ -56,6 +58,7 @@ export default function RecommendTeamsModal({
   roster,
   playerRpInfo,
   hasExistingTeams,
+  roundId,
   onApply,
   onClose,
 }: Props) {
@@ -142,12 +145,16 @@ export default function RecommendTeamsModal({
           ? { mode: "size", value: partitionValue }
           : { mode: "count", value: partitionValue };
 
+      // Deterministic seed: engine hashes roundId (else sorted player IDs) and
+      // XORs the seedCounter nonce, so the same round + same re-roll count yields
+      // the same teams, and re-roll produces a different-but-deterministic draft.
       const res = recommendTeams({
         players,
         pairCounts,
         partition,
         toleranceCH,
-        seed: Date.now() + seedCounter,
+        roundId: roundId ?? null,
+        nonce: seedCounter,
       });
 
       setResult(res);
@@ -166,6 +173,7 @@ export default function RecommendTeamsModal({
     toleranceCH,
     teeById,
     seedCounter,
+    roundId,
   ]);
 
   const handleReroll = () => {
@@ -392,19 +400,21 @@ export default function RecommendTeamsModal({
                 </span>
                 <span style={{ color: C.subtext, fontSize: "0.88rem" }}>·</span>
                 <span style={{ fontSize: "0.9rem", fontWeight: 600, color: C.navy }}>
-                  Repeat pairings: {result.noveltyCost}
+                  Repeat pairings: {result.repeats}
                 </span>
               </div>
 
-              {/* Infeasible band warning */}
+              {/* Infeasible band warning — Case C copy (§9) */}
               {!result.metBand && (
                 <div style={{
                   padding: "10px 14px", borderRadius: "8px",
                   background: C.amberBg, border: `1px solid ${C.amberBorder}`,
                   color: C.amber, fontSize: "0.84rem", marginBottom: "12px",
+                  lineHeight: 1.5,
                 }}>
-                  {result.notes.find((n) => n.includes("Couldn't meet")) ??
-                    `Couldn't meet the ${toleranceCH}-pt band — this is the closest arrangement found.`}
+                  {buildNotes(result).map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
                 </div>
               )}
 
@@ -439,14 +449,15 @@ export default function RecommendTeamsModal({
                 ))}
               </div>
 
-              {/* Why these teams */}
-              {result.notes.length > 0 && (
+              {/* Why these teams — Case A/B copy (§9). Case C lives in the
+                  amber banner above, so only show this when in-band. */}
+              {result.metBand && (
                 <details style={{ marginBottom: "16px" }}>
                   <summary style={{ fontSize: "0.84rem", color: C.subtext, cursor: "pointer", marginBottom: "6px" }}>
                     Why these teams?
                   </summary>
                   <ul style={{ margin: "6px 0 0 16px", padding: 0, fontSize: "0.82rem", color: C.subtext, lineHeight: 1.7 }}>
-                    {result.notes.map((note, i) => (
+                    {buildNotes(result).map((note, i) => (
                       <li key={i}>{note}</li>
                     ))}
                   </ul>

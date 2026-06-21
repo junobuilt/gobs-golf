@@ -4,9 +4,11 @@ import { describe, it, expect, vi } from "vitest";
 // supabase directly, but compute.ts imports it at module level. Stub it.
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 
-import { recommendTeams } from "@/lib/teamRecommend/recommend";
+import { recommendTeams, recommendTeamsSnakeOnly } from "@/lib/teamRecommend/recommend";
+import { buildNotes } from "@/lib/teamRecommend/notes";
 import { computePairMatrix } from "@/lib/playedWith/compute";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
+import realRounds from "../../fixtures/teamRecommend/realRounds.json";
 
 // All tests use number IDs matching the real codebase (players.id: integer).
 
@@ -51,7 +53,7 @@ describe("recommendTeams", () => {
     });
     expect(result.metBand).toBe(true);
     expect(result.spread).toBeLessThanOrEqual(2.5);
-    expect(result.noveltyCost).toBe(0);
+    expect(result.repeats).toBe(0);
     expect(result.teams).toHaveLength(4);
   });
 
@@ -85,7 +87,7 @@ describe("recommendTeams", () => {
     });
     expect(result.metBand).toBe(true);
     expect(result.spread).toBeLessThanOrEqual(2.5);
-    expect(result.noveltyCost).toBe(0);
+    expect(result.repeats).toBe(0);
   });
 
   // ── 3. Negative control: balance is the guardrail ──────────────────────────
@@ -171,12 +173,13 @@ describe("recommendTeams", () => {
       seed: 42,
     });
     expect(result.metBand).toBe(false);
-    // The note must mention the search ran (not just returning seed).
-    expect(result.notes.some((n) => n.includes("spread-minimizing search"))).toBe(true);
-    // spread at most 14 (the theoretical minimum with these CHs).
+    // spread at most 14 (the theoretical minimum with these CHs) — the search
+    // ran and could not do worse than the seed.
     expect(result.spread).toBeLessThanOrEqual(14);
-    // Also confirm the note says "Couldn't meet".
-    expect(result.notes.some((n) => n.includes("Couldn't meet"))).toBe(true);
+    // Out-of-band fallback still reports how many drafts were compared.
+    expect(result.seeds).toBe(5);
+    // Case C copy is what the modal renders for an out-of-band result.
+    expect(buildNotes(result)[0]).toContain("Couldn't keep every team");
   });
 
   // ── 5. Infeasible → feasible two-phase handoff ──────────────────────────────
@@ -309,7 +312,7 @@ describe("recommendTeams", () => {
       toleranceCH: 2.5,
       seed: 123,
     });
-    expect(result.noveltyCost).toBe(0);
+    expect(result.repeats).toBe(0);
   });
 
   // ── 7. Remainder sizing — both modes ───────────────────────────────────────
@@ -469,4 +472,131 @@ describe("recommendTeams", () => {
       expect(team.avgCH).toBeCloseTo(expectedAvg, 5);
     }
   });
+});
+
+// ── Multi-start on real prod rounds (spec §6) ────────────────────────────────
+// Fixtures are read-only PostgREST exports from prod (rounds 165 = 24 players /
+// 6×4, and 189 = 22 players). `players[].courseHandicap` is the as-of-round CH;
+// `priorRows` are the completed, team-assigned round_players from rounds BEFORE
+// the target (roster players only) — the same round+team partnership unit the
+// Played-With tab uses. Pair counts come from those, so the engine must do real
+// novelty work: rounds 165/189 have 88/104 roster pairs with prior history.
+
+type Fixture = {
+  roundId: number;
+  players: { id: number; courseHandicap: number }[];
+  actualTeams: { id: number; courseHandicap: number; team_number: number }[];
+};
+type RealRounds = {
+  round165: Fixture;
+  round189: Fixture;
+  priorRows: { round_id: number; player_id: number; team_number: number }[];
+};
+const FX = realRounds as RealRounds;
+
+const BAND = 3.0; // the backtest band
+
+// Build a recommend input for a target round: as-of CH roster + a pair-count
+// closure derived only from rounds strictly before it.
+function inputFor(fx: Fixture, opts?: { nonce?: number }) {
+  const prior = FX.priorRows.filter((r) => r.round_id < fx.roundId);
+  return {
+    players: fx.players,
+    pairCounts: computePairMatrix(prior),
+    partition: { mode: "size" as const, value: 4 },
+    toleranceCH: BAND,
+    roundId: fx.roundId,
+    nonce: opts?.nonce ?? 0,
+  };
+}
+
+const FIXTURES: [string, Fixture][] = [
+  ["round 165 (24p, 6×4)", FX.round165],
+  ["round 189 (22p)", FX.round189],
+];
+
+describe("multi-start on real rounds", () => {
+  // ── §6.1 Never-worse guarantee ──────────────────────────────────────────────
+  it.each(FIXTURES)(
+    "%s: multi-start repeats ≤ snake-only repeats",
+    (_label, fx) => {
+      const input = inputFor(fx);
+      const multi = recommendTeams(input);
+      const snake = recommendTeamsSnakeOnly(input);
+      // The guarantee: snake draft is seed #1 inside multi-start, so the chosen
+      // result can only match or beat snake-only.
+      expect(multi.repeats).toBeLessThanOrEqual(snake.repeats);
+      // Sanity: both run the real search and land in-band at band 3.0.
+      expect(multi.metBand).toBe(true);
+      expect(snake.metBand).toBe(true);
+    },
+  );
+
+  it("multi-start strictly beats snake-only on at least one real round", () => {
+    // Negative control: if multi-start were a no-op wrapper around snake-only,
+    // this fails. The backtest showed multi-start wins on 7/21 rounds.
+    const deltas = FIXTURES.map(([, fx]) => {
+      const input = inputFor(fx);
+      return recommendTeamsSnakeOnly(input).repeats - recommendTeams(input).repeats;
+    });
+    expect(Math.max(...deltas)).toBeGreaterThan(0);
+  });
+
+  // ── §6.2 In-band preserved ──────────────────────────────────────────────────
+  it.each(FIXTURES)(
+    "%s: multi-start is in-band whenever snake-only is",
+    (_label, fx) => {
+      const input = inputFor(fx);
+      const snake = recommendTeamsSnakeOnly(input);
+      const multi = recommendTeams(input);
+      // Boolean implication: snake in-band ⟹ multi in-band.
+      if (snake.metBand) expect(multi.metBand).toBe(true);
+    },
+  );
+
+  // ── §6.3 Determinism ────────────────────────────────────────────────────────
+  it.each(FIXTURES)(
+    "%s: same input + same nonce → identical teams, spread, repeats",
+    (_label, fx) => {
+      const a = recommendTeams(inputFor(fx, { nonce: 2 }));
+      const b = recommendTeams(inputFor(fx, { nonce: 2 }));
+      expect(a.spread).toBe(b.spread);
+      expect(a.repeats).toBe(b.repeats);
+      expect(a.teams.map((t) => [...t.playerIds].sort((x, y) => x - y))).toEqual(
+        b.teams.map((t) => [...t.playerIds].sort((x, y) => x - y)),
+      );
+    },
+  );
+
+  it("different nonce yields a different-but-deterministic draft", () => {
+    // Re-roll changes the nonce; the result is reproducible but generally differs.
+    const r0a = recommendTeams(inputFor(FX.round165, { nonce: 0 }));
+    const r0b = recommendTeams(inputFor(FX.round165, { nonce: 0 }));
+    const r1 = recommendTeams(inputFor(FX.round165, { nonce: 1 }));
+    const key = (r: typeof r0a) =>
+      JSON.stringify(r.teams.map((t) => [...t.playerIds].sort((x, y) => x - y)));
+    expect(key(r0a)).toBe(key(r0b)); // determinism within a nonce
+    expect(key(r1)).not.toBe(key(r0a)); // re-roll produced a different draft
+  });
+
+  // ── §6.4 Cross-surface agreement: notes values == result fields ─────────────
+  it.each(FIXTURES)(
+    "%s: rendered notes equal the spread/repeats on the result object",
+    (_label, fx) => {
+      const result = recommendTeams(inputFor(fx));
+      const notes = buildNotes(result).join(" ");
+      // Both rounds land in-band at band 3.0; the §9 copy must carry the SAME
+      // numbers the engine returned — never a re-derived value.
+      expect(result.metBand).toBe(true);
+      expect(notes).toContain(`within ${result.spread.toFixed(1)} handicap points`);
+      if (result.repeats > 0) {
+        // Case A — repeats reported verbatim.
+        expect(notes).toContain(`(${result.repeats})`);
+        expect(notes).toContain(`Compared ${result.seeds} team drafts`);
+      } else {
+        // Case B — zero repeats reads as the plain-language no-repeat line.
+        expect(notes).toContain("No one is grouped with a recent partner");
+      }
+    },
+  );
 });

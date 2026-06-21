@@ -1196,6 +1196,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         ]),
       )}
       hasExistingTeams={Object.values(teams).some(t => t.length > 0)}
+      roundId={existingRoundId}
       onApply={applyRecommendation}
       onClose={() => setRecommendModalOpen(false)}
     />

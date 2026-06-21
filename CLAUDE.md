@@ -494,6 +494,39 @@ middleware-gated — NO money figure may render on any player-facing surface
 
 ---
 
+### Team recommendation engine: multi-start, `pickBetter`, determinism
+
+The I6 engine (`src/lib/teamRecommend/recommend.ts`) is **multi-start** as of
+2026-06-18. `recommendTeams` runs `SEED_COUNT` (=5) starting drafts —
+`snakeDraft` (#1, the original single-seed behavior), `noveltyGreedySeed` (#2),
+then random restarts — each through the SAME per-seed pipeline (`optimizeFromSeed`:
+spread-min if over band → novelty-within-band local search, balance is a hard
+guardrail) and keeps the best via `pickBetter`. Snake is seed #1, so the chosen
+output **can only match or beat** the old engine.
+
+- **`pickBetter` selection order (canonical — do not reorder):** (1) in-band
+  beats out-of-band; (2) among in-band, lowest `repeats`; (3) tie → lowest
+  `spread`; (4) still tied → the earlier seed in fixed order (deterministic);
+  (5) if NONE in-band → lowest `spread` (fallback, matches the old single-seed
+  behavior). Implemented as a left-to-right reduce over the fixed seed order, so
+  `pickBetter(best, cur)` returns `best` on a tie.
+- **Determinism rule:** the RNG parent seed is `hash(round_id)` when a round id
+  is supplied, else `hash(sorted player IDs)`, **XOR the re-roll `nonce`** (the
+  modal's `seedCounter`). Same input + same nonce ⟹ identical teams; re-roll
+  (nonce++) ⟹ a different-but-deterministic draft. `deriveSeeds` pulls the snake
+  sub-seed first so `recommendTeamsSnakeOnly` (the never-worse test baseline)
+  shares seed #1 exactly. A `seed` field overrides the parent for tests.
+- **Result is structured numbers only** (`spread`/`repeats`/`seeds`/`metBand`);
+  the engine emits NO prose. User-facing "Why these teams?" copy is built by
+  `buildNotes` (`src/lib/teamRecommend/notes.ts`) off that same result object —
+  plain-language, name-free, ≤3 lines. Single source of truth: never recompute
+  spread/repeats in the modal or notes; read the result. Cross-surface equality
+  is guarded in `tests/lib/teamRecommend/recommend.test.ts` (§6.4).
+- **Band default stays 2.5** (`DEFAULT_TOL` in the modal); the backtest band is
+  3.0 but the user-facing default is unchanged.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

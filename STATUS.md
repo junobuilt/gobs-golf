@@ -2,8 +2,10 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-18 (Admin Money surface — F.2; migration 030 DRAFTED only, NOT applied)
-**Session purpose:** Unify all money/payout features into one admin-only **Money** tab (renamed from **Winnings**) with a 3-sub-view switcher (**Funds | By Player | By Round**) under a season totals strip. NEW **By Player** read screen (per-player season net ranked by net desc + per-round drill) via `loadPlayerWinnings.ts` — a read-only projection of canonical `round_payouts.per_player` − `rounds.buy_in` (no recompute). **By Round** = the existing `HistoryPanel` relocated with frontend-design polish (≥44px tap targets, ≥14px data values, shared `moneyTokens`, active-voice copy). **Funds** = `FundsPanel` + `CalculatorPanel` stacked. **Migration 030** (`rounds.buy_in numeric NOT NULL DEFAULT 10` — per-round buy-in snapshot, F2.5) is **DRAFTED + dry-run handed back; NOT applied** — STOP at the migration gate. 951/951 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover from prior sessions still pending: relay migrations 027 (Par Competition) THEN 028 (Backup PIN); `npm run db:backup` to un-lag `schema.sql` (019–029) — TD37.**
+**Last updated:** 2026-06-18 (Multi-start team recommendation engine — I6 follow-up; NO migration)
+**Session purpose:** Replace the single-seed snake-draft team generator with a **multi-start** engine: `SEED_COUNT=5` starting drafts (snake #1 = old behavior, novelty-greedy, 3× random restart), each run through the *unchanged* per-seed pipeline (spread-min if needed → novelty-within-band), with **`pickBetter`** selecting the best feasible result (in-band > lowest repeats > lowest spread > fixed seed order; lowest-spread fallback when nothing in-band). Output can only match or beat the old engine — snake is seed #1. **Deterministic:** RNG seeded from `round_id` (else sorted player IDs) XOR the re-roll `nonce`, so same round + same re-roll count → same teams. **Notes rewrite:** engine returns structured numbers (`spread`/`repeats`/`seeds`/`metBand`); modal renders ≤3-line, name-free, plain-language §9 copy via `buildNotes` (`src/lib/teamRecommend/notes.ts`). Per-swap "Swapped player X↔Y" log deleted. Band default unchanged (2.5). **No schema change, no migration.** 961/961 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover from prior sessions STILL pending: relay migrations 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); `npm run db:backup` to un-lag `schema.sql` (019–030) — TD37.**
+
+*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
 
 *Prior session (2026-06-17):* Relaxed-close blind draw (Spec 2; migration 029 on prod + committed) — see the section below.
 
@@ -12,6 +14,51 @@
 *Prior session (also 2026-06-14):* Par Competition format `par_competition` — see the section below. **Migration 027 is DRAFTED only — NOT applied**; it must be relayed BEFORE 028.
 
 *(Note: the Flights track is being executed in 2026-05-26 → 2026-06-11 Dispatch sessions; the Session 1/2 entries carry the 2026-05-26 date to match their commit + migration headers, so they sort below the 2026-06-09 entries in repo time even though they shipped later.)*
+
+---
+
+## 2026-06-18 (Multi-start team recommendation engine — I6 follow-up; no migration)
+
+### Where we left off
+
+**The team recommendation engine (I6) is now multi-start.** Everything builds + tests green; **no DB change** this session.
+
+- **What shipped (code, on master after push).**
+  - **Multi-start orchestrator (`src/lib/teamRecommend/recommend.ts`).** `recommendTeams` now builds `SEED_COUNT = 5` starting drafts in a fixed order — `snakeDraft` (#1, the old behavior baseline), `noveltyGreedySeed` (#2, fills team slots round-robin by fewest prior pairings, ignores CH), and 3× `randomRestartSeed` — runs each through the lifted-out `optimizeFromSeed` (the unchanged spread-min → novelty-within-band pipeline), and reduces with `pickBetter`. New exported `recommendTeamsSnakeOnly` runs ONLY seed #1 through the same pipeline (shares the identical snake sub-seed) — the never-worse comparison baseline.
+  - **`pickBetter` selection order (canonical):** in-band beats out-of-band → among in-band lowest `repeats` → tie lowest `spread` → still tied keep the earlier seed (deterministic) → if none in-band, lowest `spread` (fallback). Implemented as a left-to-right reduce over the fixed seed order.
+  - **Deterministic RNG.** `deriveParentSeed` = FNV-1a hash of `roundId` (else the sorted player IDs) XOR `nonce`; an explicit `seed` overrides for tests. `deriveSeeds` pulls the snake sub-seed then the restart sub-seeds in a fixed order so snake-only and multi-start agree on seed #1. Same input + same nonce → identical teams; re-roll (nonce++) → different-but-deterministic.
+  - **Result shape.** `RecommendResult` now exposes structured numbers: `spread`, `repeats` (was `noveltyCost`), `seeds` (= `SEED_COUNT`), `metBand`. **`notes` removed** — the engine emits no prose. The old per-swap "Swapped player X↔Y…" / "…N more novelty swaps" notes are deleted.
+  - **Notes builder (`src/lib/teamRecommend/notes.ts`).** New pure `buildNotes(result)` renders the §9 verbatim copy (Case A/B/C) from the structured result — ≤3 lines, plain language, no jargon, no player numbers; pluralizes point/points · pairing/pairings · draft/drafts. Lives outside the React component so it's unit-testable. Single source of truth: reads the same result object the team cards render from.
+  - **Modal (`src/components/admin/RecommendTeamsModal.tsx`).** New `roundId?` prop threaded into the engine for the deterministic seed (replaces `Date.now() + seedCounter`; `seedCounter` is now the re-roll `nonce`). Stats row reads `result.repeats`. Amber banner re-pointed off `result.metBand` (was substring-matching a note) → Case C copy. "Why these teams?" renders `buildNotes` (Case A/B).
+  - **RoundSetup (`src/app/admin/tabs/RoundSetup.tsx`).** Passes `existingRoundId` into the new `roundId` prop.
+
+**Files:** MODIFIED `src/lib/teamRecommend/recommend.ts`, `src/lib/teamRecommend/index.ts`, `src/components/admin/RecommendTeamsModal.tsx`, `src/app/admin/tabs/RoundSetup.tsx`, `tests/lib/teamRecommend/recommend.test.ts`, `CLAUDE.md`, `ROADMAP.md`, `STATUS.md`. NEW `src/lib/teamRecommend/notes.ts`, `tests/fixtures/teamRecommend/realRounds.json`.
+
+### DB changes (today)
+
+- **None.** Logic-only change. No migration, no `schema.sql` touch.
+
+### Tests / verification
+
+- **961/961 vitest.** `tests/lib/teamRecommend/recommend.test.ts` extended to 25 tests: existing 11 adapted (`noveltyCost`→`repeats`, dropped removed-note assertions) + 4 spec §6 suites over real-prod fixtures (rounds **165** = 24p/6×4 and **189** = 22p), each `it.each` across both fixtures:
+  1. **Never-worse:** `multiStart.repeats ≤ snakeOnly.repeats` (+ a strict-improvement negative-control: multi beats snake on ≥1 round — it does, on 165).
+  2. **In-band preserved:** snake in-band ⟹ multi in-band.
+  3. **Determinism:** same input + nonce → identical teams/spread/repeats; different nonce → different draft.
+  4. **Cross-surface agreement:** `buildNotes` strings carry the EXACT `result.spread`/`repeats`/`seeds` (asserted equal, not just rendered).
+- **Real numbers (band 3.0):** round 165 snake repeats 1 → **multi 0** (spread 3.00→2.75); round 189 snake 2 → multi 2 (tie); both in-band. Matches the backtest: multi-start never worse, strictly better on some rounds.
+- **50/50 Playwright** (regression guard; no e2e drives the Recommend modal). `tsc --noEmit` clean.
+- **Fixtures** are read-only PostgREST exports from prod (as-of `course_handicap` + prior completed team-assigned `round_players`, roster players only). Seeded so the engine must do real work (88/104 roster pairs with prior history).
+
+### Tomorrow's priority
+
+- **Unchanged carryover:** relay migration 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); then `npm run db:backup` to fold 019–030 into `schema.sql` (TD37).
+
+### Considered but not changed (confession)
+
+- **Band default stays 2.5** (`DEFAULT_TOL` in the modal). The backtest used band 3.0, but per the locked decision the user-facing default is untouched — the admin stepper still adjusts it.
+- **`buildNotes` placed in a sibling module** (`notes.ts`), not literally inside the `.tsx` as the spec text said. Rationale: the modal is a `use client` component; importing it into a node-env vitest would drag the React tree in. The pure builder is the single source of truth, the modal imports + renders it, and the cross-surface test exercises the real builder. Minor deviation, flagged.
+- **`recommendTeamsSnakeOnly` is a thin second export**, not a refactor of the old entry point — kept so the never-worse test has a true seed-#1 baseline that shares the snake sub-seed. Not used in production (the modal only calls `recommendTeams`).
+- **Did NOT touch** the band stepper bounds, the CH-derivation/exclusion path, the overwrite DangerModal, or anything in the Money/Flights/payout surfaces.
 
 ---
 
