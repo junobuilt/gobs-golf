@@ -148,7 +148,7 @@ export default function RecommendTeamsModal({
       // Deterministic seed: engine hashes roundId (else sorted player IDs) and
       // XORs the seedCounter nonce, so the same round + same re-roll count yields
       // the same teams, and re-roll produces a different-but-deterministic draft.
-      const res = recommendTeams({
+      const raw = recommendTeams({
         players,
         pairCounts,
         partition,
@@ -157,7 +157,13 @@ export default function RecommendTeamsModal({
         nonce: seedCounter,
       });
 
-      setResult(res);
+      // Sort teams ascending by roster size so preview team numbers == applied
+      // team numbers (smaller teams are Team 1, Team 2, …). Stable sort
+      // preserves engine order within equal-size groups.
+      const sortedTeams = [...raw.teams].sort(
+        (a, b) => a.playerIds.length - b.playerIds.length,
+      );
+      setResult({ ...raw, teams: sortedTeams });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -482,7 +488,7 @@ export default function RecommendTeamsModal({
         </div>
       </div>
 
-      {/* Overwrite guard */}
+      {/* Overwrite guard — zIndex 1200 so it clears the modal's own 1100 overlay */}
       {dangerOpen && (
         <DangerModal
           title="Replace current teams?"
@@ -491,6 +497,7 @@ export default function RecommendTeamsModal({
           confirmLabel="Replace"
           onConfirm={handleApplyConfirm}
           onCancel={() => setDangerOpen(false)}
+          zIndex={1200}
         />
       )}
     </>

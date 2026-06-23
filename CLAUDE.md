@@ -32,6 +32,13 @@ Consult these at the start of any session:
 
 ## Working principles for this project
 
+### Ask — don't interrupt
+
+**Ask ALL clarifying questions through the chat reply path. Do NOT use
+`AskUserQuestion` or any interactive desktop prompt.** Those open a blocking
+modal on the desktop that freezes a mobile session. Use a plain text reply
+with the question instead.
+
 ### Plan-first protocol
 For any code change beyond a one-line typo fix:
 1. Show the plan before writing code (files, what each change does, hypothesis)

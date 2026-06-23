@@ -358,6 +358,57 @@ describe("recommendTeams", () => {
     });
   });
 
+  // ── 7b. Apply-time sort: ascending by size, stable on ties ────────────────
+  // The modal sorts result.teams ascending by playerIds.length before calling
+  // setResult. This block verifies the sort logic against the raw engine output
+  // so a change to partitionSizes can't silently break the apply ordering.
+  describe("apply-time ascending sort by roster size", () => {
+    function applySort(r: ReturnType<typeof recommendTeams>) {
+      return [...r.teams].sort((a, b) => a.playerIds.length - b.playerIds.length);
+    }
+
+    it("14 players @ size 4: sorted ascending = [3,3,4,4]", () => {
+      const players = Array.from({ length: 14 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({ players, pairCounts: noPairs, partition: { mode: "size", value: 4 }, toleranceCH: 99, seed: 0 });
+      const sorted = applySort(r);
+      const sortedSizes = sorted.map((t) => t.playerIds.length);
+      // Non-decreasing (smaller teams first).
+      for (let i = 0; i < sortedSizes.length - 1; i++) {
+        expect(sortedSizes[i]).toBeLessThanOrEqual(sortedSizes[i + 1]);
+      }
+      expect(sortedSizes).toEqual([3, 3, 4, 4]);
+    });
+
+    it("13 players @ size 4: sorted ascending = [4,4,5] (smallest first)", () => {
+      const players = Array.from({ length: 13 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({ players, pairCounts: noPairs, partition: { mode: "size", value: 4 }, toleranceCH: 99, seed: 0 });
+      const sorted = applySort(r);
+      const sortedSizes = sorted.map((t) => t.playerIds.length);
+      for (let i = 0; i < sortedSizes.length - 1; i++) {
+        expect(sortedSizes[i]).toBeLessThanOrEqual(sortedSizes[i + 1]);
+      }
+      expect(sortedSizes).toEqual([4, 4, 5]);
+    });
+
+    it("stable: equal-size teams preserve engine order across the sort", () => {
+      // 8 players @ size 4: all teams have size 4. Sort must be a no-op on indices.
+      const players = Array.from({ length: 8 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({ players, pairCounts: noPairs, partition: { mode: "size", value: 4 }, toleranceCH: 99, seed: 0 });
+      const sorted = applySort(r);
+      // No size difference → stable sort leaves the engine order intact.
+      expect(sorted.map((t) => t.playerIds)).toEqual(r.teams.map((t) => t.playerIds));
+    });
+  });
+
   // ── 8. Re-roll determinism ──────────────────────────────────────────────────
   it("same seed → identical output; different seed → different output", () => {
     const r1 = recommendTeams({

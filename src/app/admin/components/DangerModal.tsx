@@ -15,6 +15,10 @@ interface DangerModalProps {
   // When true, the confirm button stays disabled even after the 1.5s delay
   // (e.g. a required field is empty). Combined with the timer via AND.
   confirmDisabled?: boolean;
+  // Override the default z-index (1000) when DangerModal is rendered inside
+  // another modal that already owns that stacking layer (e.g. RecommendTeamsModal
+  // at 1100 — pass 1200 so the danger overlay paints on top).
+  zIndex?: number;
 }
 
 export default function DangerModal({
@@ -26,6 +30,7 @@ export default function DangerModal({
   onCancel,
   children,
   confirmDisabled = false,
+  zIndex = 1000,
 }: DangerModalProps) {
   const [canConfirm, setCanConfirm] = useState(false);
 
@@ -40,7 +45,7 @@ export default function DangerModal({
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 1000,
+      position: "fixed", inset: 0, zIndex,
       background: "rgba(0,0,0,0.5)",
       display: "flex", alignItems: "center", justifyContent: "center",
       padding: "24px",
