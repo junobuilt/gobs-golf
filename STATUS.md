@@ -2,10 +2,48 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-18 (Multi-start team recommendation engine — I6 follow-up; NO migration)
-**Session purpose:** Replace the single-seed snake-draft team generator with a **multi-start** engine: `SEED_COUNT=5` starting drafts (snake #1 = old behavior, novelty-greedy, 3× random restart), each run through the *unchanged* per-seed pipeline (spread-min if needed → novelty-within-band), with **`pickBetter`** selecting the best feasible result (in-band > lowest repeats > lowest spread > fixed seed order; lowest-spread fallback when nothing in-band). Output can only match or beat the old engine — snake is seed #1. **Deterministic:** RNG seeded from `round_id` (else sorted player IDs) XOR the re-roll `nonce`, so same round + same re-roll count → same teams. **Notes rewrite:** engine returns structured numbers (`spread`/`repeats`/`seeds`/`metBand`); modal renders ≤3-line, name-free, plain-language §9 copy via `buildNotes` (`src/lib/teamRecommend/notes.ts`). Per-swap "Swapped player X↔Y" log deleted. Band default unchanged (2.5). **No schema change, no migration.** 961/961 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover from prior sessions STILL pending: relay migrations 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); `npm run db:backup` to un-lag `schema.sql` (019–030) — TD37.**
+**Last updated:** 2026-06-22 (Apply Teams bug fix + smaller-teams-first ordering; NO migration)
+**Session purpose:** Two I6 follow-up fixes. (1) **Apply Teams button did nothing** — root cause: the DangerModal overwrite guard (z-index 1000) was a DOM sibling to the RecommendTeamsModal overlay (z-index 1100), painting behind it invisibly whenever existing teams were present. Fix: add optional `zIndex` prop to `DangerModal` (default 1000) and pass `zIndex={1200}` in `RecommendTeamsModal`. (2) **Smaller teams now get low team numbers** — sort `result.teams` ascending by `playerIds.length` inside `generate()` before `setResult()`, so preview card order equals applied `team_number` order (Team 1 = fewest players, stable within equal-size groups). 968/968 vitest, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+
+*Prior session (2026-06-18):* Multi-start team recommendation engine — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+---
+
+## 2026-06-22 (Apply Teams bug fix + smaller-teams-first ordering; no migration)
+
+### Where we left off
+
+Two I6 follow-ups shipped. No DB change.
+
+- **Bug fix — Apply Teams button (Task 1).** When existing teams were present, tapping "Apply Teams →" opened the DangerModal (z-index 1000) as a DOM sibling to the RecommendTeamsModal overlay (z-index 1100). The modal overlay painted on top, making the DangerModal invisible. The user saw nothing happen. Fix: added `zIndex?: number` prop to `DangerModal` (default 1000); `RecommendTeamsModal` passes `zIndex={1200}` so the guard clears the 1100 overlay. DangerModal already had a full-screen backdrop (`position:fixed; inset:0`); only the stacking order was wrong.
+
+- **Smaller teams get low numbers (Task 2).** In `RecommendTeamsModal`'s `generate()`, after `recommendTeams()` returns, `result.teams` is sorted ascending by `playerIds.length` before calling `setResult()`. This means preview card order == applied `team_number` order — Team 1 is always the smallest team. Stable sort preserves engine order within equal-size groups.
+
+- **CLAUDE.md piggyback.** Added "ask via chat, not AskUserQuestion/interactive prompt" standing rule.
+
+**Files:** MODIFIED `src/app/admin/components/DangerModal.tsx`, `src/components/admin/RecommendTeamsModal.tsx`, `CLAUDE.md`, `tests/lib/teamRecommend/recommend.test.ts`, `STATUS.md`. NEW `tests/components/recommend-teams-modal.test.tsx`.
+
+### DB changes
+
+- **None.** Logic-only.
+
+### Tests / verification
+
+- **968/968 vitest.** New tests: `tests/components/recommend-teams-modal.test.tsx` (4 tests: direct apply, DangerModal z-index 1200 assertion, 1.5 s delay confirm, preview-order == applied-order); `recommend.test.ts §7b` (3 pure-function sort tests: 14p ascending, 13p ascending, equal-size stable).
+- **tsc --noEmit** clean (Playwright e2e errors are pre-existing, not from these changes).
+
+### Tomorrow's priority
+
+- **Unchanged carryover:** relay migration 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); then `npm run db:backup` → TD37.
+
+### Considered but not changed (confession)
+
+- **`applyRecommendation` in RoundSetup.tsx unchanged** — the sort now lives in `generate()` (the canonical source for the sorted result), so the apply callback just consumes whatever `onApply(result)` hands it. No sorting needed there.
+- **Preview shows sorted team numbers** (Team 1 = smallest), but the pre-apply preview shows the SAME result object that gets applied, which was the explicit requirement. The modal's "Team N" display labels use `i + 1` from the sorted array index, so Team 1 in the preview IS Team 1 after apply.
 
 *Prior session (2026-06-17):* Relaxed-close blind draw (Spec 2; migration 029 on prod + committed) — see the section below.
 
