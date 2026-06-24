@@ -410,6 +410,19 @@ export default function RecommendTeamsModal({
                 </span>
               </div>
 
+              {/* Hard-cap note — k was bumped above the requested partition so
+                  no team exceeds 4 players. Reads the engine's boolean flag;
+                  no recompute. */}
+              {result.teamCountBumped && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: "8px",
+                  background: C.amberBg, border: `1px solid ${C.amberBorder}`,
+                  color: C.amber, fontSize: "0.84rem", marginBottom: "12px",
+                }}>
+                  Added teams so no team has more than 4 players.
+                </div>
+              )}
+
               {/* Infeasible band warning — Case C copy (§9) */}
               {!result.metBand && (
                 <div style={{

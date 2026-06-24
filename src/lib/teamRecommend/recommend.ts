@@ -42,7 +42,14 @@ export type RecommendResult = {
   repeats: number;       // repeat-pairing count of the chosen teams
   seeds: number;         // how many starting drafts were compared
   metBand: boolean;      // chosen teams are inside the tolerance band
+  teamCountBumped: boolean; // k was raised above the requested partition to
+                            // honor the hard 4-player cap (drives the modal note)
 };
+
+// Hard cap: no team may EVER exceed this many players. k is floored at
+// ceil(n / MAX_TEAM_SIZE) in both partition modes so the cap holds regardless
+// of the admin's requested team size / team count.
+const MAX_TEAM_SIZE = 4;
 
 // Number of starting drafts compared each run: snake + novelty-greedy + 3 random
 // restarts. Single tunable; restarts = SEED_COUNT - 2.
@@ -447,6 +454,7 @@ function setup(input: RecommendInput): {
   players: { id: number; courseHandicap: number }[];
   chMap: Map<number, number>;
   k: number;
+  teamCountBumped: boolean;
   parentSeed: number;
 } {
   const { players, partition } = input;
@@ -460,23 +468,40 @@ function setup(input: RecommendInput): {
   const n = players.length;
   const chMap = new Map<number, number>(players.map((p) => [p.id, p.courseHandicap]));
 
-  let k: number;
+  // The team count the admin's selection implies, BEFORE the cap is enforced.
+  let requestedK: number;
   if (partition.mode === "count") {
-    k = Math.max(1, Math.min(partition.value, n));
+    // "N teams" — manual admin input, clamped to [1, n].
+    requestedK = Math.max(1, Math.min(partition.value, n));
   } else {
-    k = Math.max(1, Math.min(Math.round(n / partition.value), n));
+    // "Teams of N" — enough teams that no team exceeds the requested size.
+    // ceil (not round): round(25/4)=6 → a 5-man team; ceil(25/4)=7 caps at 4.
+    requestedK = Math.max(1, Math.ceil(n / partition.value));
   }
 
-  return { players, chMap, k, parentSeed: deriveParentSeed(input) };
+  // Hard cap: floor k at ceil(n / MAX_TEAM_SIZE) so no team can ever exceed
+  // MAX_TEAM_SIZE, even when the admin asked for fewer/larger teams. When this
+  // raises k above the request we flag it so the modal can surface a note.
+  const minTeamsForCap = Math.max(1, Math.ceil(n / MAX_TEAM_SIZE));
+  const k = Math.max(requestedK, minTeamsForCap);
+  const teamCountBumped = k > requestedK;
+
+  return { players, chMap, k, teamCountBumped, parentSeed: deriveParentSeed(input) };
 }
 
-function toResult(sr: SeedResult, seeds: number, chMap: Map<number, number>): RecommendResult {
+function toResult(
+  sr: SeedResult,
+  seeds: number,
+  chMap: Map<number, number>,
+  teamCountBumped: boolean,
+): RecommendResult {
   return {
     teams: sr.teams.map((ids) => ({ playerIds: ids, avgCH: teamAvgCH(ids, chMap) })),
     spread: sr.spread,
     repeats: sr.noveltyCost,
     seeds,
     metBand: sr.metBand,
+    teamCountBumped,
   };
 }
 
@@ -484,9 +509,9 @@ function toResult(sr: SeedResult, seeds: number, chMap: Map<number, number>): Re
 // This is the default generation path.
 export function recommendTeams(input: RecommendInput): RecommendResult {
   if (input.players.length === 0) {
-    return { teams: [], spread: 0, repeats: 0, seeds: SEED_COUNT, metBand: true };
+    return { teams: [], spread: 0, repeats: 0, seeds: SEED_COUNT, metBand: true, teamCountBumped: false };
   }
-  const { players, chMap, k, parentSeed } = setup(input);
+  const { players, chMap, k, teamCountBumped, parentSeed } = setup(input);
   const { snakeSeed, restartSeeds } = deriveSeeds(parentSeed);
 
   // Fixed seed order — seed #1 is the snake draft (old behavior baseline).
@@ -500,7 +525,7 @@ export function recommendTeams(input: RecommendInput): RecommendResult {
     optimizeFromSeed(seed, k, chMap, input.pairCounts, input.toleranceCH),
   );
   const chosen = results.reduce((best, cur) => pickBetter(best, cur));
-  return toResult(chosen, SEED_COUNT, chMap);
+  return toResult(chosen, SEED_COUNT, chMap, teamCountBumped);
 }
 
 // Snake-only path: seed #1 alone through the same pipeline. This is the OLD
@@ -508,11 +533,11 @@ export function recommendTeams(input: RecommendInput): RecommendResult {
 // identical snake sub-seed as multi-start's seed #1, so the two are comparable.
 export function recommendTeamsSnakeOnly(input: RecommendInput): RecommendResult {
   if (input.players.length === 0) {
-    return { teams: [], spread: 0, repeats: 0, seeds: 1, metBand: true };
+    return { teams: [], spread: 0, repeats: 0, seeds: 1, metBand: true, teamCountBumped: false };
   }
-  const { players, chMap, k, parentSeed } = setup(input);
+  const { players, chMap, k, teamCountBumped, parentSeed } = setup(input);
   const { snakeSeed } = deriveSeeds(parentSeed);
   const seed = snakeDraft(players, k, mulberry32(snakeSeed));
   const chosen = optimizeFromSeed(seed, k, chMap, input.pairCounts, input.toleranceCH);
-  return toResult(chosen, 1, chMap);
+  return toResult(chosen, 1, chMap, teamCountBumped);
 }

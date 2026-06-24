@@ -339,13 +339,15 @@ describe("recommendTeams", () => {
       expect(sizes(r)).toEqual([4, 4, 3, 3]);
     });
 
-    it("size mode: 13 players @ size 4 → [5,4,4] (round(13/4)=3 teams, evened)", () => {
+    it("size mode: 13 players @ size 4 → [4,3,3,3] (ceil(13/4)=4 teams, cap≤4)", () => {
+      // Was [5,4,4] under the old round(13/4)=3 derivation — that asserted a
+      // 5-man team, which the hard cap now forbids. ceil(13/4)=4 teams.
       const players = Array.from({ length: 13 }, (_, i) => ({
         id: i + 1,
         courseHandicap: i,
       }));
       const r = recommendTeams({ players, pairCounts: noPairs, partition: { mode: "size", value: 4 }, toleranceCH: 99, seed: 0 });
-      expect(sizes(r)).toEqual([5, 4, 4]);
+      expect(sizes(r)).toEqual([4, 3, 3, 3]);
     });
 
     it("size mode: 10 players @ size 4 → [4,3,3] (round(10/4)=3 teams, evened)", () => {
@@ -382,7 +384,8 @@ describe("recommendTeams", () => {
       expect(sortedSizes).toEqual([3, 3, 4, 4]);
     });
 
-    it("13 players @ size 4: sorted ascending = [4,4,5] (smallest first)", () => {
+    it("13 players @ size 4: sorted ascending = [3,3,3,4] (smallest first, cap≤4)", () => {
+      // Was [4,4,5] — the old 5-man team. ceil(13/4)=4 teams, ascending sort.
       const players = Array.from({ length: 13 }, (_, i) => ({
         id: i + 1,
         courseHandicap: i,
@@ -393,7 +396,7 @@ describe("recommendTeams", () => {
       for (let i = 0; i < sortedSizes.length - 1; i++) {
         expect(sortedSizes[i]).toBeLessThanOrEqual(sortedSizes[i + 1]);
       }
-      expect(sortedSizes).toEqual([4, 4, 5]);
+      expect(sortedSizes).toEqual([3, 3, 3, 4]);
     });
 
     it("stable: equal-size teams preserve engine order across the sort", () => {
@@ -406,6 +409,121 @@ describe("recommendTeams", () => {
       const sorted = applySort(r);
       // No size difference → stable sort leaves the engine order intact.
       expect(sorted.map((t) => t.playerIds)).toEqual(r.teams.map((t) => t.playerIds));
+    });
+  });
+
+  // ── 7c. Hard cap: no team may ever exceed 4 players ────────────────────────
+  describe("hard 4-player cap", () => {
+    function sizesAsc(r: ReturnType<typeof recommendTeams>) {
+      // Mirror the modal's apply-time ascending-by-size sort.
+      return [...r.teams]
+        .sort((a, b) => a.playerIds.length - b.playerIds.length)
+        .map((t) => t.playerIds.length);
+    }
+
+    // Property / invariant test across realistic league round sizes. Catches the
+    // whole bug class, not just n=25: (a) max team ≤ 4, (b) sizes differ by ≤ 1.
+    const counts = Array.from({ length: 52 - 18 + 1 }, (_, i) => 18 + i);
+    it.each(counts)(
+      "size mode @ 4: %i players → max team ≤ 4 and sizes differ by ≤ 1",
+      (n) => {
+        const players = Array.from({ length: n }, (_, i) => ({
+          id: i + 1,
+          courseHandicap: i % 20, // some spread; band is wide so cap is isolated
+        }));
+        const r = recommendTeams({
+          players,
+          pairCounts: noPairs,
+          partition: { mode: "size", value: 4 },
+          toleranceCH: 99,
+          seed: 0,
+        });
+        const s = sizesAsc(r);
+        const total = s.reduce((a, b) => a + b, 0);
+        expect(total).toBe(n);                       // everyone placed
+        expect(Math.max(...s)).toBeLessThanOrEqual(4); // (a) cap holds
+        expect(Math.max(...s) - Math.min(...s)).toBeLessThanOrEqual(1); // (b)
+        expect(r.teamCountBumped).toBe(false);       // size 4 never overrides
+      },
+    );
+
+    // Explicit oracle from the spec (sizes are smallest-first, post-sort).
+    const oracle: [number, number, number[]][] = [
+      [24, 6, [4, 4, 4, 4, 4, 4]],
+      [25, 7, [3, 3, 3, 4, 4, 4, 4]],
+      [26, 7, [3, 3, 4, 4, 4, 4, 4]],
+      [23, 6, [3, 4, 4, 4, 4, 4]],
+      [50, 13, [3, 3, ...Array(11).fill(4)]],
+    ];
+    it.each(oracle)(
+      "size mode @ 4: %i players → %i teams with sizes %j",
+      (n, k, expected) => {
+        const players = Array.from({ length: n }, (_, i) => ({
+          id: i + 1,
+          courseHandicap: i,
+        }));
+        const r = recommendTeams({
+          players,
+          pairCounts: noPairs,
+          partition: { mode: "size", value: 4 },
+          toleranceCH: 99,
+          seed: 0,
+        });
+        expect(r.teams).toHaveLength(k);
+        expect(sizesAsc(r)).toEqual(expected);
+      },
+    );
+
+    // The n=25 regression that triggered this fix: never a 5-man team again.
+    it("25 players @ size 4 → exactly [3,3,3,4,4,4,4] (no 5-man team)", () => {
+      const players = Array.from({ length: 25 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({
+        players,
+        pairCounts: noPairs,
+        partition: { mode: "size", value: 4 },
+        toleranceCH: 99,
+        seed: 0,
+      });
+      expect(sizesAsc(r)).toEqual([3, 3, 3, 4, 4, 4, 4]);
+    });
+
+    // Count mode is a manual admin input: a chosen count that can't satisfy the
+    // cap auto-bumps to ceil(n/4) and flags teamCountBumped for the modal note.
+    it("count mode: 25 players, 3 teams → bumps to 7, all ≤ 4, flag set", () => {
+      const players = Array.from({ length: 25 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({
+        players,
+        pairCounts: noPairs,
+        partition: { mode: "count", value: 3 }, // 3 teams → 9-man teams w/o cap
+        toleranceCH: 99,
+        seed: 0,
+      });
+      expect(r.teams).toHaveLength(7);              // ceil(25/4)
+      expect(Math.max(...sizesAsc(r))).toBeLessThanOrEqual(4);
+      expect(r.teamCountBumped).toBe(true);
+    });
+
+    it("count mode: 25 players, 10 teams → honored, no bump, flag clear", () => {
+      const players = Array.from({ length: 25 }, (_, i) => ({
+        id: i + 1,
+        courseHandicap: i,
+      }));
+      const r = recommendTeams({
+        players,
+        pairCounts: noPairs,
+        partition: { mode: "count", value: 10 }, // already ≥ ceil(25/4)=7
+        toleranceCH: 99,
+        seed: 0,
+      });
+      expect(r.teams).toHaveLength(10);
+      expect(Math.max(...sizesAsc(r))).toBeLessThanOrEqual(4);
+      expect(r.teamCountBumped).toBe(false);
     });
   });
 
