@@ -2,14 +2,60 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-22 (Apply Teams bug fix + smaller-teams-first ordering; NO migration)
-**Session purpose:** Two I6 follow-up fixes. (1) **Apply Teams button did nothing** — root cause: the DangerModal overwrite guard (z-index 1000) was a DOM sibling to the RecommendTeamsModal overlay (z-index 1100), painting behind it invisibly whenever existing teams were present. Fix: add optional `zIndex` prop to `DangerModal` (default 1000) and pass `zIndex={1200}` in `RecommendTeamsModal`. (2) **Smaller teams now get low team numbers** — sort `result.teams` ascending by `playerIds.length` inside `generate()` before `setResult()`, so preview card order equals applied `team_number` order (Team 1 = fewest players, stable within equal-size groups). 968/968 vitest, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+**Last updated:** 2026-06-24 (Hard 4-player cap on recommended teams; NO migration)
+**Session purpose:** Bug fix — the team recommendation engine recommended a **5-man team for 25 players** (five 4s + one 5). Root cause: size mode derived `k = round(n / size)` → `round(25/4) = 6` teams → `partitionSizes(25, 6) = [5,4,4,4,4,4]`. Fix in `setup()`: size mode now uses `ceil(n / size)`, and BOTH modes floor `k = max(requestedK, ceil(n / 4))` so no team can ever exceed 4 — a manual "# of teams" too low auto-bumps with a one-line modal note (`teamCountBumped` flag). 1011/1011 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+
+*Prior session (2026-06-22):* Apply Teams z-index fix + smaller-teams-first ordering — see the section below.
 
 *Prior session (2026-06-18):* Multi-start team recommendation engine — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+---
+
+## 2026-06-24 (Hard 4-player cap on recommended teams; no migration)
+
+### Where we left off
+
+One focused bug fix in the team recommendation engine. No DB change.
+
+- **Bug.** For 25 checked-in players the auto-builder recommended **six teams: five 4-man + one 5-man**. A team must never exceed 4 players.
+
+- **Root cause.** `setup()` in `src/lib/teamRecommend/recommend.ts` derived the team count `k` for size mode (the default "Team size = 4" flow) as `Math.round(n / size)`: `round(25/4) = round(6.25) = 6`, and `partitionSizes(25, 6)` distributes evenly into `[5,4,4,4,4,4]` — the 5-man team. `round` predates yesterday's multi-start change; it was not introduced by it.
+
+- **Fix.** In `setup()`:
+  - **size mode** now derives `requestedK = max(1, ceil(n / size))` (was `round`) so no team exceeds the requested size;
+  - **both modes** enforce a hard floor `k = max(requestedK, ceil(n / MAX_TEAM_SIZE))` with `MAX_TEAM_SIZE = 4`, so even a manual "# of teams" (count mode) that's too low to fit ≤4-player teams **auto-bumps** to `ceil(n/4)` instead of overflowing;
+  - returns `teamCountBumped` (true when the cap raised `k` above the request). `RecommendResult` gains the `teamCountBumped: boolean` field.
+
+- **Modal note.** `RecommendTeamsModal` renders a one-line amber banner — *"Added teams so no team has more than 4 players."* — when `result.teamCountBumped`. Reads the engine's boolean; no recompute (mirrors the existing excluded-players banner).
+
+- **Smallest-first ordering preserved.** The modal's ascending-by-size sort (shipped 2026-06-22) is untouched; the cap only changes how many teams `k` the engine builds.
+
+**Files:** MODIFIED `src/lib/teamRecommend/recommend.ts`, `src/components/admin/RecommendTeamsModal.tsx`, `tests/lib/teamRecommend/recommend.test.ts`, `STATUS.md`.
+
+### DB changes
+
+- **None.** Logic-only.
+
+### Tests / verification
+
+- **1011/1011 vitest**, **50/50 Playwright**, **tsc --noEmit** clean.
+- New `recommend.test.ts §7c "hard 4-player cap"`: a **property test** (n = 18..52 @ size 4) asserting max team ≤ 4 and sizes differ by ≤ 1; the spec **oracle** cases (24→all 4, 25→`[3,3,3,4,4,4,4]`, 26→`[3,3,4,4,4,4,4]`, 23→`[3,4,4,4,4,4]`, 50→`[3,3,4×11]`, smallest-first); the **n=25 regression**; and **count-mode auto-bump** (25p/3 teams → 7, flag set) vs no-bump (25p/10 teams, flag clear).
+- **Updated** the two pre-existing tests that asserted the now-forbidden 5-man team (`13 @ size 4 → [5,4,4]` / asc `[4,4,5]` → now `[4,3,3,3]` / asc `[3,3,3,4]`); the change is noted in the commit message.
+
+### Tomorrow's priority
+
+- **Unchanged carryover:** relay migration 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); then `npm run db:backup` → TD37.
+
+### Considered but not changed (confession)
+
+- **Min-team-size guard (below ~9 players → possible 2-man team)** — out of scope per the spec; count mode's `min(value, n)` is unchanged so the engine can still produce a 2-man team if an admin explicitly asks for too many teams. The clean place to guard would be the same `setup()` block. Flagged, not built.
+- **Homepage `smartJoin`, blind draw, finalize** — untouched.
+- **`buildNotes` unchanged** — the cap note is a sizing concern, not part of the balance-band narrative, so it's rendered directly off the boolean (like the excluded-players banner) rather than folded into `buildNotes`.
+- **`recommendTeamsSnakeOnly`** gets the `teamCountBumped` field only for type-consistency (it's the test-only never-worse baseline).
 
 ---
 
