@@ -1162,7 +1162,15 @@ export default function ScorecardPage() {
         console.warn("[D.1 hotfix] submit team update failed", error);
         return;
       }
-      setRoundFormatConfig(nextCfg as FormatConfig);
+      // NOTE: do NOT setRoundFormatConfig(nextCfg) here. `nextCfg` is built from
+      // the round-level `rounds.format_config` (frozen LEGACY blob), but the
+      // engine-driving config state (roundFormatConfig) is the round's FLIGHT
+      // config (scoring_basis / best_n / override_holes / allowance live on the
+      // flight — CLAUDE.md "Format / config / allowance ownership = the flight").
+      // Overwriting it with the legacy blob made the local headline recompute on
+      // the wrong basis (best-N → best-all) and flash an inflated team total at
+      // submit (the −22 bug). submitted_teams is tracked solely by `submittedTeams`
+      // below; nothing reads it back out of roundFormatConfig.
       setSubmittedTeams(nextSubmitted);
     } finally {
       setSubmitting(false);

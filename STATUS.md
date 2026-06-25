@@ -2,8 +2,10 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-24 (Hard 4-player cap on recommended teams; NO migration)
-**Session purpose:** Bug fix — the team recommendation engine recommended a **5-man team for 25 players** (five 4s + one 5). Root cause: size mode derived `k = round(n / size)` → `round(25/4) = 6` teams → `partitionSizes(25, 6) = [5,4,4,4,4,4]`. Fix in `setup()`: size mode now uses `ceil(n / size)`, and BOTH modes floor `k = max(requestedK, ceil(n / 4))` so no team can ever exceed 4 — a manual "# of teams" too low auto-bumps with a one-line modal note (`teamCountBumped` flag). 1011/1011 vitest, 50/50 Playwright, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+**Last updated:** 2026-06-25 (Submit-transition team-total clobber fix — the "−22" bug; NO migration)
+**Session purpose:** Bug fix — tapping **Submit Final Scores** briefly flashed an inflated team total (best-N → best-ALL, ≈3×) on the scorecard headline while leaderboard/summary stayed correct and the scorecard self-healed on remount. Root cause: `submitTeam` reseeded `roundFormatConfig` (the engine-driving state) from `rounds.format_config` (frozen LEGACY round-level blob) instead of leaving it as the round's FLIGHT config; the stale `override_holes`/`best_n` then drove a local recompute. Fix: **deleted the `setRoundFormatConfig(nextCfg)` clobber** (no DB-write or query-shape change). New cross-surface test (red→green proven) + two parked TDs (TD43 fallback write-path, TD44 headline-is-local-calc). 1013/1013 vitest, 12/12 submit-touching Playwright specs, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+
+*Prior session (2026-06-24):* Hard 4-player cap on recommended teams — see the section below.
 
 *Prior session (2026-06-22):* Apply Teams z-index fix + smaller-teams-first ordering — see the section below.
 
@@ -12,6 +14,43 @@
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+---
+
+## 2026-06-25 (Submit-transition team-total clobber — the "−22" bug; no migration)
+
+### Where we left off
+
+One focused bug fix on the scorecard submit flow. No DB change.
+
+- **Bug (from Dad, live round).** A team was **−7 through 18** on the live scorecard pill (correct). On tapping **Submit**, the headline briefly showed **−22**. The **leaderboard** showed **−7** (correct), and returning to the scorecard later showed **−7** again (self-heals on remount). Display-only, transient, self-correcting; persisted scores/payouts were never wrong.
+
+- **Root cause (wrong math, not rendered-too-early).** The scorecard "Team Net" headline computes **locally** via `buildRoundInput → computeRoundResult`, reading the `roundFormatConfig` state. At load that state is correctly seeded from the round's **FLIGHT** config (best-N, no override). But `submitTeam` (`src/app/round/[id]/scorecard/page.tsx`) did `setRoundFormatConfig(nextCfg)` where `nextCfg = {...rounds.format_config, submitted_teams}` — i.e. it reseeded the engine-driving state from `rounds.format_config`, the **frozen LEGACY round-level blob** (CLAUDE.md "format/config/allowance ownership = the flight"). Whatever stale format-behavior key that blob held (here `override_holes` spanning all holes → the engine's best-N→**best-ALL** path, `engine.ts:67-76`) then drove the recompute, summing the whole roster (≈3× = the −22 signature). Self-heals because leaderboard/summary read canonical `loadRoundResults` (flight-resolved) and a scorecard remount re-seeds from the flight.
+
+- **Fix.** Deleted the `setRoundFormatConfig(nextCfg as FormatConfig)` line in `submitTeam`. Left intact: the DB write of `nextCfg → rounds.format_config` (merging `submitted_teams` is correct, round-level) and the separate `setSubmittedTeams(...)`. `submitted_teams` is tracked **solely** by the `submittedTeams` state array — grep confirmed nothing reads it back out of `roundFormatConfig`, so the deleted line had no consumer beyond corrupting the engine config.
+
+**Files:** MODIFIED `src/app/round/[id]/scorecard/page.tsx`, `ROADMAP.md`, `STATUS.md`. NEW `tests/components/scorecard-submit-config-clobber.test.tsx`.
+
+### DB changes
+
+- **None.** Local-state-only fix; no migration, no query-shape change, no RPC change.
+
+### Tests / verification
+
+- **1013/1013 vitest** (114 files; +1 new test). **tsc --noEmit** clean.
+- **Playwright:** ran the 12 submit/finalize-touching specs (`flightsFinalize`, `teamAllowanceOverride`, `parCompetition`, `handicapAllowanceModal`) → **12/12 green**. (Required stopping the port-3000 preview dev server so Next would let the e2e server start on 3100; preview restarted after.)
+- **New cross-surface test** `tests/components/scorecard-submit-config-clobber.test.tsx` (rules #2/#7): negative-control fixture where `rounds.format_config` (best-2 + `override_holes:[1..18]` → best-ALL = −72) **deliberately differs** from the explicitly-seeded Flight A config (best-2, no override = −36). Asserts that AFTER `submitTeam` runs, the headline equals canonical `loadRoundResults` team total (−36), not the clobbered −72. **Red→green proven:** with the clobber re-inserted the headline became −72 (test red); with the fix it stays −36 (green). The `FakeSupabase` constructor copies the flight config BY VALUE unless `flights` is seeded explicitly — exactly the divergence the live bug needed.
+
+### Tomorrow's priority
+
+- **Unchanged carryover:** relay migration 027 (Par Competition) → 028 (Backup PIN) → 030 (per-round buy-in); then `npm run db:backup` → TD37.
+
+### Considered but not changed (confession)
+
+- **TD43 (parked, not fixed).** `submitTeam`'s fallback `row?.format_config ?? roundFormatConfig ?? {}` (~line 1147) can write the FLIGHT effective config (incl. a team allowance override) into `rounds.format_config` when that column is null. Pre-existing; NOT the −22 cause. Logged as TD43.
+- **TD44 (parked, design item).** The headline is a parallel local calc, not a read of canonical `loadRoundResults`. This fix stops it diverging at submit, but the durable fix (repoint at a canonical projection) is non-trivial — live scoring needs optimistic per-tap totals before anything is persisted. Logged as TD44 (overlaps TD34).
+- **Did NOT name the exact stale key** in Dad's real round (skipped per instruction — fix is wholesale, key irrelevant). No read-only prod compare run.
+- **Branch B (blind-draw double-count)** investigated and refuted from `engine.ts` (best-N narrows the pool; fills can't 3× the total).
 
 ---
 
