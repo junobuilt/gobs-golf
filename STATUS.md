@@ -2,10 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-25 (Tournament Phase 2.1a — admin bug fixes + standard-days redesign; branch `tournament`)
-**Session purpose:** Fix the three bugs Phase 2.1 browser verification surfaced and redesign day setup. (1) Every `mutations.ts` call from the Tournament tab now surfaces its outcome — side-assign, **End Tournament** (the invisible CHECK-violation bug), and Delete render a dismissible error banner; a failed mutation can no longer leave the screen unchanged. (2) `endTournament` now reads `started_on` first and writes `ended_on = max(today, started_on)` (was writing a pre-start date for a future tournament). (3) Creating a tournament **auto-creates the three standard days** (Day 1 — Greensomes, Day 2 — Four-ball, Day 3 — Singles) on consecutive dates from `started_on` via the existing `createSession` path (each with its own round); a league-round collision skips only that day, keeps survivors, and shows a banner naming the blocked day/format/date. **Day # field removed** (derived `max+1`). (3.1) Day cards are **Editable** (name/format/date); a date change **moves the round** — session row moves first (23505 ⇒ sibling day owns it → `TournamentDayDateTakenError`), then the round (23505 ⇒ league round owns it → revert session date, `LeagueRoundOwnsDateError`) — distinct copy per collision. (3.2) Dates render via one `formatDisplayDate` helper **extracted from `History.tsx` into `src/lib/date.ts`** (History now imports it). (4) Day card shows amber **"No round — cannot hold scores"** when `round_id` null. **Migration 032 committed verbatim** (already in prod): `UNIQUE(tournament_id, played_on)`, session→round FK `ON DELETE CASCADE`, relaxed ended-on CHECK. **1080/1080 vitest (+9), tsc clean, 51/51 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (now also folds 031 + 032).**
+**Last updated:** 2026-07-25 (Tournament Phase 2.2a — canonical match loader + pairings data layer; branch `tournament`)
+**Session purpose:** Build the single source of truth for match data and the pairings data layer — loader-first, NO UI this session (§3 pairings builder is next). **`src/lib/tournament/loadMatch.ts`** is THE assembler: `loadMatch(id)` / `loadSessionMatches(sessionId)` turn DB rows into a `LoadedMatch` (match row + session/tournament meta + both sides with per-player `matchStrokes` + greensomes collapsed side handicap + hole meta + `MatchState` + resolved result + `isIncomplete`). All handicap/match math comes from `matchplay.ts` — the loader assembles inputs and calls it, no score arithmetic. `loadSessionMatches` is **batched** (one read each for session/matches/tournament/round_players/scores/team_scores/holes, NOT N×loadMatch) and asserts the scores read isn't truncated at the 1000-row cap (`ScoresTruncatedError`). **Mixed tees within a match → `MixedTeesInMatchError`** (thrown, never silently mis-allocated — correction #6). Pairings data layer in `mutations.ts`: **`createGroup`** (sequential team numbers, never reused; 1 match for greensomes/four-ball, 2 for singles paired by slot index), **`updateGroup`** (swap keyed on team_number so a singles swap never re-pairs), **`deleteGroup`** (has-scores gate). §5: partial groups persist + flag `isIncomplete` (so the envelope-rule admin-override can land), but a zero-player group is rejected. Tee fallback mirrors the scorecard's `preferred_tee_id ?? DEFAULT_TEE_ID` (the real constant, verified — correction #5). Piggyback §0: Add-Day league-collision copy now uses `formatDisplayDate`. **1100/1100 vitest (+20), tsc clean, 51/51 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032).**
 
-*Prior session (2026-07-24):* Tournament Phase 2.1 — data layer + admin setup tab; also match-play engine — see the section below.
+*Prior session (2026-07-25):* Tournament Phase 2.1a — admin bug fixes + standard-days redesign — see the section below.
+
+---
+
+## 2026-07-25 (Tournament Phase 2.2a — canonical match loader + pairings data layer; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2, loader-first half. The canonical `LoadedMatch` assembler + the pairings data layer, fully tested. **NO UI** — the §3 pairings builder (the day card's `Pairings — coming next` hook at `Tournament.tsx`) is the next session, deliberately split so the single-source contract lands before the mobile builder.
+
+- **`src/lib/tournament/loadMatch.ts` — the ONE assembler.** `loadMatch(matchId)` + `loadSessionMatches(sessionId)` share `assembleMatch`. `LoadedMatch` carries the `tournament_matches` row, session `{format,name,dayNumber,playedOn,roundId}`, tournament side names, both `LoadedMatchSide` (side key, display name, team number, players `{playerId,displayName,hiSnapshot,courseHandicap,matchStrokes}`, greensomes `collapsedHandicap`/`sideMatchStrokes`), hole meta, `MatchState`, resolved `ResolvedResult`, and `isIncomplete`. **Every downstream surface (P3 scorecard, P4 dashboard) reads this — nothing recomputes strokes/nets/state/points.**
+- **All math via `matchplay.ts`.** Per-unit `matchStrokes` = `computeMatchStrokes` (singles/four-ball combine all players' CH in aThenB order — mirrors `sideHoleNets` exactly; greensomes collapses each pair via `greensomesTeamHandicap`). Tournament matches run at **100% allowance** (verified `getHandicapAllowance(null)=100`), so PH=CH and raw `round_players.course_handicap` feeds straight in.
+- **Batching + truncation.** `loadSessionMatches` fetches once per table and slices per match. Scores are one session-scoped `.in()` (History-fix per-round pattern) with a `ScoresTruncatedError` guard at `SCORES_ROW_CAP=1000`. No `from("rounds")` in the loader — nothing for `roundsQueryGuard` to scope.
+- **Mixed tees (correction #6): `MixedTeesInMatchError`.** If a match's players span >1 `tee_id` there's no single stroke-index allocation; the loader **throws** rather than allocate three players' strokes against a fourth's tee. (Single-tee is `matchplay`'s documented limitation.) `MatchHolesMissingError` if the tee has no holes.
+- **Pairings `mutations.ts`.** `createGroup({sessionId,format,sideAPlayerIds,sideBPlayerIds})` allocates the next free team numbers (max+1, never reused), writes `round_players` (via `resolveSnapshots` = `preferred_tee_id ?? DEFAULT_TEE_ID` + `computeCourseHandicap` — no new handicap math, no touching RoundSetup) and the matches (1 for greensomes/four-ball, 2 for singles by **slot index**). `updateGroup` swaps a seat keyed on **team_number** (match rows untouched → singles pairing immune). `deleteGroup` removes matches + their round_players, blocked once a team has scores. Typed errors: `EmptyGroupError`, `GroupOverfilledError`, `PlayerNotAssignedToSideError`, `PlayerSideMismatchError`, `PlayerAlreadyGroupedError`, `GroupHasScoresError`, `SessionRoundMissingError`.
+- **§5 (approved):** partial groups persist + `isIncomplete` so an admin override (envelope-rule halved) can land on the match; a **zero-player** group is rejected (`EmptyGroupError`). Over-fill (>2/side) rejected.
+- **§0 piggyback:** Add-Day league-collision copy now uses `formatDisplayDate` (matches Edit-Day); its test assertion updated.
+- **`autoPairSession` deferred** (approved) — singles are the opposing captain's call.
+
+### DB changes
+
+- **None.** Migrations 031/032 are the substrate. `tournament_matches`/`tournament_point_adjustments` were created by 031; this session is the first to write `tournament_matches`.
+
+### Tests / verification
+
+- **1100/1100 vitest (+20), tsc clean, 51/51 Playwright.**
+- New: `loadMatch.test.ts` (+8: singles/four-ball/greensomes goldens with hand-computed `matchStrokes`/nets/`MatchState`/resolved; admin-override precedence; cross-surface strokes equality; batching = one scores/matches read; `ScoresTruncatedError`; `MixedTeesInMatchError`), `pairings.test.ts` (+12: greensomes 1-match/singles 4-teams-2-matches; no team-number reuse across groups; partial persistence + `isIncomplete`; zero-player floor; all five validation errors; **singles-swap immunity**; has-scores gate).
+- **Test-infra (additive):** `FakeSupabase.fromCalls` logs every `from(table)` so the batching test asserts read counts don't scale with match count; `FakeData.tournament_matches` key added.
+- **`roundsQueryGuard` + `tournamentRoundsReads` unchanged** — the loader and pairings code add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **NO §3 UI** — the pairings builder, slot pickers, singles 1-v-1 selection, edit/remove modals, and the day-card wiring are the next session (approved split). This session's DoD is the loader + data layer + tests only.
+- **No combined snapshot helper existed** — `resolveSnapshots` composes the scorecard's tee fallback + `computeCourseHandicap`; RoundSetup left untouched (anti-drift).
+- **Greensomes team gross** reads the lowest `ball_index` per (team, hole) from `team_scores` — greensomes is one ball, so this is the pragmatic read until P3 defines exactly how greensomes scores are written.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2a — Canonical match loader + pairings data layer (DONE 2026-07-25, branch `tournament`).** `loadMatch`/`loadSessionMatches` are the single source of assembled match data (strokes/nets/state/points all from `matchplay.ts`); batched + truncation-guarded; mixed tees within a match throw rather than mis-allocate. Pairings data layer (`createGroup`/`updateGroup`/`deleteGroup`) with sequential non-reused team numbers, singles paired by slot index and swapped by team_number, partial-group persistence for the envelope rule, and full data-layer validation. Pairings UI (§3) deferred to 2.2b.
+
+### Tomorrow's priority
+
+- Phase 2.2b: the pairings UI — wire the day card's `Pairings — coming next` to a builder (`PlayerCombobox` slots per side, explicit singles 1-v-1 ordering, Edit/Remove with the has-scores rule, strokes rendered beside every name from the loader), reusing the 2.1a error-banner pattern.
 
 ---
 
