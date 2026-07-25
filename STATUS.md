@@ -2,8 +2,10 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-25 (Submit-transition team-total clobber fix — the "−22" bug; NO migration)
-**Session purpose:** Bug fix — tapping **Submit Final Scores** briefly flashed an inflated team total (best-N → best-ALL, ≈3×) on the scorecard headline while leaderboard/summary stayed correct and the scorecard self-healed on remount. Root cause: `submitTeam` reseeded `roundFormatConfig` (the engine-driving state) from `rounds.format_config` (frozen LEGACY round-level blob) instead of leaving it as the round's FLIGHT config; the stale `override_holes`/`best_n` then drove a local recompute. Fix: **deleted the `setRoundFormatConfig(nextCfg)` clobber** (no DB-write or query-shape change). New cross-surface test (red→green proven) + two parked TDs (TD43 fallback write-path, TD44 headline-is-local-calc). 1013/1013 vitest, 12/12 submit-touching Playwright specs, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+**Last updated:** 2026-07-24 (Tournament round isolation — `tournament_id IS NULL` on every league read; branch `tournament`)
+**Session purpose:** Tournament track — commit migration 031 (tournament foundation, ALREADY applied to prod) as a repo file, and fence tournament rounds off every league-facing surface. Added `tournament_id IS NULL` to every league read of `rounds` (homepage, leaderboard, history list + admin in-progress, RoundSetup loadRoundForDate + create pre-check, played-with, player stats/profile, Money By Round/Player, season stats + End-Season gates, HI-cascade). PRESERVED: by-id surfaces (scorecard, team-card, `/summary` engine, finalize/reopen) and the `ensureRoundShell` create path (still writes `tournament_id` NULL). New typed sentinel **`TournamentOwnsDateError`** when a create collides with a tournament-owned date. Guarded by loader tests + negative controls AND a source-scanning invariant (`roundsQueryGuard`) that fails on any future unfiltered `from("rounds")`. 1029/1029 vitest, tsc clean, 50/50 Playwright green. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+
+*Prior session (2026-06-25):* Submit-transition team-total clobber fix — the "−22" bug — see the section below.
 
 *Prior session (2026-06-24):* Hard 4-player cap on recommended teams — see the section below.
 
@@ -14,6 +16,44 @@
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+---
+
+## 2026-07-24 (Tournament round isolation; migration 031 committed after-the-fact; branch `tournament`)
+
+### Where we left off
+
+Tournament track, foundation layer. `rounds.tournament_id` (nullable bigint) exists in prod: NULL = ordinary league round, non-NULL = belongs to a Ryder Cup tournament. This session (a) committed the migration file, and (b) made tournament rounds invisible to every league surface.
+
+- **Migration 031 committed verbatim.** `supabase/migrations/031_tournament_foundation.sql` was applied to prod 2026-07-24 from the planning chat via Supabase MCP (so the branch had no file). Committed as the EXACT deployed body — NOT re-applied, NOT modified. Adds `tournaments`, `tournament_players`, `tournament_sessions`, `tournament_matches`, `tournament_point_adjustments`, and `rounds.tournament_id`. `rounds_played_on_unique` deliberately LEFT INTACT (a tournament day = ONE round, groups as teams inside it; no league rounds during tournament week — confirmed with product owner).
+
+- **`tournament_id IS NULL` added to every LEAGUE read of `rounds`:**
+  - Top-level: homepage today/yesterday (`page.tsx`), `/leaderboard`, `/round/active`, season stats (`season/page.tsx`), History finalized list (`loadRoundsList.ts`), admin History in-progress (`History.tsx`), admin Played-With today (`PlayedWith.tsx`), RoundSetup `loadRoundForDate` + create pre-check (`RoundSetup.tsx`), season gates (`seasons/queries.ts` — both `getRoundCountForSeason` + `getInProgressRoundsForSeason`, structural even though tournament rounds keep `season_id` NULL), HI-cascade (`Players.tsx`).
+  - Embedded (`.is("rounds.tournament_id", null)`): `playerStats.ts`, `playedWith/compute.ts` (both `fetchPlayedWithRows` + `fetchPairRounds`), `payouts/loadWinnings.ts`, `payouts/loadPlayerWinnings.ts`, player profile round-history (`player/[id]/page.tsx`).
+
+- **PRESERVED (must still see tournament rounds):** all by-id surfaces — `results.ts` (shared engine reused by `/round/[id]/summary`), scorecard, team-card, `EditModeBanner`, `finalizeRoundAdmin`, `reopenRound`. And `ensureRoundShell` / `ensureSeasonAndRoundShell` still CREATE league rounds with `tournament_id` left NULL.
+
+- **New sentinel `TournamentOwnsDateError`** (`ensureRoundShell.ts`, `.code = "tournament_owns_date"`). The find-or-create lookup AND the 23505 re-fetch both filter `tournament_id IS NULL`; when the re-fetch is empty (a tournament round owns the date), it throws this typed error instead of the raw "concurrent insert race" string. NO UI built this session (both callers — homepage team-formation, RoundSetup — already catch; RoundSetup surfaces it via its existing `alert`). Deferred: a friendly UI message for this case.
+
+### DB changes
+
+- **Migration 031 committed (already in prod).** DO NOT re-apply. `supabase/schema.sql` still lags — a `db:backup` catch-up will fold 027/028/030/031 (carryover TD37).
+
+### Tests / verification
+
+- **1029/1029 vitest** (116 files; +2 new). **tsc --noEmit** clean.
+- **NEW `tests/lib/round/tournamentFilter.test.ts`** — loader-level: `loadRoundsList`, `loadWinningsHistory`, `loadPlayerWinnings`, `fetchPlayedWithRows`/`fetchPairRounds`, season gates — each asserts a `tournament_id`-bearing round is ABSENT and the league round PRESENT, each with a **negative control** running the same query shape sans filter to prove the tournament round WOULD appear (non-vacuous).
+- **NEW `tests/lib/round/roundsQueryGuard.test.ts`** — source-scanning invariant: walks `src/` for every `from("rounds")` / `rounds!inner` and asserts each is either guarded by a `tournament_id` filter OR in an explicit by-id/write ALLOWLIST (each entry commented with why). Catches any FUTURE unfiltered league read. Two negative controls: stripping the filter from `loadRoundsList` is caught, and a synthetic new unfiltered read is caught. Plus a stale-allowlist-entry guard.
+- **Existing mocks updated for the new `.is()` chains:** `FakeSupabase.is(col,null)` now matches null-or-undefined (faithful `IS NULL`) + defaults seed `rounds.tournament_id` to null; seven purpose-built test mocks gained `.is()` (played-with, profile ×2, winnings ×2, crossSurface, playerStats-teamcard, ensureRoundShell chain). Sentinel test added to `ensureRoundShell.test.ts`.
+- **Playwright: 50/50 green** (after installing the chromium + chrome-headless-shell binaries). The top-level `rounds` reads e2e drives (homepage/history/RoundSetup/active) keep their seeded rounds (mock's is.null matches a missing col); embedded-filter surfaces are not e2e-driven.
+
+### Considered but not changed (confession)
+
+- **No UI for `TournamentOwnsDateError`** — per instruction, sentinel made available and named only.
+- **Season-gate filter is belt-and-suspenders** — tournament rounds keep `season_id` NULL by convention, so they'd already be excluded by `season_id`; the added `tournament_id IS NULL` makes it structural (a future writer setting `season_id` can't break End Season). Intentional, per decision.
+- **Did NOT touch** any by-id surface, the scoring engine, or `ensureRoundShell`'s insert payload. No unrelated refactors.
+- **Branch:** committed to `tournament` (NOT master) — this is tournament-track work on that branch.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now also folds 031) → TD37.
 
 ---
 

@@ -65,6 +65,7 @@ export async function fetchPlayedWithRows(
     .from("round_players")
     .select("round_id, team_number, player_id, rounds!inner ( is_complete, season_id )")
     .eq("rounds.is_complete", true)
+    .is("rounds.tournament_id", null) // played-with excludes tournament rounds
     .gt("team_number", 0);
   if (seasonId != null) {
     rpQuery = rpQuery.eq("rounds.season_id", seasonId);
@@ -210,6 +211,7 @@ export async function fetchPairRounds(
     .select("round_id, team_number, player_id, rounds!inner ( played_on, is_complete, season_id )")
     .in("player_id", [aId, bId])
     .eq("rounds.is_complete", true)
+    .is("rounds.tournament_id", null) // pair-round history excludes tournament rounds
     .gt("team_number", 0);
   if (seasonId != null) {
     q = q.eq("rounds.season_id", seasonId);

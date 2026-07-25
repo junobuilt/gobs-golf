@@ -39,6 +39,7 @@ class MiniFake {
 class MiniBuilder {
   private _eqs: Array<[string, any]> = [];
   private _gts: Array<[string, any]> = [];
+  private _iss: Array<[string, any]> = [];
   private _in: [string, any[]] | null = null;
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
@@ -48,6 +49,7 @@ class MiniBuilder {
 
   select(str?: string) { this._selectStr = str ?? "*"; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
+  is(col: string, val: any) { this._iss.push([col, val]); return this; }
   gt(col: string, val: any) { this._gts.push([col, val]); return this; }
   in(col: string, vals: any[]) { this._in = [col, vals]; return this; }
   order(column: string, opts?: any) { this._order = { column, ascending: opts?.ascending ?? true }; return this; }
@@ -81,6 +83,20 @@ class MiniBuilder {
         });
       } else {
         rows = rows.filter((r) => this.looseEq(r[c], v));
+      }
+    }
+    // .is() incl. embedded (`.is("rounds.tournament_id", null)`); NULL matches
+    // null or an omitted nullable column (undefined) in the seed.
+    for (const [c, v] of this._iss) {
+      if (c.includes(".")) {
+        const [rel, col] = c.split(".");
+        rows = rows.filter((r) => {
+          const relObj = Array.isArray(r[rel]) ? r[rel][0] : r[rel];
+          if (!relObj) return false;
+          return v === null ? relObj[col] == null : this.looseEq(relObj[col], v);
+        });
+      } else {
+        rows = rows.filter((r) => (v === null ? r[c] == null : this.looseEq(r[c], v)));
       }
     }
     for (const [c, v] of this._gts) rows = rows.filter((r) => (r[c] ?? 0) > v);

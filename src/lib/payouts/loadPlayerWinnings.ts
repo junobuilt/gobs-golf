@@ -61,7 +61,8 @@ export async function loadPlayerWinnings(
       "round_id, team_number, per_player, " +
         "rounds!inner ( played_on, format, season_id, is_complete, buy_in )",
     )
-    .eq("rounds.is_complete", true);
+    .eq("rounds.is_complete", true)
+    .is("rounds.tournament_id", null); // Money By Player excludes tournament rounds
   if (seasonId != null) {
     q = q.eq("rounds.season_id", seasonId);
   }

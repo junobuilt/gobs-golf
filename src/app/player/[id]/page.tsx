@@ -97,7 +97,8 @@ export default function PlayerProfilePage() {
             scores ( hole_number, strokes )
           `)
           .eq("player_id", playerId)
-          .eq("rounds.is_complete", true);
+          .eq("rounds.is_complete", true)
+          .is("rounds.tournament_id", null); // profile round history excludes tournament rounds
 
         roundPlayers?.sort((a: any, b: any) =>
           new Date(b.rounds.played_on).getTime() - new Date(a.rounds.played_on).getTime()

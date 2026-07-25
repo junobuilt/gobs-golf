@@ -38,6 +38,7 @@ export default function History() {
           .from("rounds")
           .select("id, played_on")
           .eq("is_complete", false)
+          .is("tournament_id", null) // in-progress list excludes tournament rounds
           .order("played_on", { ascending: false }),
       ]);
       if (cancelled) return;

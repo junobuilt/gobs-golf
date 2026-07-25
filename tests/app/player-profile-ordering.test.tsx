@@ -62,6 +62,7 @@ class MiniBuilder {
   private _eqs: Array<[string, any]> = [];
   private _ins: Array<[string, any[]]> = [];
   private _gts: Array<[string, any]> = [];
+  private _iss: Array<[string, any]> = [];
   private _selectStr = "*";
   private _terminal: "list" | "maybeSingle" | "single" = "list";
   private _order: { column: string; ascending: boolean; referencedTable?: string } | null = null;
@@ -70,6 +71,7 @@ class MiniBuilder {
 
   select(str?: string) { this._selectStr = str ?? "*"; return this; }
   eq(col: string, val: any) { this._eqs.push([col, val]); return this; }
+  is(col: string, val: any) { this._iss.push([col, val]); return this; }
   in(col: string, vals: any[]) { this._ins.push([col, vals]); return this; }
   gt(col: string, val: any) { this._gts.push([col, val]); return this; }
   gte(_c: string, _v: any) { return this; }
@@ -127,6 +129,20 @@ class MiniBuilder {
         });
       } else {
         rows = rows.filter((r) => this.looseEq(r[c], v));
+      }
+    }
+    // .is() — including embedded (`.is("rounds.tournament_id", null)`). NULL
+    // matches null or an omitted nullable column (undefined) in the seed.
+    for (const [c, v] of this._iss) {
+      if (c.includes(".")) {
+        const [rel, col] = c.split(".");
+        rows = rows.filter((r) => {
+          const relObj = Array.isArray(r[rel]) ? r[rel][0] : r[rel];
+          if (!relObj) return false;
+          return v === null ? relObj[col] == null : this.looseEq(relObj[col], v);
+        });
+      } else {
+        rows = rows.filter((r) => (v === null ? r[c] == null : this.looseEq(r[c], v)));
       }
     }
     // .in() — flights resolution (getPrimaryFlightByRound) filters by round_id.

@@ -214,6 +214,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       const [{ data: rounds }, loadedActiveSeason] = await Promise.all([
         supabase
           .from("rounds").select("id, is_complete, was_finalized, season_id").eq("played_on", date)
+          .is("tournament_id", null)
           .order("played_on", { ascending: false }).limit(1),
         import("@/lib/seasons").then(({ getActiveSeason }) => getActiveSeason()),
       ]);
@@ -467,6 +468,7 @@ export default function RoundSetup({ allPlayers }: Props) {
       .from("rounds")
       .select("id")
       .eq("played_on", selectedDate)
+      .is("tournament_id", null)
       .order("played_on", { ascending: false })
       .limit(1)
       .maybeSingle();

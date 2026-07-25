@@ -8,13 +8,13 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { from: fromMock },
 }));
 
-import { ensureRoundShell } from "@/lib/round/ensureRoundShell";
+import { ensureRoundShell, TournamentOwnsDateError } from "@/lib/round/ensureRoundShell";
 
 // Builds a chainable Supabase query builder that resolves to `result` at
 // the end of any method chain. Every fluent method returns `this`.
 function makeChain(result: unknown) {
   const chain: Record<string, unknown> = {};
-  const methods = ["select", "eq", "order", "limit", "maybeSingle", "insert", "single", "upsert"];
+  const methods = ["select", "eq", "is", "order", "limit", "maybeSingle", "insert", "single", "upsert"];
   methods.forEach(m => {
     chain[m] = vi.fn(() => {
       if (m === "maybeSingle" || m === "single") return Promise.resolve(result);
@@ -146,6 +146,27 @@ describe("ensureRoundShell", () => {
     const id = await ensureRoundShell("2026-05-23");
 
     expect(id).toBe(55);
+  });
+
+  it("throws the typed TournamentOwnsDateError when the 23505 re-fetch is empty (a tournament round owns the date)", async () => {
+    // A tournament round already owns the date. The league-scoped lookup and
+    // re-fetch both filter tournament_id IS NULL, so INSERT hits 23505 and the
+    // re-fetch comes back empty → a distinct, named sentinel (not the raw race
+    // string), so a caller can special-case "date owned by a tournament".
+    const selectChain = makeChain({ data: null, error: null });
+    const buyInChain = makeChain({ data: { value: "10" }, error: null });
+    const insertChain = makeChain({ data: null, error: { code: "23505", message: "unique violation" } });
+    const emptyRefetch = makeChain({ data: null, error: null }); // league-scoped → nothing
+
+    fromMock
+      .mockReturnValueOnce(selectChain)
+      .mockReturnValueOnce(buyInChain)
+      .mockReturnValueOnce(insertChain)
+      .mockReturnValueOnce(emptyRefetch);
+
+    const err = await ensureRoundShell("2026-06-20").catch((e) => e);
+    expect(err).toBeInstanceOf(TournamentOwnsDateError);
+    expect(err).toMatchObject({ code: "tournament_owns_date" });
   });
 
   it("throws on non-23505 insert errors", async () => {

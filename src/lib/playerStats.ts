@@ -53,7 +53,8 @@ export async function fetchPlayerStats(
       `,
     )
     .eq("player_id", playerId)
-    .eq("rounds.is_complete", true);
+    .eq("rounds.is_complete", true)
+    .is("rounds.tournament_id", null); // league stats exclude tournament rounds
 
   if (filter.startDate) {
     query = query.gte("rounds.played_on", filter.startDate);

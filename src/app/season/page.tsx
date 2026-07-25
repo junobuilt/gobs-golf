@@ -60,7 +60,8 @@ export default function LeaderboardPage() {
       const { data: rounds } = await supabase
         .from("rounds")
         .select("id")
-        .eq("is_complete", true);
+        .eq("is_complete", true)
+        .is("tournament_id", null); // league season stats exclude tournament rounds
 
       if (!rounds || rounds.length === 0) {
         setLoading(false);

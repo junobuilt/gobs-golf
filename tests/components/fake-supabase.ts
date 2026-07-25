@@ -93,6 +93,15 @@ export class FakeSupabase {
     }
     if (!anySeed.flight_teams) anySeed.flight_teams = [];
 
+    // Migration 031: `rounds.tournament_id` is a nullable column — NULL on every
+    // ordinary league round. Seeds written before the column existed omit it;
+    // default it to null here (mirrors the migration's backfill) so league reads
+    // that filter `.is("tournament_id", null)` still see them. Tests exercising
+    // tournament isolation set tournament_id explicitly and are unaffected.
+    for (const r of (this.data.rounds ?? [])) {
+      if (r.tournament_id === undefined) r.tournament_id = null;
+    }
+
     for (const t of Object.keys(this.data)) {
       const rows = (this.data as any)[t] as any[];
       const maxId = rows.reduce((m, r) => (typeof r.id === "number" && r.id > m ? r.id : m), 0);
@@ -250,7 +259,10 @@ class QueryBuilder<Row = any> {
     }
     if (this.isFilter) {
       const [c, v] = this.isFilter;
-      out = out.filter(r => r[c] === v);
+      // Real Postgres `col IS NULL` is true for a NULL column. Rows inserted
+      // mid-test (or seeds) may simply omit a nullable column, leaving it
+      // `undefined`; treat that as NULL so `.is(col, null)` matches it.
+      out = v === null ? out.filter(r => r[c] == null) : out.filter(r => r[c] === v);
     }
     for (const [c, v] of this.gtFilters) out = out.filter(r => r[c] > v);
     return out;

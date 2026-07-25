@@ -159,7 +159,8 @@ export async function loadWinningsHistory(
         "was_overridden, original_amount, override_reason, " +
         "rounds!inner ( played_on, format, season_id, is_complete, buy_in )",
     )
-    .eq("rounds.is_complete", true);
+    .eq("rounds.is_complete", true)
+    .is("rounds.tournament_id", null); // Money By Round excludes tournament rounds
   if (seasonId != null) {
     q = q.eq("rounds.season_id", seasonId);
   }

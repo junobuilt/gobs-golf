@@ -172,6 +172,9 @@ export default function HomePage() {
       .from("rounds")
       .select("id, played_on, is_complete")
       .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
+      // Tournament rounds (tournament_id NOT NULL) never surface on league
+      // screens; chains as AND with the .or() date predicate.
+      .is("tournament_id", null)
       .order("played_on", { ascending: false });
 
     if (rounds) {
