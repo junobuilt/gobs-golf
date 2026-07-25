@@ -10,6 +10,84 @@ export type SessionFormat = "greensomes" | "four_ball_match" | "singles_match";
 
 export type Side = "a" | "b";
 
+// ── DB row types (migration 031) ────────────────────────────────────────────
+// Plain shapes for the tournament tables. The data layer (queries.ts /
+// mutations.ts) reads/writes these; the admin Tournament tab renders them.
+
+export interface Tournament {
+  id: number;
+  name: string;
+  season_id: number | null;
+  side_a_name: string;
+  side_b_name: string;
+  holder_side: Side | null;
+  started_on: string; // ISO date
+  ended_on: string | null;
+  is_active: boolean;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TournamentPlayer {
+  id: number;
+  tournament_id: number;
+  player_id: number;
+  side: Side;
+  created_at?: string;
+}
+
+// The embedded-player shape (TD2 pattern): a tournament_players row joined to
+// its `players` record so an already-assigned player still renders even after
+// being deactivated. `players` may arrive as an object or a one-element array
+// (PostgREST embed) — callers apply the array-vs-object guard.
+export interface TournamentPlayerJoined extends TournamentPlayer {
+  players:
+    | {
+        id: number;
+        full_name: string;
+        display_name: string | null;
+        handicap_index: number | null;
+        is_active: boolean;
+      }
+    | Array<{
+        id: number;
+        full_name: string;
+        display_name: string | null;
+        handicap_index: number | null;
+        is_active: boolean;
+      }>
+    | null;
+}
+
+export interface TournamentSession {
+  id: number;
+  tournament_id: number;
+  round_id: number | null;
+  day_number: number;
+  name: string;
+  format: SessionFormat;
+  played_on: string | null;
+  is_locked: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// One batched read for the admin tab.
+export interface TournamentWithSessions {
+  tournament: Tournament;
+  players: TournamentPlayerJoined[];
+  sessions: TournamentSession[];
+}
+
+// Whether a session's backing round carries real scores (blocks delete) and/or
+// pairings (does NOT block — pairings are rebuildable). See §5.1.
+export interface SessionRoundStatus {
+  roundId: number | null;
+  hasScores: boolean; // scores OR team_scores present
+  hasPairings: boolean; // round_players present
+}
+
 // A hole's outcome. `null` = UNRESOLVED: at least one side has no score present
 // on that hole. A missing score is NEVER a loss and NEVER par.
 export type HoleOutcome = "side_a" | "side_b" | "halved" | null;

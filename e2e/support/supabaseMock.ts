@@ -46,6 +46,10 @@ export interface SeedData {
   // so a backup-PIN status can be rendered without minting first.
   admin_backup_pin?: Row[];
   admin_backup_audit?: Row[];
+  // Tournament tables (migration 031).
+  tournaments?: Row[];
+  tournament_players?: Row[];
+  tournament_sessions?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -68,6 +72,10 @@ const KNOWN_TABLES = [
   // Backup Admin PIN (migration 028).
   "admin_backup_pin",
   "admin_backup_audit",
+  // Tournament tables (migration 031).
+  "tournaments",
+  "tournament_players",
+  "tournament_sessions",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */

@@ -34,6 +34,11 @@ export interface FakeData {
   // multi-flight / flight_teams routing.
   flights?: any[];
   flight_teams?: any[];
+  // Tournament tables (migration 031). Optional; seed as [] to exercise the
+  // tournament data layer (inserts need the array present to push into).
+  tournaments?: any[];
+  tournament_players?: any[];
+  tournament_sessions?: any[];
 }
 
 export type WriteOp =
@@ -44,9 +49,14 @@ export type WriteOp =
 export interface FakeOptions {
   // Artificial delay applied to every insert/update before it resolves.
   writeDelayMs?: number;
-  // If set, the supplied function decides whether a given write should fail
-  // (and reject the promise). Called once per insert/update, in order.
-  failWrite?: (op: WriteOp, callIndex: number) => boolean;
+  // If set, the supplied function decides whether a given write should fail.
+  // Called once per insert/update, in order. Return `true` for a generic
+  // failure, or an error object (e.g. `{ code: "23505", message: "…" }`) to
+  // surface a specific Postgres error — needed to exercise code that branches on
+  // `error.code` (e.g. ensureTournamentRound's 23505 → LeagueRoundOwnsDateError).
+  // Returning `false`/`undefined` lets the write succeed. Backward-compatible:
+  // existing boolean-returning callers are unchanged.
+  failWrite?: (op: WriteOp, callIndex: number) => boolean | { code?: string; message?: string };
   // D.1: response for supabase.rpc('finalize_round_with_blind_draws', ...).
   // Defaults to { data: 'finalized', error: null } so legacy tests that
   // walked the End-Round flow continue to redirect to /summary.
@@ -284,8 +294,9 @@ class QueryBuilder<Row = any> {
       const op: WriteOp = { type: "insert", table: this.table, payload: created };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       tableRows.push(...created);
       return { data: this.terminal === "list" ? created : created[0], error: null };
@@ -302,8 +313,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const updated: any[] = [];
       for (const r of filtered) {
@@ -326,8 +338,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const removeSet = new Set(toRemove);
       // Cascade: child rows referencing a deleted flight by flight_id go too,
@@ -357,8 +370,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const resultRows: any[] = [];
       const cols = this.upsertConflictCols;
@@ -406,6 +420,15 @@ class QueryBuilder<Row = any> {
       rows = rows.map(rp => {
         const player = this.fake.data.players.find(p => p.id === rp.player_id);
         return { ...rp, players: player ?? null };
+      });
+    }
+
+    // tournament_players -> players (TD2 embed). Mirrors the round_players
+    // branch so getTournamentPlayers resolves the joined player record.
+    if (this.table === "tournament_players" && /players\s*\(/.test(this.selectStr)) {
+      rows = rows.map(tp => {
+        const player = this.fake.data.players.find(p => p.id === tp.player_id);
+        return { ...tp, players: player ?? null };
       });
     }
 
