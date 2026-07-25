@@ -88,7 +88,7 @@ describe("admin Tournament tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add" }));
 
     expect(
-      await screen.findByText(/A league round already exists on 2026-08-01\. Delete it or pick another date\./),
+      await screen.findByText(/A league round already exists on Sat, Aug 1, 2026\. Delete it or pick another date\./),
     ).toBeTruthy();
   });
 

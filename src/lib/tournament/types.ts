@@ -80,6 +80,27 @@ export interface TournamentWithSessions {
   sessions: TournamentSession[];
 }
 
+// A persisted tournament_matches row (migration 031). A match pairs two
+// team_numbers inside the session's round: greensomes/four-ball = one match of
+// 2-v-2 (each side is a team_number); singles = a 1-v-1 pairing (each player is
+// a team_number of one), two matches per group of four.
+export interface TournamentMatch {
+  id: number;
+  tournament_id: number;
+  session_id: number;
+  match_number: number;
+  side_a_team_number: number;
+  side_b_team_number: number;
+  status: MatchStatus;
+  result: MatchResult;
+  result_source: "engine" | "admin";
+  closed_out_hole: number | null;
+  scorer_label: string | null;
+  admin_note: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // Whether a session's backing round carries real scores (blocks delete) and/or
 // pairings (does NOT block — pairings are rebuildable). See §5.1.
 export interface SessionRoundStatus {
@@ -189,4 +210,51 @@ export interface Standings {
   banked: SidePoints; // decided matches + adjustments
   projected: SidePoints; // banked + every live match counted as it currently stands
   inPlay: StandingsInPlayEntry[];
+}
+
+// ── Canonical loaded match (Phase 2.2) ──────────────────────────────────────
+// The single assembled view of a match. Every downstream surface (pairings
+// view, the Phase-3 scorecard, the Phase-4 dashboard) reads THIS — nothing
+// recomputes strokes / nets / state / points. All the derived numbers here come
+// from matchplay.ts; loadMatch.ts only assembles inputs and calls it.
+
+export interface LoadedMatchPlayer {
+  playerId: number;
+  displayName: string;
+  handicapIndexSnapshot: number | null; // round_players.handicap_index_snapshot
+  courseHandicap: number | null; // round_players.course_handicap (raw; PH = CH at 100%)
+  matchStrokes: number; // computeMatchStrokes — strokes this unit gives/gets in the match
+}
+
+export interface LoadedMatchSide {
+  side: Side;
+  displayName: string; // tournaments.side_a_name / side_b_name
+  teamNumber: number;
+  players: LoadedMatchPlayer[];
+  // Greensomes only: the pair collapsed to one handicap + its match strokes.
+  // null for singles/four-ball (their strokes are per-player above).
+  collapsedHandicap: number | null;
+  sideMatchStrokes: number | null;
+}
+
+export interface LoadedMatch {
+  match: TournamentMatch;
+  session: {
+    id: number;
+    format: SessionFormat;
+    name: string;
+    dayNumber: number;
+    playedOn: string | null;
+    roundId: number | null;
+  };
+  tournament: { id: number; sideAName: string; sideBName: string };
+  sideA: LoadedMatchSide;
+  sideB: LoadedMatchSide;
+  holes: HoleMeta[]; // the match's single allocation set (one tee)
+  state: MatchState; // computeMatchState
+  resolved: ResolvedResult; // resolveMatchResult (admin override precedence)
+  // §5: a side is short its full complement (e.g. a group of three, or a singles
+  // opponent not yet chosen). The match row still exists so an admin override —
+  // the envelope-rule halved — can land on it. Never blocks; UI flags it amber.
+  isIncomplete: boolean;
 }

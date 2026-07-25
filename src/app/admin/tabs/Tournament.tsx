@@ -519,7 +519,7 @@ export default function Tournament({ allPlayers }: Props) {
               await load();
             } catch (err) {
               if (err instanceof LeagueRoundOwnsDateError) {
-                setDayError(`A league round already exists on ${input.playedOn}. Delete it or pick another date.`);
+                setDayError(`A league round already exists on ${formatDisplayDate(input.playedOn)}. Delete it or pick another date.`);
               } else {
                 setDayError("Couldn't add the day. Please try again.");
               }

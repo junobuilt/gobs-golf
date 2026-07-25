@@ -39,6 +39,7 @@ export interface FakeData {
   tournaments?: any[];
   tournament_players?: any[];
   tournament_sessions?: any[];
+  tournament_matches?: any[];
 }
 
 export type WriteOp =
@@ -127,9 +128,16 @@ export class FakeSupabase {
     this.writes = [];
     this.rpcCalls = [];
     this.writeCallCounter = 0;
+    this.fromCalls = [];
   }
 
+  // Every from(table) is logged (reads AND writes) so tests can assert batching —
+  // e.g. that loadSessionMatches issues ONE `scores` read regardless of match
+  // count. Additive; existing tests ignore it.
+  fromCalls: string[] = [];
+
   from(table: string) {
+    this.fromCalls.push(table);
     return new QueryBuilder(this, table);
   }
 
