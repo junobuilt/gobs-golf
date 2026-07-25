@@ -13,7 +13,11 @@ vi.mock("@/lib/supabase", () => ({
     return fakeRef.current;
   },
 }));
-vi.mock("@/lib/date", () => ({ todayLocal: () => "2026-08-01", yesterdayLocal: () => "2026-07-31" }));
+// Keep the real addDaysISO / formatDisplayDate; only pin "today"/"yesterday".
+vi.mock("@/lib/date", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/date")>();
+  return { ...actual, todayLocal: () => "2026-08-01", yesterdayLocal: () => "2026-07-31" };
+});
 
 import { FakeSupabase } from "./fake-supabase";
 import Tournament from "@/app/admin/tabs/Tournament";
@@ -86,5 +90,34 @@ describe("admin Tournament tab", () => {
     expect(
       await screen.findByText(/A league round already exists on 2026-08-01\. Delete it or pick another date\./),
     ).toBeTruthy();
+  });
+
+  // §1 — a mutation that rejects must never leave the screen unchanged.
+  it("a failed side assignment surfaces a visible error banner", async () => {
+    fakeRef.current.setOptions({
+      failWrite: (op: any) => (op.table === "tournament_players" ? { message: "boom" } : false),
+    });
+
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("2026 Cup");
+
+    const alRow = screen.getByText("Al").closest("div")!.parentElement as HTMLElement;
+    fireEvent.click(within(alRow).getByRole("button", { name: "USA" }));
+
+    expect(await screen.findByText(/Couldn't save that side assignment/)).toBeTruthy();
+  });
+
+  // §4 — a session whose round is missing must be visibly flagged.
+  it("a day with no round shows the amber 'No round' warning", async () => {
+    fakeRef.current = new FakeSupabase({
+      ...seed(),
+      tournament_sessions: [
+        { id: 5, tournament_id: 10, round_id: null, day_number: 1, name: "Day 1 — Greensomes", format: "greensomes", played_on: "2026-08-01", is_locked: false },
+      ],
+    });
+
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1 — Greensomes");
+    expect(screen.getByText(/No round — cannot hold scores/)).toBeTruthy();
   });
 });

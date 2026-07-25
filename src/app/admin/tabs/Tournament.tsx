@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DangerModal from "../components/DangerModal";
 import type { Player } from "../page";
-import { todayLocal } from "@/lib/date";
+import { formatDisplayDate, todayLocal } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
 import {
   getActiveTournament,
@@ -12,11 +12,15 @@ import {
 } from "@/lib/tournament/queries";
 import {
   createSession,
+  createStandardDays,
   createTournament,
   deleteSession,
+  editSession,
   endTournament,
+  type FailedStandardDay,
   LeagueRoundOwnsDateError,
   setPlayerSide,
+  TournamentDayDateTakenError,
 } from "@/lib/tournament/mutations";
 import type {
   SessionFormat,
@@ -113,11 +117,17 @@ export default function Tournament({ allPlayers }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [addDayOpen, setAddDayOpen] = useState(false);
   const [dayError, setDayError] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<TournamentSession | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
     { session: TournamentSession; status: SessionRoundStatus } | null
   >(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
+  // §1 — a mutation that fails must never leave the screen unchanged. Any action
+  // handler that throws sets this; it renders as a dismissible red banner.
+  const [actionError, setActionError] = useState<string | null>(null);
+  // §3 — days that couldn't be auto-created because a league round owns the date.
+  const [dayCollisions, setDayCollisions] = useState<FailedStandardDay[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -176,6 +186,7 @@ export default function Tournament({ allPlayers }: Props) {
     try {
       await setPlayerSide(tournament.id, playerId, side);
     } catch {
+      setActionError("Couldn't save that side assignment. Please try again.");
       await load(); // reconcile on failure
     }
   };
@@ -197,6 +208,8 @@ export default function Tournament({ allPlayers }: Props) {
     setDeleteTarget(null);
     try {
       await deleteSession(target.session.id);
+    } catch {
+      setActionError(`Couldn't remove ${target.session.name}. Please try again.`);
     } finally {
       await load();
     }
@@ -226,8 +239,9 @@ export default function Tournament({ allPlayers }: Props) {
         {createOpen && (
           <CreateTournamentModal
             onCancel={() => setCreateOpen(false)}
-            onCreated={async () => {
+            onCreated={async (failedDates) => {
               setCreateOpen(false);
+              setDayCollisions(failedDates);
               await load();
             }}
           />
@@ -241,11 +255,77 @@ export default function Tournament({ allPlayers }: Props) {
   // ── Active tournament ─────────────────────────────────────────────────────
   return (
     <div style={wrap}>
+      {/* §1 — mutation failure banner (dismissible). */}
+      {actionError && (
+        <div
+          role="alert"
+          style={{
+            background: "#fdecec",
+            border: `1px solid ${C.red}`,
+            color: C.red,
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            fontSize: "0.85rem",
+            fontWeight: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <span>{actionError}</span>
+          <button
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss"
+            style={{ background: "none", border: "none", color: C.red, fontWeight: 700, cursor: "pointer", fontSize: "1rem" }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* §3 — days that couldn't be auto-created (league round owns the date). */}
+      {dayCollisions.length > 0 && (
+        <div
+          role="alert"
+          style={{
+            background: C.amberBg,
+            border: `1px solid ${C.amber}`,
+            color: C.amber,
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            fontSize: "0.85rem",
+            fontWeight: 600,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <span>Some days couldn&apos;t be scheduled</span>
+            <button
+              onClick={() => setDayCollisions([])}
+              aria-label="Dismiss"
+              style={{ background: "none", border: "none", color: C.amber, fontWeight: 700, cursor: "pointer", fontSize: "1rem" }}
+            >
+              ✕
+            </button>
+          </div>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontWeight: 500 }}>
+            {dayCollisions.map((d) => (
+              <li key={d.date} style={{ marginTop: 2 }}>
+                {d.name} ({FORMAT_LABEL[d.format]}) couldn&apos;t be created — a league round already owns{" "}
+                {formatDisplayDate(d.date)}. Use Add Day to place it on another date.
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* A. Header */}
       <div style={cardStyle}>
         <div style={{ fontSize: "1.15rem", fontWeight: 700, color: C.navy }}>{tournament.name}</div>
         <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: 4 }}>
-          {tournament.side_a_name} vs {tournament.side_b_name} · started {tournament.started_on}
+          {tournament.side_a_name} vs {tournament.side_b_name} · started {formatDisplayDate(tournament.started_on)}
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
           <button
@@ -360,28 +440,68 @@ export default function Tournament({ allPlayers }: Props) {
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: C.navy, fontSize: "0.95rem" }}>{s.name}</div>
               <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: 2 }}>
-                {FORMAT_LABEL[s.format]} · {s.played_on ?? "no date"}
+                {FORMAT_LABEL[s.format]} · {s.played_on ? formatDisplayDate(s.played_on) : "no date"}
               </div>
-              <div style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: 4 }}>Pairings — coming next</div>
+              {s.round_id == null ? (
+                <div
+                  style={{
+                    background: C.amberBg,
+                    color: C.amber,
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    marginTop: 6,
+                    display: "inline-block",
+                  }}
+                >
+                  No round — cannot hold scores
+                </div>
+              ) : (
+                <div style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: 4 }}>Pairings — coming next</div>
+              )}
             </div>
-            <button
-              onClick={() => openDelete(s)}
-              style={{
-                minHeight: 44,
-                minWidth: 44,
-                padding: "0 12px",
-                borderRadius: 8,
-                border: `1.5px solid ${C.red}`,
-                background: "white",
-                color: C.red,
-                fontWeight: 600,
-                fontSize: "0.8rem",
-                cursor: "pointer",
-                fontFamily: FONT,
-              }}
-            >
-              Delete
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <button
+                onClick={() => {
+                  setDayError(null);
+                  setEditTarget(s);
+                }}
+                style={{
+                  minHeight: 44,
+                  minWidth: 64,
+                  padding: "0 12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${C.navy}`,
+                  background: "white",
+                  color: C.navy,
+                  fontWeight: 600,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  fontFamily: FONT,
+                }}
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => openDelete(s)}
+                style={{
+                  minHeight: 44,
+                  minWidth: 64,
+                  padding: "0 12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${C.red}`,
+                  background: "white",
+                  color: C.red,
+                  fontWeight: 600,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  fontFamily: FONT,
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -402,6 +522,37 @@ export default function Tournament({ allPlayers }: Props) {
                 setDayError(`A league round already exists on ${input.playedOn}. Delete it or pick another date.`);
               } else {
                 setDayError("Couldn't add the day. Please try again.");
+              }
+            }
+          }}
+        />
+      )}
+
+      {editTarget && (
+        <EditDayModal
+          session={editTarget}
+          errorText={dayError}
+          onCancel={() => {
+            setDayError(null);
+            setEditTarget(null);
+          }}
+          onSave={async (input) => {
+            setDayError(null);
+            try {
+              await editSession(editTarget, input);
+              setEditTarget(null);
+              await load();
+            } catch (err) {
+              if (err instanceof TournamentDayDateTakenError) {
+                setDayError(
+                  `Another tournament day is already on ${formatDisplayDate(input.playedOn)}. Pick a different date.`,
+                );
+              } else if (err instanceof LeagueRoundOwnsDateError) {
+                setDayError(
+                  `A league round already owns ${formatDisplayDate(input.playedOn)}. Delete it or pick another date.`,
+                );
+              } else {
+                setDayError("Couldn't save the day. Please try again.");
               }
             }
           }}
@@ -433,7 +584,11 @@ export default function Tournament({ allPlayers }: Props) {
           confirmLabel="End Tournament"
           onConfirm={async () => {
             setEndOpen(false);
-            await endTournament(tournament.id);
+            try {
+              await endTournament(tournament.id);
+            } catch {
+              setActionError("Couldn't end the tournament. Please try again.");
+            }
             await load();
           }}
           onCancel={() => setEndOpen(false)}
@@ -535,7 +690,7 @@ function CreateTournamentModal({
   onCreated,
 }: {
   onCancel: () => void;
-  onCreated: () => void;
+  onCreated: (failedDates: FailedStandardDay[]) => void;
 }) {
   const year = todayLocal().slice(0, 4);
   const [name, setName] = useState(`${year} GOBS Ryder Cup`);
@@ -550,8 +705,12 @@ function CreateTournamentModal({
     setSaving(true);
     setError(null);
     try {
-      await createTournament({ name: name.trim(), startedOn, sideAName: sideAName.trim(), sideBName: sideBName.trim(), holderSide });
-      onCreated();
+      const t = await createTournament({ name: name.trim(), startedOn, sideAName: sideAName.trim(), sideBName: sideBName.trim(), holderSide });
+      // Auto-create the three standard days (Greensomes / Four-ball / Singles)
+      // on consecutive dates. League-round collisions don't abort creation —
+      // the survivors are made and the blocked days surface as a banner (§3).
+      const { failed } = await createStandardDays(t.id, startedOn);
+      onCreated(failed);
     } catch {
       setSaving(false);
       setError("Couldn't create the tournament. A tournament may already be active.");
@@ -620,12 +779,11 @@ function AddDayModal({
   onCancel,
   onSave,
 }: {
-  nextDay: number;
+  nextDay: number; // day_number is derived (max existing + 1) — no user field (§3)
   errorText: string | null;
   onCancel: () => void;
   onSave: (input: { dayNumber: number; name: string; format: SessionFormat; playedOn: string }) => void;
 }) {
-  const [dayNumber, setDayNumber] = useState(nextDay);
   const [name, setName] = useState(`Day ${nextDay}`);
   const [format, setFormat] = useState<SessionFormat>("four_ball_match");
   const [playedOn, setPlayedOn] = useState(todayLocal());
@@ -635,22 +793,8 @@ function AddDayModal({
 
   return (
     <ModalShell title="Add Day">
-      <div style={{ display: "flex", gap: 10 }}>
-        <div style={{ width: 90 }}>
-          <div style={lbl}>Day #</div>
-          <input
-            style={inputStyle}
-            type="number"
-            min={1}
-            value={dayNumber}
-            onChange={(e) => setDayNumber(parseInt(e.target.value, 10) || nextDay)}
-          />
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>Name</div>
-          <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-      </div>
+      <div style={lbl}>Name</div>
+      <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
       <div style={lbl}>Format</div>
       <select style={inputStyle} value={format} onChange={(e) => setFormat(e.target.value as SessionFormat)}>
         {FORMAT_OPTIONS.map((f) => (
@@ -674,11 +818,67 @@ function AddDayModal({
           disabled={saving || !name.trim()}
           onClick={() => {
             setSaving(true);
-            onSave({ dayNumber, name: name.trim(), format, playedOn });
+            onSave({ dayNumber: nextDay, name: name.trim(), format, playedOn });
             setSaving(false);
           }}
         >
           Add
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function EditDayModal({
+  session,
+  errorText,
+  onCancel,
+  onSave,
+}: {
+  session: TournamentSession;
+  errorText: string | null;
+  onCancel: () => void;
+  onSave: (input: { name: string; format: SessionFormat; playedOn: string }) => void;
+}) {
+  const [name, setName] = useState(session.name);
+  const [format, setFormat] = useState<SessionFormat>(session.format);
+  const [playedOn, setPlayedOn] = useState(session.played_on ?? todayLocal());
+  const [saving, setSaving] = useState(false);
+
+  const lbl: React.CSSProperties = { fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "12px 0 4px" };
+
+  return (
+    <ModalShell title="Edit Day">
+      <div style={lbl}>Name</div>
+      <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
+      <div style={lbl}>Format</div>
+      <select style={inputStyle} value={format} onChange={(e) => setFormat(e.target.value as SessionFormat)}>
+        {FORMAT_OPTIONS.map((f) => (
+          <option key={f} value={f}>
+            {FORMAT_LABEL[f]}
+          </option>
+        ))}
+      </select>
+      <div style={lbl}>Date</div>
+      <input style={inputStyle} type="date" value={playedOn} onChange={(e) => setPlayedOn(e.target.value)} />
+      {errorText && <div style={{ color: C.red, fontSize: "0.82rem", marginTop: 12 }}>{errorText}</div>}
+      <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+        <button
+          style={{ ...primaryBtn, flex: 1, background: "white", color: C.navy, border: `1.5px solid ${C.border}` }}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          style={{ ...primaryBtn, flex: 1 }}
+          disabled={saving || !name.trim()}
+          onClick={() => {
+            setSaving(true);
+            onSave({ name: name.trim(), format, playedOn });
+            setSaving(false);
+          }}
+        >
+          Save
         </button>
       </div>
     </ModalShell>

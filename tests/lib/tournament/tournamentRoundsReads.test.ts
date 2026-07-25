@@ -35,8 +35,9 @@ function roundsStatements(file: string): string[] {
 describe("tournament data layer — rounds reads are intentionally .eq-filtered", () => {
   it("every from(\"rounds\") in mutations.ts is tournament-scoped, never NULL-filtered", () => {
     const stmts = roundsStatements("mutations.ts");
-    // ensureTournamentRound: lookup + 23505 re-fetch + insert; deleteSession: delete. = 4
-    expect(stmts.length).toBe(4);
+    // ensureTournamentRound: lookup + 23505 re-fetch + insert; deleteSession:
+    // delete; editSession: the date-move round update. = 5
+    expect(stmts.length).toBe(5);
     for (const s of stmts) {
       expect(s.includes("tournament_id")).toBe(true); // intentional tournament scope
       expect(s.includes('.is("tournament_id", null)')).toBe(false); // NOT a league read

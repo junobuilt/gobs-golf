@@ -7,7 +7,7 @@
 // accepted `.is`-vs-`.eq` scanner imprecision, logged as tech debt.)
 
 import { supabase } from "@/lib/supabase";
-import { todayLocal } from "@/lib/date";
+import { addDaysISO, todayLocal } from "@/lib/date";
 import { getSessionRoundStatus } from "./queries";
 import type { Side, SessionFormat, Tournament, TournamentSession } from "./types";
 
@@ -19,6 +19,18 @@ export class LeagueRoundOwnsDateError extends Error {
   constructor(public readonly date: string) {
     super(`ensureTournamentRound: a league round owns ${date}; no tournament round can be created`);
     this.name = "LeagueRoundOwnsDateError";
+  }
+}
+
+// A day's date can't be moved because ANOTHER day in the SAME tournament already
+// owns it (`tournament_sessions_tournament_date_unique`, migration 032). Distinct
+// from LeagueRoundOwnsDateError: that is a *league* round on the date; this is a
+// sibling tournament day. They need different admin copy (§3.1).
+export class TournamentDayDateTakenError extends Error {
+  readonly code = "tournament_day_date_taken";
+  constructor(public readonly date: string) {
+    super(`editSession: another tournament day already owns ${date}`);
+    this.name = "TournamentDayDateTakenError";
   }
 }
 
@@ -114,9 +126,23 @@ export async function updateTournament(
 }
 
 export async function endTournament(id: number): Promise<void> {
+  // ended_on must never predate started_on. Ending a not-yet-started tournament
+  // (today < started_on) records the start date instead of today. Migration 032
+  // relaxed the CHECK to accept ending such a tournament, but the written value
+  // must still be sane. Read started_on first.
+  const { data: row, error: readErr } = await supabase
+    .from("tournaments")
+    .select("started_on")
+    .eq("id", id)
+    .maybeSingle();
+  if (readErr) throw new Error("endTournament (read): " + readErr.message);
+  const startedOn = (row as { started_on: string } | null)?.started_on ?? null;
+  const today = todayLocal();
+  const endedOn = startedOn && today < startedOn ? startedOn : today;
+
   const { error } = await supabase
     .from("tournaments")
-    .update({ ended_on: todayLocal(), is_active: false })
+    .update({ ended_on: endedOn, is_active: false })
     .eq("id", id);
   if (error) throw new Error("endTournament: " + error.message);
 }
@@ -180,6 +206,115 @@ export async function updateSession(
 ): Promise<void> {
   const { error } = await supabase.from("tournament_sessions").update(patch).eq("id", id);
   if (error) throw new Error("updateSession: " + error.message);
+}
+
+// The three days this tournament always runs, in order. Auto-created on
+// tournament creation (§3) on consecutive dates from started_on.
+export const STANDARD_DAYS: ReadonlyArray<{ name: string; format: SessionFormat }> = [
+  { name: "Day 1 — Greensomes", format: "greensomes" },
+  { name: "Day 2 — Four-ball", format: "four_ball_match" },
+  { name: "Day 3 — Singles", format: "singles_match" },
+];
+
+export interface FailedStandardDay {
+  name: string;
+  format: SessionFormat;
+  date: string; // ISO
+}
+
+// Create the three standard days on CONSECUTIVE dates starting at startedOn. Each
+// day is independent: if one date collides with a LEAGUE round the others still
+// get created and the blocked day is returned in `failed` (name + format + date)
+// so the caller can surface a banner naming what couldn't be placed (§3). Any
+// non-collision error aborts (rethrows).
+export async function createStandardDays(
+  tournamentId: number,
+  startedOn: string,
+): Promise<{ created: TournamentSession[]; failed: FailedStandardDay[] }> {
+  const created: TournamentSession[] = [];
+  const failed: FailedStandardDay[] = [];
+  for (let i = 0; i < STANDARD_DAYS.length; i++) {
+    const spec = STANDARD_DAYS[i];
+    const playedOn = addDaysISO(startedOn, i);
+    try {
+      const session = await createSession({
+        tournamentId,
+        dayNumber: i + 1,
+        name: spec.name,
+        format: spec.format,
+        playedOn,
+      });
+      created.push(session);
+    } catch (err) {
+      if (err instanceof LeagueRoundOwnsDateError) {
+        failed.push({ name: spec.name, format: spec.format, date: playedOn });
+        continue;
+      }
+      throw err;
+    }
+  }
+  return { created, failed };
+}
+
+// Edit a day's name / format / date. When the date changes the underlying round
+// MOVES (never a second round) — and we let the two UNIQUE constraints classify a
+// collision rather than pre-checking (a pre-check is racy and redundant):
+//
+//   1. Move the session row first. A 23505 here means the target date is owned by
+//      another day in THIS tournament (tournament_sessions_tournament_date_unique)
+//      — nothing has moved yet, so throw TournamentDayDateTakenError clean.
+//   2. Move the round. A 23505 here means a LEAGUE round owns the date
+//      (rounds_played_on_unique). The session already moved in step 1, so REVERT
+//      it to origPlayedOn before throwing LeagueRoundOwnsDateError — otherwise the
+//      session and its round would sit on different dates (an invisible broken day).
+//   3. Apply name/format.
+export async function editSession(
+  session: Pick<TournamentSession, "id" | "tournament_id" | "round_id" | "played_on">,
+  patch: { name: string; format: SessionFormat; playedOn: string },
+): Promise<void> {
+  const dateChanged = patch.playedOn !== session.played_on;
+
+  if (dateChanged) {
+    const origPlayedOn = session.played_on;
+
+    // Step 1 — move the session row. 23505 ⇒ sibling tournament day owns the date.
+    const { error: sessErr } = await supabase
+      .from("tournament_sessions")
+      .update({ played_on: patch.playedOn })
+      .eq("id", session.id);
+    if (sessErr) {
+      if ((sessErr as { code?: string }).code === "23505") {
+        throw new TournamentDayDateTakenError(patch.playedOn);
+      }
+      throw new Error("editSession (session move): " + sessErr.message);
+    }
+
+    // Step 2 — move the round. 23505 ⇒ a league round owns the date; revert step 1.
+    if (session.round_id != null) {
+      const { error: roundErr } = await supabase
+        .from("rounds")
+        .update({ played_on: patch.playedOn })
+        .eq("id", session.round_id)
+        .eq("tournament_id", session.tournament_id);
+      if (roundErr) {
+        await supabase
+          .from("tournament_sessions")
+          .update({ played_on: origPlayedOn })
+          .eq("id", session.id);
+        if ((roundErr as { code?: string }).code === "23505") {
+          throw new LeagueRoundOwnsDateError(patch.playedOn);
+        }
+        throw new Error("editSession (round move): " + roundErr.message);
+      }
+    }
+  }
+
+  // Step 3 — name / format (and re-affirm played_on, harmless when unchanged).
+  await updateSession(session.id, {
+    name: patch.name,
+    format: patch.format,
+    played_on: patch.playedOn,
+  });
 }
 
 // Delete a day. Refuses when the round has real scores (§5.1); otherwise deletes

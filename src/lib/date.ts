@@ -17,3 +17,27 @@ export function yesterdayLocal(): string {
   d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+// Add `days` calendar days to an ISO date (YYYY-MM-DD) and return ISO. Uses UTC
+// arithmetic on the parsed components so it is timezone- and DST-safe (no local
+// Date rollover). `days` may be negative. Used to lay out a tournament's
+// consecutive playing days from its start date.
+export function addDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+
+// Human display for an ISO date: "Sat Jul 25, 2026". Single source of truth for
+// this format — the admin History tab (src/app/admin/tabs/History.tsx) imports
+// this rather than keeping its own copy, so the two never drift. The T12:00:00
+// anchor avoids a UTC-vs-local day rollover at the string's midnight.
+export function formatDisplayDate(iso: string): string {
+  return new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
