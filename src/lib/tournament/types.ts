@@ -57,6 +57,10 @@ export interface MatchState {
   result: MatchResult;
   closedOutHole: number | null; // the hole an EARLY closeout landed on; null if decided on 18
   margin: string | null; // "5&4" | "2 UP" | "AS"
+  // True when the match closed early AND at least one score exists on a hole
+  // past the closeout hole — those holes are ignored for state, but an admin
+  // surface can warn that extra scores were entered on an already-decided match.
+  scoredBeyondCloseout: boolean;
 }
 
 // A persisted match row's result fields (from `tournament_matches`).

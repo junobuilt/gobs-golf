@@ -162,27 +162,51 @@ export function computeMatchState(input: MatchInput): MatchState {
   }
   const firstUnresolvedHole = thru >= total ? null : thru + 1;
 
-  // Points + lead computed THROUGH `thru` only.
-  let wonA = 0;
-  let wonB = 0;
-  let halved = 0;
-  for (let i = 0; i < thru; i++) {
-    const o = holeOutcomes[i];
-    if (o === "side_a") wonA++;
-    else if (o === "side_b") wonB++;
-    else if (o === "halved") halved++;
+  // Scan holes 1..thru for the EARLIEST hole at which the closeout condition
+  // holds (lead strictly EXCEEDS holes remaining — a lead equal to remaining is
+  // dormie, NOT closed), then FREEZE all state at that hole. Every later hole is
+  // ignored for lead / points / margin, even if a score was entered — so a match
+  // decided 5&4 at 14 with 15-18 also filled in still records 5&4, not "1 UP".
+  // The gap rule already bounded `thru` to consecutively-resolved holes, so the
+  // scan never crosses a gap.
+  let cumA = 0;
+  let cumB = 0;
+  let cumHalved = 0;
+  let closeoutHole: number | null = null; // 1-indexed
+  for (let h = 1; h <= thru; h++) {
+    const o = holeOutcomes[h - 1];
+    if (o === "side_a") cumA++;
+    else if (o === "side_b") cumB++;
+    else cumHalved++;
+    if (Math.abs(cumA - cumB) > total - h) {
+      closeoutHole = h;
+      break; // freeze — cumA/cumB/cumHalved are now as of the closeout hole
+    }
   }
-  const pointsA = wonA + halved * 0.5;
-  const pointsB = wonB + halved * 0.5;
-  const holesUp = wonA - wonB;
+  // With no closeout the loop ran the full `thru`, so the cumulatives already
+  // reflect the current standing through `thru`.
+  const effectiveThru = closeoutHole ?? thru;
 
-  const remaining = total - thru;
+  const pointsA = cumA + cumHalved * 0.5;
+  const pointsB = cumB + cumHalved * 0.5;
+  const holesUp = cumA - cumB;
   const lead = Math.abs(holesUp);
-  // Closes when the lead EXCEEDS the holes remaining (strictly > — a lead equal
-  // to remaining is dormie, NOT closed: the trailing side can still halve).
-  const closed = thru > 0 && lead > remaining;
-  const closedEarly = closed && thru < total;
-  const complete = closed || thru === total;
+  const remaining = total - effectiveThru;
+
+  // "Extra scores" = any score present on a hole AFTER an early closeout.
+  let scoredBeyondCloseout = false;
+  if (closeoutHole !== null && closeoutHole < total) {
+    for (let i = closeoutHole; i < total; i++) {
+      // hole (i+1) > closeoutHole; a[]/b[] are the per-hole side nets
+      if (a[i] != null || b[i] != null) {
+        scoredBeyondCloseout = true;
+        break;
+      }
+    }
+  }
+
+  const closedEarly = closeoutHole !== null && closeoutHole < total;
+  const complete = closeoutHole !== null || thru === total;
 
   let status: MatchStatus;
   let result: MatchResult;
@@ -197,7 +221,7 @@ export function computeMatchState(input: MatchInput): MatchState {
   } else {
     status = "complete";
     result = holesUp > 0 ? "side_a" : holesUp < 0 ? "side_b" : "halved";
-    closedOutHole = closedEarly ? thru : null;
+    closedOutHole = closedEarly ? closeoutHole : null;
     // Closed early → "{lead}&{remaining}". Decided on 18 → "{lead} UP" (or "AS").
     margin = closedEarly
       ? `${lead}&${remaining}`
@@ -217,6 +241,7 @@ export function computeMatchState(input: MatchInput): MatchState {
     result,
     closedOutHole,
     margin,
+    scoredBeyondCloseout,
   };
 }
 

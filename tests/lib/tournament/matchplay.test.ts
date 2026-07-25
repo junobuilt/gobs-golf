@@ -270,6 +270,61 @@ describe("gap handling — a missing hole stops the count (§2.4)", () => {
   });
 });
 
+// ── closeout freezes at the closeout hole, ignoring later scores ────────────
+const range = (a: number, b: number): number[] =>
+  Array.from({ length: b - a + 1 }, (_, i) => a + i);
+
+describe("closeout freezes state at the closeout hole (scoredBeyondCloseout)", () => {
+  it("(a) closes 5&4 at 14 even when 15-18 are ALSO scored; points frozen", () => {
+    // A wins 1-5, halves 6-18 (all 18 entered). Closeout at hole 14 (5 up, 4 to
+    // play). Holes 15-18 are ignored: margin 5&4, and points freeze at 14 —
+    // pointsA = 5 wins + 9 halves(6-14)/2 = 9.5 (NOT 11.5 with 15-18 counted).
+    const st = computeMatchState(scratchSingles({ aWins: [1, 2, 3, 4, 5], halves: range(6, 18) }));
+    expect(st.result).toBe("side_a");
+    expect(st.margin).toBe("5&4");
+    expect(st.closedOutHole).toBe(14);
+    expect(st.holesUp).toBe(5);
+    expect(st.pointsA).toBe(9.5);
+    expect(st.pointsB).toBe(4.5);
+    expect(st.scoredBeyondCloseout).toBe(true);
+  });
+
+  it("(b) REGRESSION: the same match with 15-18 blank is unchanged (no extra scores)", () => {
+    const st = computeMatchState(scratchSingles({ aWins: [1, 2, 3, 4, 5], halves: range(6, 14) }));
+    expect(st.margin).toBe("5&4");
+    expect(st.closedOutHole).toBe(14);
+    expect(st.thru).toBe(14);
+    expect(st.holesUp).toBe(5);
+    expect(st.pointsA).toBe(9.5);
+    expect(st.scoredBeyondCloseout).toBe(false);
+  });
+
+  it("(c) dormie then halved-out (B wins 18) → AS, never closes early", () => {
+    // A up 1 through 17 (dormie: lead 1 == 1 to play), B wins 18 → all square.
+    const st = computeMatchState(scratchSingles({ aWins: [1], halves: range(2, 17), bWins: [18] }));
+    expect(st.thru).toBe(18);
+    expect(st.result).toBe("halved");
+    expect(st.margin).toBe("AS");
+    expect(st.closedOutHole).toBe(null);
+    expect(st.scoredBeyondCloseout).toBe(false);
+  });
+
+  it("(d) correcting an early hole moves the closeout later and recomputes", () => {
+    // Before: A wins 1-5, halves 6-18 → closes 5&4 at 14.
+    const before = computeMatchState(scratchSingles({ aWins: [1, 2, 3, 4, 5], halves: range(6, 18) }));
+    expect(before.closedOutHole).toBe(14);
+    expect(before.margin).toBe("5&4");
+
+    // Correct hole 1 from an A win to a B win → A now only 3 up; the closeout
+    // slides to hole 16 (3 up, 2 to play).
+    const after = computeMatchState(scratchSingles({ aWins: [2, 3, 4, 5], bWins: [1], halves: range(6, 18) }));
+    expect(after.result).toBe("side_a");
+    expect(after.closedOutHole).toBe(16);
+    expect(after.margin).toBe("3&2");
+    expect(after.holesUp).toBe(3);
+  });
+});
+
 // ── §3.7 / §3.9 — admin override precedence ─────────────────────────────────
 describe("admin override beats the engine (§2.7)", () => {
   it("admin result wins over a contradicting engine result", () => {
