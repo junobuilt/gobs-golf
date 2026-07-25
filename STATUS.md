@@ -2,8 +2,10 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-24 (Tournament round isolation — `tournament_id IS NULL` on every league read; branch `tournament`)
-**Session purpose:** Tournament track — commit migration 031 (tournament foundation, ALREADY applied to prod) as a repo file, and fence tournament rounds off every league-facing surface. Added `tournament_id IS NULL` to every league read of `rounds` (homepage, leaderboard, history list + admin in-progress, RoundSetup loadRoundForDate + create pre-check, played-with, player stats/profile, Money By Round/Player, season stats + End-Season gates, HI-cascade). PRESERVED: by-id surfaces (scorecard, team-card, `/summary` engine, finalize/reopen) and the `ensureRoundShell` create path (still writes `tournament_id` NULL). New typed sentinel **`TournamentOwnsDateError`** when a create collides with a tournament-owned date. Guarded by loader tests + negative controls AND a source-scanning invariant (`roundsQueryGuard`) that fails on any future unfiltered `from("rounds")`. 1029/1029 vitest, tsc clean, 50/50 Playwright green. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+**Last updated:** 2026-07-24 (Tournament Phase 2.1 — data layer + admin setup tab; also: match-play engine; branch `tournament`)
+**Session purpose:** Tournament track, Phase 2.1. New pure data layer `src/lib/tournament/queries.ts` + `mutations.ts` and a new admin **Tournament** tab (create a Ryder Cup tournament, assign players to USA/Canada sides with HI shown + uneven-side amber warning, add playing days). Each day creates a tournament-owned `rounds` row via **`ensureTournamentRound`** (`tournament_id` set, `season_id`/`format` NULL, no flight); a league-date collision raises typed **`LeagueRoundOwnsDateError`** (friendly copy in the UI). Session delete removes its EMPTY round (empty = no `scores`/`team_scores`; pairings/`round_players` don't block — cascade-cleaned); blocks once real scores exist. `endTournament` soft-ends (no cascade). **`roundsQueryGuard` needed NO allowlist edits** — the scanner treats any `from("rounds")` statement mentioning `tournament_id` as guarded (accepted `.is`/`.eq` imprecision, logged as in-code tech debt). Earlier this same day: committed migration 031, shipped league-isolation filter, and built the pure **match-play engine** (`matchplay.ts`, incl. earliest-closeout freeze). 1071/1071 vitest, tsc clean, 51/51 Playwright. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (now also folds 031).**
+
+*Earlier today (2026-07-24):* Tournament round isolation (`tournament_id IS NULL` on every league read) + match-play engine (`matchplay.ts`) — see sections below.
 
 *Prior session (2026-06-25):* Submit-transition team-total clobber fix — the "−22" bug — see the section below.
 
@@ -16,6 +18,57 @@
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
 
 *Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+
+---
+
+## 2026-07-24 (Tournament Phase 2.1 — data layer + admin setup tab; branch `tournament`)
+
+### Where we left off
+
+Tournament track, Phase 2.1 — the data layer and admin setup surface. Pure logic + one admin tab; NO scorecard, pairings builder, or dashboard (those are 2.2+).
+
+- **New data layer.** `src/lib/tournament/queries.ts` (getActiveTournament, getTournamentById, getTournamentPlayers [TD2 `players` embed], getTournamentSessions, getTournamentWithSessions [batched], getSessionRoundStatus) + `src/lib/tournament/mutations.ts` (createTournament, updateTournament, endTournament [soft: `ended_on` + `is_active=false`, NO row delete → no `ON DELETE SET NULL` cascade], setPlayerSide [upsert on `(tournament_id,player_id)`; null removes], createSession, updateSession, deleteSession, **ensureTournamentRound**).
+- **`ensureTournamentRound` is NOT `ensureRoundShell`** (which is league-scoped + throws `TournamentOwnsDateError`). It find-or-creates a round with `tournament_id` set, `season_id`/`format` NULL, `format_config {}`, and **no primary flight**. On the `rounds_played_on_unique` collision (a league round owns the date) → typed **`LeagueRoundOwnsDateError`** (`code "league_round_owns_date"`); the tab renders friendly copy. (`buy_in` defaults to 10 from the column — harmless, every payout loader filters `tournament_id IS NULL`.)
+- **New admin Tournament tab** (`src/app/admin/tabs/Tournament.tsx`, registered in `admin/page.tsx`). Empty state → Create (name default `"{year} GOBS Ryder Cup"`, USA/Canada, holder defaults to **B**). Active view: header + End Tournament (DangerModal); Sides — every active player (∪ assigned-but-inactive via the TD2 embed) as ≥44px tap-target rows with HI, live counter, amber uneven-sides **warning (never blocks)**; Days — cards + Add Day (Greensomes/Four-ball/Singles), Pairings link disabled ("coming next").
+- **§5.1 session delete (locked decision).** "Empty" is judged on `scores` AND `team_scores` ONLY — **not `round_players`** (pairings are rebuildable the night before; `round_players.round_id` is `ON DELETE CASCADE`). Delete-if-empty removes the session then the round (round delete scoped `.eq("tournament_id")` — never a league round); **blocks** once real scores exist. DangerModal names the loss ("…and its pairings.").
+
+### DB changes
+
+- **None.** Migration 031 (already in prod, committed earlier today) is the substrate; this session adds no migrations. `supabase/schema.sql` still lags (carryover TD37 `db:backup` will fold 027/028/030/031).
+
+### Tests / verification
+
+- **1071/1071 vitest** (+15), **tsc clean**, **51/51 Playwright** (+1).
+- New: `tests/lib/tournament/dataLayer.test.ts` (create→assign→add-day flow; round is tournament-owned), `ensureTournamentRound.test.ts` (existing/create/collision→`LeagueRoundOwnsDateError` + concurrent-insert negative control), `isolation.test.ts` (a FINALIZED tournament round stays off `loadRoundsList` + homepage, with negative control — proves Phase 1.1 holds under real tournament data), `tournamentRoundsReads.test.ts` (documentation-as-test: the tournament `rounds` touches are intentionally `.eq("tournament_id", …)`-filtered), `admin-tournament.test.tsx` (side write + uneven warn + friendly collision copy), `e2e/tournament.spec.ts`.
+- **`roundsQueryGuard`: NO allowlist entries added** — the scanner treats any `from("rounds")` statement mentioning `tournament_id` as guarded, so every tournament touch is auto-guarded (adding entries would trip the stale-entry test). The `.is`-vs-`.eq` imprecision is accepted and logged as in-code tech debt (NOT tightened this session, per decision).
+- **Test-infra (additive, backward-compatible):** `FakeSupabase.failWrite` may now return a coded error `{ code, message }` (to exercise 23505) + a `tournament_players→players` embed + `tournament_*` `FakeData` keys; e2e `supabaseMock` learned the three tournament tables.
+
+### Considered but not changed (confession)
+
+- **No allowlist edits to `roundsQueryGuard`** and the scanner's rule is unweakened — deliberate (see above).
+- **Tournament hard-delete / teardown path** is unbuilt (out of scope). `endTournament` only soft-ends, so the dangerous `ON DELETE SET NULL` → "tournament round becomes a league round" cascade cannot fire this phase.
+- **Greensomes 60/40** still pending Dad — one-line switch behind `GREENSOMES_TEAM_HANDICAP_METHOD` in `matchplay.ts`.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now also folds 031) → TD37.
+
+### Tomorrow's priority
+
+- Phase 2.2: pairings builder + `tournament_matches` creation, then the match-play scorecard (which consumes `matchplay.ts`).
+
+---
+
+## 2026-07-24 (Tournament match-play engine — pure logic; branch `tournament`)
+
+### Where we left off
+
+Pure match-play scoring engine, no UI/queries. `src/lib/tournament/matchplay.ts` + `types.ts`.
+
+- **Match strokes (§2.1):** everyone plays off the LOWEST playing handicap among the match's **units** (players for singles/four-ball, collapsed sides for greensomes), clamped at 0.
+- **Per-hole side value:** greensomes = teamGross − team strokes (team handicap via `greensomesTeamHandicap`, gated by `GREENSOMES_TEAM_HANDICAP_METHOD`, reusing `computeTeamHandicap`'s alternate_shot path); four-ball = best `matchNet` of the side's two players (100% CH — deliberate league departure from USGA 90%); singles = the player's `matchNet` (100% CH — USGA-prescribed, not a departure). Derived value named **`matchNet`**, never `net`.
+- **`computeMatchState`:** holeOutcomes, per-hole points, holesUp, `thru` (consecutive from hole 1 — a gap stops the count), firstUnresolvedHole, status/result/margin/closedOutHole.
+- **Closeout freeze (commit `67ee0c1`, ambiguity-#2 follow-up):** scans holes 1..`thru` for the EARLIEST hole where the lead strictly exceeds holes remaining (dormie does NOT close) and **freezes all state at that hole** — a match decided 5&4 at 14 with 15-18 also filled still records 5&4, not "1 UP". Added `scoredBeyondCloseout` to the state so an admin surface can flag extra scores.
+- **Admin override precedence:** an admin-sourced non-null result wins unconditionally over the engine; `engineResult` returned alongside.
+- **Standings:** banked / in-play / projected, adjustments folded in; nothing stored, always derived.
+- Golden tests: `tests/lib/tournament/matchplay.test.ts` — the §2.1 example, per-format stroke-flips, all five closeout boundaries (dormie must NOT close), the gap case + fill-the-gap negative control, the scored-beyond-closeout freeze case, admin override beating a contradicting engine and an empty scorecard, standings.
 
 ---
 
