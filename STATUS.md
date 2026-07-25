@@ -2,22 +2,52 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-24 (Tournament Phase 2.1 — data layer + admin setup tab; also: match-play engine; branch `tournament`)
-**Session purpose:** Tournament track, Phase 2.1. New pure data layer `src/lib/tournament/queries.ts` + `mutations.ts` and a new admin **Tournament** tab (create a Ryder Cup tournament, assign players to USA/Canada sides with HI shown + uneven-side amber warning, add playing days). Each day creates a tournament-owned `rounds` row via **`ensureTournamentRound`** (`tournament_id` set, `season_id`/`format` NULL, no flight); a league-date collision raises typed **`LeagueRoundOwnsDateError`** (friendly copy in the UI). Session delete removes its EMPTY round (empty = no `scores`/`team_scores`; pairings/`round_players` don't block — cascade-cleaned); blocks once real scores exist. `endTournament` soft-ends (no cascade). **`roundsQueryGuard` needed NO allowlist edits** — the scanner treats any `from("rounds")` statement mentioning `tournament_id` as guarded (accepted `.is`/`.eq` imprecision, logged as in-code tech debt). Earlier this same day: committed migration 031, shipped league-isolation filter, and built the pure **match-play engine** (`matchplay.ts`, incl. earliest-closeout freeze). 1071/1071 vitest, tsc clean, 51/51 Playwright. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (now also folds 031).**
+**Last updated:** 2026-07-25 (Tournament Phase 2.1a — admin bug fixes + standard-days redesign; branch `tournament`)
+**Session purpose:** Fix the three bugs Phase 2.1 browser verification surfaced and redesign day setup. (1) Every `mutations.ts` call from the Tournament tab now surfaces its outcome — side-assign, **End Tournament** (the invisible CHECK-violation bug), and Delete render a dismissible error banner; a failed mutation can no longer leave the screen unchanged. (2) `endTournament` now reads `started_on` first and writes `ended_on = max(today, started_on)` (was writing a pre-start date for a future tournament). (3) Creating a tournament **auto-creates the three standard days** (Day 1 — Greensomes, Day 2 — Four-ball, Day 3 — Singles) on consecutive dates from `started_on` via the existing `createSession` path (each with its own round); a league-round collision skips only that day, keeps survivors, and shows a banner naming the blocked day/format/date. **Day # field removed** (derived `max+1`). (3.1) Day cards are **Editable** (name/format/date); a date change **moves the round** — session row moves first (23505 ⇒ sibling day owns it → `TournamentDayDateTakenError`), then the round (23505 ⇒ league round owns it → revert session date, `LeagueRoundOwnsDateError`) — distinct copy per collision. (3.2) Dates render via one `formatDisplayDate` helper **extracted from `History.tsx` into `src/lib/date.ts`** (History now imports it). (4) Day card shows amber **"No round — cannot hold scores"** when `round_id` null. **Migration 032 committed verbatim** (already in prod): `UNIQUE(tournament_id, played_on)`, session→round FK `ON DELETE CASCADE`, relaxed ended-on CHECK. **1080/1080 vitest (+9), tsc clean, 51/51 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (now also folds 031 + 032).**
 
-*Earlier today (2026-07-24):* Tournament round isolation (`tournament_id IS NULL` on every league read) + match-play engine (`matchplay.ts`) — see sections below.
+*Prior session (2026-07-24):* Tournament Phase 2.1 — data layer + admin setup tab; also match-play engine — see the section below.
 
-*Prior session (2026-06-25):* Submit-transition team-total clobber fix — the "−22" bug — see the section below.
+---
 
-*Prior session (2026-06-24):* Hard 4-player cap on recommended teams — see the section below.
+## 2026-07-25 (Tournament Phase 2.1a — admin bug fixes + standard-days redesign; branch `tournament`)
 
-*Prior session (2026-06-22):* Apply Teams z-index fix + smaller-teams-first ordering — see the section below.
+### Where we left off
 
-*Prior session (2026-06-18):* Multi-start team recommendation engine — see the section below.
+Phase 2.1a — hardening the admin Tournament tab after manual browser verification of 2.1 surfaced three bugs and an over-generalised day-setup UX. Still NO pairings builder / match scorecard / dashboard (those remain 2.2+).
 
-*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+- **Migration 032 committed verbatim** (`supabase/migrations/032_tournament_session_integrity.sql`) — **already applied to prod 2026-07-25 via Supabase MCP; committed after the fact, NOT re-applied.** Adds `tournament_sessions_tournament_date_unique UNIQUE (tournament_id, played_on)`, changes the session→round FK to **`ON DELETE CASCADE`** (was `SET NULL`), and relaxes the `tournaments` ended-on CHECK to `ended_on IS NULL OR ended_on >= started_on OR is_active = false`. Hand data-repair (not in the file): session 10 had `round_id` NULL and was given round 227.
+- **§1 no silent mutation failures.** `Tournament.tsx` gained an `actionError` state + dismissible red banner. `assign` (setPlayerSide), the End-Tournament confirm (previously **no** catch — the CHECK violation was invisible), and `confirmDelete` are wrapped in try/catch → banner. Add/Edit-day errors stay in-modal.
+- **§2 endTournament date.** Reads `started_on` first; `ended_on = today >= started_on ? today : started_on`. Future-dated tournament no longer records a pre-start end date.
+- **§3 auto-create standard days.** New `STANDARD_DAYS` + `createStandardDays(tournamentId, startedOn)` in `mutations.ts` — three `createSession` calls on **consecutive dates** (new `addDaysISO` in `date.ts`), day_number 1/2/3. Per-day `LeagueRoundOwnsDateError` is caught → the date is collected in `failed` (name+format+date) and the loop **continues**; any other error rethrows. `CreateTournamentModal` calls it after `createTournament` and passes `failed` up → parent renders a banner naming each blocked day. **Day # field removed** from Add Day; parent derives `day_number = max(existing)+1`.
+- **§3.1 edit a day.** New per-card **Edit** → `EditDayModal` (name/format/date) → new `editSession(session, patch)`. On a date change: **let the two UNIQUE constraints classify the collision** (no pre-check — racy/redundant). (1) `UPDATE tournament_sessions.played_on` first — 23505 ⇒ a sibling tournament day owns it → **`TournamentDayDateTakenError`** (nothing moved). (2) `UPDATE rounds.played_on WHERE id AND tournament_id` — 23505 ⇒ a **league** round owns it → **revert step 1** to the original date, then throw `LeagueRoundOwnsDateError`. (3) name/format via `updateSession`. The round MOVES; never a second round. Distinct copy per collision.
+- **§3.2 date display.** `History.tsx`'s inline `formatDate` **moved into `src/lib/date.ts` as `formatDisplayDate`** (single source; History imports it). Used on day cards + header. Inputs keep raw ISO. (Actual output is `Sat, Jul 25, 2026` — comma after weekday, matching History app-wide; see confession.)
+- **§4 session-always-has-a-round.** Day card shows amber **"No round — cannot hold scores"** when `round_id` null. `createSession` already refuses to persist a session whose `ensureTournamentRound` failed (round throws before the session insert) — **locked with a test rather than changed** (working code).
 
-*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+### DB changes
+
+- **Migration 032** — committed verbatim (already in prod, see above). `supabase/schema.sql` still lags (carryover TD37 `db:backup` now also folds 032).
+
+### Tests / verification
+
+- **1080/1080 vitest (+9), tsc clean, 51/51 Playwright.**
+- New/updated: `dataLayer.test.ts` (+7: endTournament not-yet-started; createStandardDays happy + partial-collision; createSession no-persist-on-round-failure; editSession move / day-collision / league-revert), `admin-tournament.test.tsx` (+2: rejected-mutation banner via the side-assign path — avoids DangerModal's 1.5s delay; amber no-round warning), `tournamentRoundsReads.test.ts` (count 4→5 for editSession's tournament-scoped round move), `e2e/tournament.spec.ts` (rewritten for auto-created days + a 4th Add-Day). Both `@/lib/date` mocks switched to `importOriginal` so the real `addDaysISO`/`formatDisplayDate` resolve.
+- **`roundsQueryGuard` unchanged/unweakened** — `editSession`'s round update is `.eq("tournament_id", …)`-scoped, so it's auto-guarded; no allowlist edits.
+
+### Considered but not changed (confession)
+
+- **Date format punctuation.** The spec example is `Sat Jul 25, 2026`; the extracted `formatDisplayDate` (History's existing `toLocaleDateString("en-US", {weekday:"short",…})`) actually emits `Sat, Jul 25, 2026` (comma after the weekday). I chose the **single-source** path the spec directed ("use the existing date helpers") over hand-rolling a comma-free variant, so it now matches every other date in the app. **Flagging for your call** — if you want the exact comma-free form, it's a custom formatter (and would diverge from History again).
+- **Add-Day league-collision copy stays raw-ISO** (`"A league round already exists on 2026-08-01…"`) — unchanged from 2.1 and locked by an existing test; only the new Edit-Day copy uses `formatDisplayDate`. Left as-is to avoid touching an out-of-scope passing test; minor inconsistency flagged.
+- **EditDayModal's `onSave` isn't awaited before `setSaving(false)`** — same fire-and-forget pattern as the existing AddDayModal (kept for consistency, not "fixed").
+- **`.claude/settings.local.json`** was modified before this session; left unstaged (not mine).
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now folds 031 + 032) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.1a — Tournament admin hardening (DONE 2026-07-25, branch `tournament`).** Fixed silent mutation failures (all Tournament-tab mutations now surface errors), `endTournament`'s pre-start end date, and redesigned day setup: creating a tournament auto-creates the three standard days (Greensomes/Four-ball/Singles) on consecutive dates; days are editable (date changes move the round, with distinct copy for league-round vs sibling-day collisions); amber warning when a session has no round. Migration 032 (session UNIQUE + FK CASCADE + relaxed ended-on CHECK) committed verbatim. Day # field removed.
+
+### Tomorrow's priority
+
+- Phase 2.2: pairings builder + `tournament_matches` creation, then the match-play scorecard (consumes `matchplay.ts`).
 
 ---
 
