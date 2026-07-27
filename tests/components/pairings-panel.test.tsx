@@ -241,3 +241,117 @@ describe("PairingsPanel — has-scores rule", () => {
     expect(await screen.findByText(/has scores entered and can't be removed/)).toBeTruthy();
   });
 });
+
+// §1 regression — bug 2.2c: selecting a player in Edit blanked the field.
+describe("PairingsPanel — Edit slot selection (bug 2.2c)", () => {
+  const inputVal = (aria: string) => (screen.getByLabelText(aria) as HTMLInputElement).value;
+
+  it("selecting a player keeps their name in the field, still lists them, and excludes them from other slots", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    // Slot 1 currently = Al (side a). Select Abe (side a, ungrouped).
+    fireEvent.focus(await screen.findByLabelText("USA slot 1"));
+    fireEvent.click(screen.getByRole("option", { name: "Abe" }));
+    // The field shows "Abe" — NOT blank (this was the bug).
+    expect(inputVal("USA slot 1")).toBe("Abe");
+
+    // Re-open slot 1 → Abe is still in its own option list.
+    fireEvent.focus(screen.getByLabelText("USA slot 1"));
+    expect(screen.getByRole("option", { name: "Abe" })).toBeTruthy();
+
+    // Close slot 1, open slot 2 → Abe is excluded there (picked in another slot).
+    fireEvent.mouseDown(document.body);
+    fireEvent.focus(screen.getByLabelText("USA slot 2"));
+    expect(screen.queryByRole("option", { name: "Abe" })).toBeNull();
+  });
+
+  it("persists the swap on save", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.focus(await screen.findByLabelText("USA slot 1"));
+    fireEvent.click(screen.getByRole("option", { name: "Abe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const team1 = (fakeRef.current.data.round_players as any[]).filter((r) => r.team_number === 1).map((r) => r.player_id);
+      expect(team1).toContain(3); // Abe in
+      expect(team1).not.toContain(1); // Al out
+    });
+  });
+});
+
+// §2 UI — fill an empty seat / clear an occupied one, in place.
+describe("PairingsPanel — Edit fill & clear", () => {
+  function partialFourBall(): FakeData {
+    const d = fourBallGroupData();
+    d.round_players = (d.round_players as any[]).filter((r) => r.player_id !== 5); // drop a Canada player
+    return d;
+  }
+
+  it("fills an empty Canada seat and the amber note clears", async () => {
+    fakeRef.current = new FakeSupabase(partialFourBall());
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    expect(await screen.findByText(/Waiting on 1 Canada player/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.focus(await screen.findByLabelText("Canada slot 2")); // the empty seat
+    fireEvent.click(screen.getByRole("option", { name: "Bud" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect((fakeRef.current.data.round_players as any[]).some((r) => r.player_id === 5)).toBe(true));
+    await waitFor(() => expect(screen.queryByText(/Waiting on/)).toBeNull());
+  });
+
+  it("clears an occupied seat via the × and the amber note returns", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    // The × clear button inside the USA-slot-1 field (label "Clear selection").
+    const slot1 = await screen.findByLabelText("USA slot 1");
+    const clearBtn = within(slot1.closest("div")!.parentElement as HTMLElement).getByLabelText("Clear selection");
+    fireEvent.click(clearBtn);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect((fakeRef.current.data.round_players as any[]).some((r) => r.player_id === 1)).toBe(false));
+    expect(await screen.findByText(/Waiting on 1 USA player/)).toBeTruthy();
+  });
+});
+
+// §2 correction — a partial-failure Save reloads the real DB state before showing
+// the error, so the modal never displays what the admin only *thought* was saved.
+describe("PairingsPanel — Edit partial failure reload", () => {
+  it("earlier ops persist, error shows, and the reloaded modal matches the DB", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    // The tee change is per-player updates (payload has no player_id); the swap is
+    // an update whose payload carries player_id. Fail ONLY the swap so the tee
+    // change persists first and the swap does not.
+    fakeRef.current.setOptions({
+      failWrite: (op: any) =>
+        op.type === "update" && op.table === "round_players" && op.payload && "player_id" in op.payload
+          ? { message: "boom" }
+          : false,
+    });
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "2" } }); // tee → Blue (id 2)
+    fireEvent.focus(await screen.findByLabelText("USA slot 1"));
+    fireEvent.click(screen.getByRole("option", { name: "Abe" })); // swap Al → Abe (will fail to write)
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    // Error shown inline; the tee change DID persist; the swap did NOT.
+    expect(await screen.findByText(/Something went wrong/)).toBeTruthy();
+    await waitFor(() => {
+      const g1TeamA = (fakeRef.current.data.round_players as any[]).filter((r) => r.team_number === 1);
+      expect(g1TeamA.every((r) => r.tee_id === 2)).toBe(true); // tee persisted
+      expect(g1TeamA.some((r) => r.player_id === 1)).toBe(true); // Al still there (swap failed)
+    });
+    // The reloaded modal reflects the DB: slot 1 is still Al, the tee is Blue.
+    await waitFor(() => expect((screen.getByLabelText("USA slot 1") as HTMLInputElement).value).toBe("Al"));
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("2");
+  });
+});

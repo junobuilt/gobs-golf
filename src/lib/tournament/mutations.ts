@@ -213,8 +213,8 @@ export async function updateSession(
 // The three days this tournament always runs, in order. Auto-created on
 // tournament creation (§3) on consecutive dates from started_on.
 export const STANDARD_DAYS: ReadonlyArray<{ name: string; format: SessionFormat }> = [
-  { name: "Day 1 — Greensomes", format: "greensomes" },
-  { name: "Day 2 — Four-ball", format: "four_ball_match" },
+  { name: "Day 1 — Alternate Shot", format: "greensomes" },
+  { name: "Day 2 — Best Ball", format: "four_ball_match" },
   { name: "Day 3 — Singles", format: "singles_match" },
 ];
 
@@ -721,39 +721,66 @@ export async function updateGroup(input: {
     }
   }
 
-  // Seat swap.
-  if (input.teamNumber != null && input.fromPlayerId != null && input.toPlayerId != null) {
-    if (input.toPlayerId !== input.fromPlayerId) {
-      const slotSide = await sideOfTeamNumber(input.sessionId, input.teamNumber);
-      const sideBy = await sideAssignments(session.tournament_id);
-      const s = sideBy.get(input.toPlayerId);
-      if (s == null) throw new PlayerNotAssignedToSideError(input.toPlayerId);
-      if (slotSide != null && s !== slotSide) throw new PlayerSideMismatchError(input.toPlayerId, slotSide, s);
-
-      const { data: existing } = await supabase
-        .from("round_players")
-        .select("player_id")
-        .eq("round_id", roundId)
-        .gt("team_number", 0);
-      if (((existing ?? []) as Array<{ player_id: number }>).some((r) => r.player_id === input.toPlayerId)) {
-        throw new PlayerAlreadyGroupedError(input.toPlayerId);
-      }
+  // ── Seat operations (mutually exclusive): swap / fill / clear ────────────
+  // An incoming player is validated exactly like create: on a side, matching the
+  // slot's side, and not already grouped that day.
+  const slotSide = input.teamNumber != null ? await sideOfTeamNumber(input.sessionId, input.teamNumber) : null;
+  const validateIncoming = async (playerId: number) => {
+    const sideBy = await sideAssignments(session.tournament_id);
+    const s = sideBy.get(playerId);
+    if (s == null) throw new PlayerNotAssignedToSideError(playerId);
+    if (slotSide != null && s !== slotSide) throw new PlayerSideMismatchError(playerId, slotSide, s);
+    const { data: existing } = await supabase
+      .from("round_players")
+      .select("player_id")
+      .eq("round_id", roundId)
+      .gt("team_number", 0);
+    if (((existing ?? []) as Array<{ player_id: number }>).some((r) => r.player_id === playerId)) {
+      throw new PlayerAlreadyGroupedError(playerId);
     }
+  };
 
-    const snaps = await resolveSnapshots([input.toPlayerId], effectiveTee);
-    const snap = snaps.get(input.toPlayerId);
+  if (input.teamNumber != null && input.fromPlayerId != null && input.toPlayerId != null) {
+    // Swap an occupied seat for another player (team_number unchanged).
+    if (input.toPlayerId !== input.fromPlayerId) await validateIncoming(input.toPlayerId);
+    const snap = (await resolveSnapshots([input.toPlayerId], effectiveTee)).get(input.toPlayerId);
     const { error } = await supabase
       .from("round_players")
-      .update({
-        player_id: input.toPlayerId,
-        tee_id: effectiveTee,
-        handicap_index_snapshot: snap?.hi ?? null,
-        course_handicap: snap?.ch ?? null,
-      })
+      .update({ player_id: input.toPlayerId, tee_id: effectiveTee, handicap_index_snapshot: snap?.hi ?? null, course_handicap: snap?.ch ?? null })
       .eq("round_id", roundId)
       .eq("team_number", input.teamNumber)
       .eq("player_id", input.fromPlayerId);
     if (error) throw new Error("updateGroup (swap): " + error.message);
+  } else if (input.teamNumber != null && input.toPlayerId != null) {
+    // Fill an empty seat — create the round_players row on that team_number,
+    // stamped with the group's tee + CH, exactly as createGroup does.
+    await validateIncoming(input.toPlayerId);
+    const snap = (await resolveSnapshots([input.toPlayerId], effectiveTee)).get(input.toPlayerId);
+    const { error } = await supabase.from("round_players").insert({
+      round_id: roundId,
+      player_id: input.toPlayerId,
+      team_number: input.teamNumber,
+      tee_id: effectiveTee,
+      handicap_index_snapshot: snap?.hi ?? null,
+      course_handicap: snap?.ch ?? null,
+    });
+    if (error) throw new Error("updateGroup (fill): " + error.message);
+  } else if (input.teamNumber != null && input.fromPlayerId != null) {
+    // Clear an occupied seat — delete the row; team_number (and the match /
+    // group_number) stay. Clearing the group's LAST player is rejected (§5 floor).
+    const { data: rows } = await supabase
+      .from("round_players")
+      .select("id")
+      .eq("round_id", roundId)
+      .in("team_number", teamNumbers.length ? teamNumbers : [-1]);
+    if (((rows ?? []) as unknown[]).length <= 1) throw new EmptyGroupError();
+    const { error } = await supabase
+      .from("round_players")
+      .delete()
+      .eq("round_id", roundId)
+      .eq("team_number", input.teamNumber)
+      .eq("player_id", input.fromPlayerId);
+    if (error) throw new Error("updateGroup (clear): " + error.message);
   }
 }
 

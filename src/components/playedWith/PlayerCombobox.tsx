@@ -6,6 +6,12 @@
 // list; PlayerPickerSheet is a multi-select bottom sheet), so this small one
 // backs all the admin Played-With pickers. Purely presentational — options are
 // pre-disambiguated + alphabetized by the caller.
+//
+// INVARIANT — the displayed label is resolved by finding `value` inside
+// `options`. A caller that filters `options` MUST keep the currently-selected
+// player (`value`) in the list, or the field renders blank even though `value`
+// is set. (Bug 2.2c: an Edit-slot excluded its own new pick, so selecting a
+// player blanked the field.) If you filter, add the current value back in.
 
 import { useEffect, useRef, useState } from "react";
 

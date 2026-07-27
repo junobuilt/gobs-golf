@@ -43,8 +43,8 @@ const C = {
 const FONT = "system-ui, sans-serif";
 
 const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Greensomes",
-  four_ball_match: "Four-ball",
+  greensomes: "Alternate Shot",
+  four_ball_match: "Best Ball",
   singles_match: "Singles",
 };
 
@@ -70,6 +70,26 @@ interface GroupView {
   groupNumber: number | null;
   matches: LoadedMatch[];
   error: string | null; // set when a match in this group failed to load (misconfig)
+}
+
+// Options for one slot's PlayerCombobox: players on `side`, minus everyone in
+// `excludeIds` (grouped elsewhere / picked in other slots), but ALWAYS including
+// the slot's own current value with its roster label. PlayerCombobox blanks the
+// field when `value` isn't among `options` (see its documented invariant), so a
+// slot must never filter out its own selection — that was bug 2.2c.
+function slotOptions(roster: Roster, side: Side, currentValue: number | null, excludeIds: Set<number>) {
+  const opts: Array<{ id: number; label: string }> = [];
+  for (const [id, rec] of roster.byId) {
+    if (rec.side !== side) continue;
+    if (excludeIds.has(id) && id !== currentValue) continue;
+    opts.push({ id, label: rec.name });
+  }
+  if (currentValue != null && !opts.some((o) => o.id === currentValue)) {
+    const rec = roster.byId.get(currentValue);
+    if (rec) opts.push({ id: currentValue, label: rec.name });
+  }
+  opts.sort((x, y) => x.label.localeCompare(y.label));
+  return opts;
 }
 
 const primaryBtn: React.CSSProperties = {
@@ -336,7 +356,6 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
           sideBName={tournament.side_b_name}
           sessionId={session.id}
           onClose={() => setEditTarget(null)}
-          onError={(msg) => setBanner(msg)}
           onDone={async () => {
             setEditTarget(null);
             await load();
@@ -532,18 +551,9 @@ function GroupBuilder({
 
   const tee = tees.find((t) => t.id === teeId) ?? null;
   const picked = new Set<number>([...aIds, ...bIds].filter((x): x is number => x != null));
+  const excludeIds = new Set<number>([...groupedIds, ...picked]);
 
-  const optionsFor = (side: Side, ownValue: number | null) => {
-    const opts = [];
-    for (const [id, rec] of roster.byId) {
-      if (rec.side !== side) continue;
-      if (groupedIds.has(id)) continue;
-      if (picked.has(id) && id !== ownValue) continue;
-      opts.push({ id, label: rec.name });
-    }
-    opts.sort((x, y) => x.label.localeCompare(y.label));
-    return opts;
-  };
+  const optionsFor = (side: Side, ownValue: number | null) => slotOptions(roster, side, ownValue, excludeIds);
 
   // Live strokes preview via the SAME computeSideStrokes helper the loader uses.
   // Only complete units get a stroke shown: for singles each 1-v-1 row is
@@ -672,7 +682,7 @@ function StrokeHint({ value }: { value: number | null }) {
   );
 }
 
-// ── Edit (tee change + swap occupied seats) ─────────────────────────────────
+// ── Edit (tee change + fill / clear / swap seats, in place) ─────────────────
 function EditGroup({
   group,
   format,
@@ -683,7 +693,6 @@ function EditGroup({
   sideBName,
   sessionId,
   onClose,
-  onError,
   onDone,
 }: {
   group: GroupView;
@@ -695,57 +704,84 @@ function EditGroup({
   sideBName: string;
   sessionId: number;
   onClose: () => void;
-  onError: (msg: string) => void;
   onDone: () => void;
 }) {
   const groupNumber = group.groupNumber;
-  // Seats = every (teamNumber, side, currentPlayerId) across the group's matches.
+  const need = format === "singles_match" ? 1 : 2;
+
+  const [liveGroup, setLiveGroup] = useState(group);
+  const [desired, setDesired] = useState<Record<string, number | null>>({});
+  const [teeId, setTeeId] = useState<number>(group.matches[0]?.teeId ?? DEFAULT_TEE_ID);
+  const [saving, setSaving] = useState(false);
+  const [inlineError, setInlineError] = useState<string | null>(null);
+
+  // Every slot in the group — occupied OR empty — keyed by team_number:index.
   const seats = useMemo(() => {
-    const out: Array<{ teamNumber: number; side: Side; playerId: number; name: string }> = [];
-    for (const m of group.matches) {
-      for (const p of m.sideA.players) out.push({ teamNumber: m.sideA.teamNumber, side: "a", playerId: p.playerId, name: p.displayName });
-      for (const p of m.sideB.players) out.push({ teamNumber: m.sideB.teamNumber, side: "b", playerId: p.playerId, name: p.displayName });
+    const out: Array<{ key: string; matchId: number; teamNumber: number; side: Side; index: number; original: number | null }> = [];
+    for (const m of liveGroup.matches) {
+      (["a", "b"] as Side[]).forEach((side) => {
+        const sd = side === "a" ? m.sideA : m.sideB;
+        for (let i = 0; i < need; i++) {
+          out.push({ key: `${sd.teamNumber}:${i}`, matchId: m.match.id, teamNumber: sd.teamNumber, side, index: i, original: sd.players[i]?.playerId ?? null });
+        }
+      });
     }
     return out;
-  }, [group]);
+  }, [liveGroup, need]);
 
-  const currentTee = group.matches[0]?.teeId ?? DEFAULT_TEE_ID;
-  const [teeId, setTeeId] = useState<number>(currentTee);
-  const [repl, setRepl] = useState<Record<number, number | null>>({}); // teamNumber+playerId key -> new
-  const [saving, setSaving] = useState(false);
+  const currentTee = liveGroup.matches[0]?.teeId ?? DEFAULT_TEE_ID;
 
-  const picked = new Set<number>();
-  for (const s of seats) picked.add(repl[keyOf(s.teamNumber, s.playerId)] ?? s.playerId);
+  // Reset the working copy whenever the live group changes (mount + reload).
+  useEffect(() => {
+    const init: Record<string, number | null> = {};
+    for (const s of seats) init[s.key] = s.original;
+    setDesired(init);
+    setTeeId(currentTee);
+  }, [liveGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const optionsFor = (side: Side, own: number) => {
-    const opts = [];
-    for (const [id, rec] of roster.byId) {
-      if (rec.side !== side) continue;
-      // exclude players grouped elsewhere or already picked in this group (except this seat's own)
-      if ((groupedIds.has(id) || picked.has(id)) && id !== own) continue;
-      opts.push({ id, label: rec.name });
+  const picked = new Set<number>(Object.values(desired).filter((x): x is number => x != null));
+  const excludeIds = new Set<number>([...groupedIds, ...picked]);
+
+  const reloadFromDb = async () => {
+    try {
+      const groups = await loadGroups(sessionId);
+      const g = groups.find((x) => x.groupNumber === groupNumber);
+      if (g) setLiveGroup(g);
+    } catch {
+      /* keep the current copy if the reload itself fails */
     }
-    opts.sort((x, y) => x.label.localeCompare(y.label));
-    return opts;
   };
 
   const save = async () => {
     if (groupNumber == null) return;
     setSaving(true);
+    setInlineError(null);
     try {
-      if (teeId !== currentTee) {
-        await updateGroup({ sessionId, groupNumber, teeId });
+      if (teeId !== currentTee) await updateGroup({ sessionId, groupNumber, teeId });
+      // clear → fill → swap (approved ordering).
+      for (const s of seats) {
+        if (s.original != null && desired[s.key] == null) {
+          await updateGroup({ sessionId, groupNumber, teamNumber: s.teamNumber, fromPlayerId: s.original });
+        }
       }
       for (const s of seats) {
-        const next = repl[keyOf(s.teamNumber, s.playerId)];
-        if (next != null && next !== s.playerId) {
-          await updateGroup({ sessionId, groupNumber, teamNumber: s.teamNumber, fromPlayerId: s.playerId, toPlayerId: next });
+        const d = desired[s.key];
+        if (s.original == null && d != null) {
+          await updateGroup({ sessionId, groupNumber, teamNumber: s.teamNumber, toPlayerId: d });
+        }
+      }
+      for (const s of seats) {
+        const d = desired[s.key];
+        if (s.original != null && d != null && d !== s.original) {
+          await updateGroup({ sessionId, groupNumber, teamNumber: s.teamNumber, fromPlayerId: s.original, toPlayerId: d });
         }
       }
       onDone();
     } catch (err) {
-      onError(mutationMessage(err, sideAName, sideBName));
-      onClose();
+      // Some ops may already have persisted — reload the REAL state before
+      // showing the error so the modal never displays what Dad thought he saved.
+      setInlineError(mutationMessage(err, sideAName, sideBName));
+      await reloadFromDb();
     } finally {
       setSaving(false);
     }
@@ -754,19 +790,34 @@ function EditGroup({
   return (
     <ModalShell title="Edit Group">
       <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: 10 }}>
-        Swap a player or change the tee. To add or clear a seat, remove the group and re-add it.
+        Swap, add, or clear a player, or change the tee. Clear a seat with the × in its field.
       </div>
-      {seats.map((s) => (
-        <div key={keyOf(s.teamNumber, s.playerId)} style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: "0.72rem", fontWeight: 700, color: SIDE_COLOR[s.side].text, marginBottom: 3 }}>
-            {s.side === "a" ? sideAName : sideBName}
-          </div>
-          <PlayerCombobox
-            options={optionsFor(s.side, s.playerId)}
-            value={repl[keyOf(s.teamNumber, s.playerId)] ?? s.playerId}
-            onChange={(id) => setRepl((prev) => ({ ...prev, [keyOf(s.teamNumber, s.playerId)]: id }))}
-            ariaLabel={`Edit ${s.name}`}
-          />
+      {inlineError && (
+        <div role="alert" style={{ background: "#fdecea", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8, padding: "8px 10px", marginBottom: 10, fontSize: "0.82rem", fontWeight: 600 }}>
+          {inlineError}
+        </div>
+      )}
+      {liveGroup.matches.map((m, mi) => (
+        <div key={m.match.id} style={{ marginBottom: 8 }}>
+          {format === "singles_match" && (
+            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", marginBottom: 4 }}>Match {mi + 1}</div>
+          )}
+          {seats
+            .filter((s) => s.matchId === m.match.id)
+            .map((s) => {
+              const sideNm = s.side === "a" ? sideAName : sideBName;
+              return (
+                <div key={s.key} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: SIDE_COLOR[s.side].text, marginBottom: 3 }}>{sideNm}</div>
+                  <PlayerCombobox
+                    options={slotOptions(roster, s.side, desired[s.key] ?? null, excludeIds)}
+                    value={desired[s.key] ?? null}
+                    onChange={(id) => setDesired((prev) => ({ ...prev, [s.key]: id }))}
+                    ariaLabel={`${sideNm} slot ${s.index + 1}${format === "singles_match" ? ` match ${mi + 1}` : ""}`}
+                  />
+                </div>
+              );
+            })}
         </div>
       ))}
 
@@ -793,10 +844,6 @@ function EditGroup({
       </div>
     </ModalShell>
   );
-}
-
-function keyOf(teamNumber: number, playerId: number): number {
-  return teamNumber * 100000 + playerId;
 }
 
 function ModalShell({ title, children }: { title: string; children: React.ReactNode }) {

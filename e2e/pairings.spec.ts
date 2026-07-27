@@ -2,7 +2,7 @@ import { test, expect } from "./support/fixtures";
 import { seed, ALL_PLAYERS, SEASON } from "./support/fixtures";
 
 // Phase 2.2b — the pairings builder against the intercepted-network mock:
-// create a tournament → assign sides → open Day 1 (Greensomes) pairings →
+// create a tournament → assign sides → open Day 1 (Alternate Shot) pairings →
 // add a group (strokes render from the loader) → change its tee → remove it.
 
 // 18 flat par-4 holes, SI = hole number, for both the default (4) and White (1)
@@ -27,10 +27,10 @@ test("pairings: create a group → strokes render → change tee → remove", as
   await page.goto("/admin");
   await page.getByRole("button", { name: "Tournament" }).click();
 
-  // Create the tournament — auto-creates Day 1 Greensomes / Day 2 Four-ball / Day 3 Singles.
+  // Create the tournament — auto-creates Day 1 Alternate Shot / Day 2 Best Ball / Day 3 Singles.
   await page.getByRole("button", { name: "+ Create Tournament" }).click();
   await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByText("Day 1 — Greensomes")).toBeVisible();
+  await expect(page.getByText("Day 1 — Alternate Shot")).toBeVisible();
 
   // Sides (rows sorted by name): Adam, Betty, Carl, Dora, Wayne Hill, Wayne Vale.
   await page.getByRole("button", { name: "USA" }).nth(0).click(); // Adam → USA

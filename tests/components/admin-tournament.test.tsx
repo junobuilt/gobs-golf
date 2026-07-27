@@ -120,4 +120,52 @@ describe("admin Tournament tab", () => {
     await screen.findByText("Day 1 — Greensomes");
     expect(screen.getByText(/No round — cannot hold scores/)).toBeTruthy();
   });
+
+  // §3 (2.2c) — one day's pairings loader throwing must not take down the tab.
+  it("isolates a day whose pairings fail to load; other days still render", async () => {
+    const holes = (teeId: number) => Array.from({ length: 18 }, (_, i) => ({ id: teeId * 100 + i, tee_id: teeId, hole_number: i + 1, par: 4, stroke_index: i + 1 }));
+    fakeRef.current = new FakeSupabase({
+      ...seed(),
+      tees: [
+        { id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 },
+        { id: 2, color: "Blue", slope_rating: 113, course_rating: 72, par: 72, sort_order: 2 },
+      ],
+      holes: [...holes(1), ...holes(2)],
+      players: [
+        { id: 1, full_name: "Al A", display_name: "Al", handicap_index: 8, is_active: true },
+        { id: 2, full_name: "Bo B", display_name: "Bo", handicap_index: 14, is_active: true },
+        { id: 3, full_name: "Cy C", display_name: "Cy", handicap_index: 10, is_active: true },
+        { id: 4, full_name: "Di D", display_name: "Di", handicap_index: 12, is_active: true },
+      ],
+      round_players: [
+        // Day 1 group — MIXED TEES ⇒ loadSessionMatches(21) throws.
+        { id: 101, round_id: 50, player_id: 1, team_number: 1, tee_id: 1, course_handicap: 8, handicap_index_snapshot: 8 },
+        { id: 102, round_id: 50, player_id: 2, team_number: 2, tee_id: 2, course_handicap: 14, handicap_index_snapshot: 14 },
+        // Day 2 group — clean.
+        { id: 103, round_id: 51, player_id: 3, team_number: 1, tee_id: 1, course_handicap: 10, handicap_index_snapshot: 10 },
+        { id: 104, round_id: 51, player_id: 4, team_number: 2, tee_id: 1, course_handicap: 12, handicap_index_snapshot: 12 },
+      ],
+      tournament_players: [
+        { id: 1, tournament_id: 10, player_id: 1, side: "a" },
+        { id: 2, tournament_id: 10, player_id: 2, side: "b" },
+        { id: 3, tournament_id: 10, player_id: 3, side: "a" },
+        { id: 4, tournament_id: 10, player_id: 4, side: "b" },
+      ],
+      tournament_sessions: [
+        { id: 21, tournament_id: 10, round_id: 50, day_number: 1, name: "Day 1 — Alternate Shot", format: "greensomes", played_on: "2026-08-01", is_locked: false },
+        { id: 22, tournament_id: 10, round_id: 51, day_number: 2, name: "Day 2 — Best Ball", format: "four_ball_match", played_on: "2026-08-02", is_locked: false },
+      ],
+      tournament_matches: [
+        { id: 500, tournament_id: 10, session_id: 21, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, admin_note: null },
+        { id: 501, tournament_id: 10, session_id: 22, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, admin_note: null },
+      ],
+    } as FakeData);
+
+    render(<Tournament allPlayers={PLAYERS} />);
+    // Day 1's pairings failed → isolated note; Day 2 rendered its summary.
+    expect(await screen.findByText(/Couldn’t load pairings — check this day’s groups/)).toBeTruthy();
+    expect(screen.getByText(/1 group · 2 players/)).toBeTruthy();
+    // The tab is still usable — the Sides section rendered.
+    expect(screen.getByText(/Unassigned/)).toBeTruthy();
+  });
 });

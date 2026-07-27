@@ -2,10 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-27 (Tournament Phase 2.2b — pairings builder UI + per-match tee; branch `tournament`)
-**Session purpose:** The pairings surface. Wired the day card's `Pairings →` to a full-screen **`PairingsPanel`** (in-component panel, not a route — the whole `/admin` tree is panel-state). It reads groups from `loadSessionMatches` and renders **one card per group** (greensomes/four-ball = one 2-v-2; singles = one card with two 1-v-1 matches), strokes beside every name **from the loader**, greensomes collapsed team CH, amber on `isIncomplete`, and a "misconfigured" state if the loader throws (mixed tees / missing holes) — never a page crash. Add Group builder: per-side `PlayerCombobox` slots filtered to that side's ungrouped players, a tee selector, a **live strokes preview** (via the shared `computeSideStrokes` helper the loader uses), partial saves allowed, all-empty rejected. Edit (tee change + occupied-seat swap) / Remove (has-scores `DangerModal`). Every typed 2.2a error maps to its own plain-language copy (`pairingsCopy.ts`). **§1 per-match tee (mixed tees impossible by construction):** `createGroup` now takes a required `teeId`, stamps it on every `round_players` row (overriding `preferred_tee_id`) and computes CH from it; `updateGroup` gains optional `teeId` (restamps the whole group + recomputes CH). **Migration 033** (`tournament_matches.group_number`, nullable + index) committed verbatim; `createGroup` assigns `group_number = max+1` (singles: both matches share it), `deleteGroup` removes by it. Loader now reads greensomes `team_scores` at **`ball_index = 1` explicitly** (the `team_scores_round_team_hole_ball_key` UNIQUE already guarantees one row — no migration needed) and exposes `LoadedMatch.teeId`. **1111/1111 vitest (+11), tsc clean, 52/52 Playwright (+1).** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+**Last updated:** 2026-07-27 (Tournament Phase 2.2c — pairings fixes + day-card visibility; branch `tournament`)
+**Session purpose:** Fixes from 2.2b browser verification + day-card pairings visibility. **§1 (bug):** selecting a player in Edit/Add blanked the field — a slot excluded its own new pick and `PlayerCombobox` resolves its label from the filtered list. Fixed with a shared **`slotOptions`** helper that always keeps the current value in the list (label from the full roster); documented the invariant on `PlayerCombobox`. **§2:** `updateGroup` now **fills an empty seat** (INSERT on the team_number, group tee + CH) and **clears an occupied one** (DELETE; team_number/match/`group_number` intact) in place — no more delete-and-rebuild; clearing the group's last player → `EmptyGroupError`; both gated by has-scores; a filled seat is validated like create. The Edit modal renders every seat (occupied + empty); on a partial-failure Save it **reloads the real DB state** before showing the error so the modal never shows what Dad only *thought* he saved. **§3:** each day card now shows a compact pairings summary (count + `A / B  v  C / D` per group, singles = two lines, amber dot on incomplete, "No pairings yet." empty state) read via `loadSessionMatches`, batched with **`Promise.allSettled`** so one misconfigured day renders an inline "Couldn't load pairings" note while every other day stays intact. **§4:** day-name / format vocabulary → "Alternate Shot" (greensomes) and "Best Ball" (four_ball_match); `SessionFormat` tokens + engine unchanged. **1122/1122 vitest (+11), tsc clean, 52/52 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
-*Prior session (2026-07-25):* Tournament Phase 2.2a — canonical match loader + pairings data layer — see the section below.
+*Prior session (2026-07-27):* Tournament Phase 2.2b — pairings builder UI + per-match tee — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 2.2c — pairings fixes + day-card visibility; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2c — three bug/UX fixes on the 2.2b pairings surface plus day-card pairings visibility. No scorecard/dashboard.
+
+- **§1 — Edit/Add slot selection blanked the field (bug).** Root cause: a slot's option list excluded every locally-picked player *including its own*, and `PlayerCombobox` derives its display label by finding `value` inside `options` — so selecting a player removed it from its own list and the field blanked. Fix: one shared **`slotOptions(roster, side, currentValue, excludeIds)`** used by both builders — it excludes grouped-elsewhere/picked-in-other-slots but **always re-adds the slot's own `currentValue`** (label from the full roster). Add Group passed the current value already (latent); Edit passed the *original*, hence the visible bug. Documented the invariant as a comment on `PlayerCombobox` so the next filtering caller doesn't rediscover it.
+- **§2 — fill / clear a seat in place.** `updateGroup` gained two branches beside swap/tee: **fill** (`teamNumber`+`toPlayerId`, no `fromPlayerId` → INSERT `round_players` on that team_number with the group's tee + CH, validated like create) and **clear** (`teamNumber`+`fromPlayerId`, no `toPlayerId` → DELETE that row; `team_number`/match/`group_number` untouched). Clearing the group's **last** player → `EmptyGroupError`; both gated by the group has-scores check. The Edit modal now renders **every** seat (occupied + empty) as a combobox (× clears, empty fills), reconciles on Save in **clear → fill → swap** order, and on any op failure **reloads the group from the DB** (`loadGroups`) into an inline-error modal so the shown state is the persisted state. Removed the "remove the group and re-add it" copy.
+- **§3 — day-card pairings summary.** `Tournament.tsx` `load()` now batch-loads matches for every day via `Promise.allSettled(sessions.map(loadSessionMatches))` and renders a compact `DayPairings` block under each card ("N groups · M players" + `A / B  v  C / D` per group; singles = two lines; amber dot on incomplete; "No pairings yet."). **Per-day isolation:** a day whose loader throws (mixed tees / missing holes) shows an inline "Couldn't load pairings — check this day's groups" note; every other day still renders and the tab stays usable. Reuses `loadSessionMatches` — no new query path, no recomputation.
+- **§4 — vocabulary.** `STANDARD_DAYS` → "Day 1 — Alternate Shot", "Day 2 — Best Ball", "Day 3 — Singles"; both `FORMAT_LABEL` maps (Tournament + PairingsPanel) → "Alternate Shot" / "Best Ball" / "Singles". `SessionFormat` tokens (`greensomes` / `four_ball_match` / `singles_match`) and all engine behaviour unchanged.
+
+### §3 query count
+
+The Tournament tab now loads matches for every day: `loadSessionMatches` per day, in parallel. Each is **~6 reads** (session, matches, tournament, round_players, scores, holes-per-tee) or **~7** for a greensomes day (adds team_scores). A standard 3-day tournament ≈ **19–21 parallel reads**. Reused the canonical loader per the no-new-query-path rule; a future `teamsOnly` mode would trim it (out of scope).
+
+### DB changes
+
+- **None.** Migrations 031/032/033 are the substrate; 2.2c is code-only.
+
+### Tests / verification
+
+- **1122/1122 vitest (+11), tsc clean, 52/52 Playwright.**
+- `pairings.test.ts` (+5: fill an empty seat [row + tee + CH, isIncomplete clears]; clear a seat [row gone, team/group intact, amber returns]; clear-last rejected; fill+clear blocked by scores; a filled seat validated like create). `pairings-panel.test.tsx` (+5: **bug 2.2c regression** — select keeps the name, still listed, excluded elsewhere; swap persists; Edit fill; Edit clear via ×; **partial-failure reload** — tee persists, swap fails, error shown, modal matches DB). `admin-tournament.test.tsx` (+1: one day's loader throwing isolated, other day's summary intact, tab usable).
+- **`roundsQueryGuard` unchanged** — fill/clear + the day summaries add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **After switching a seat to a new player within one Edit session, the original isn't re-selectable** until save (it's still in `groupedIds`). Minor; not required by the spec. Filling/clearing/swapping all work; a within-session "undo to original" would need excluding this group's members from `groupedIds` in the modal.
+- **§3 eager per-day load** adds ~20 parallel reads on tab open (approved) — no lazy/collapse.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2c — Pairings fixes + day-card visibility (DONE 2026-07-27, branch `tournament`).** Fixed the Edit/Add slot-selection blank (shared `slotOptions` keeps a slot's own value; `PlayerCombobox` invariant documented); `updateGroup` fills/clears seats in place (amber groups completable without rebuild; partial-failure Save reloads real DB state); day cards show a per-day pairings summary batched with `Promise.allSettled` (one bad day isolated); day-name/format vocabulary → Alternate Shot / Best Ball.
+
+### Tomorrow's priority
+
+- Phase 3: the match-play scorecard consuming `loadMatch` (singles = one card per foursome, both matches on screen) + score entry writing `scores` / greensomes `team_scores` at `ball_index = 1`.
 
 ---
 

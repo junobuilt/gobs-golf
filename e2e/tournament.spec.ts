@@ -22,8 +22,8 @@ test("create tournament → auto-creates the three standard days → assign side
 
   // Active view: header + the three standard days on consecutive dates.
   await expect(page.getByText(/GOBS Ryder Cup/)).toBeVisible();
-  await expect(page.getByText("Day 1 — Greensomes")).toBeVisible();
-  await expect(page.getByText("Day 2 — Four-ball")).toBeVisible();
+  await expect(page.getByText("Day 1 — Alternate Shot")).toBeVisible();
+  await expect(page.getByText("Day 2 — Best Ball")).toBeVisible();
   await expect(page.getByText("Day 3 — Singles")).toBeVisible();
 
   // Rows are sorted by name: Adam Apple is first, Betty Birch second.

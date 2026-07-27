@@ -222,3 +222,59 @@ describe("has-scores gate", () => {
     expect(matches()).toHaveLength(1);
   });
 });
+
+// §2 (2.2c) — fill an empty seat / clear an occupied one, in place.
+describe("updateGroup — fill & clear seats", () => {
+  it("fills an empty seat: row created with the group tee + CH, and isIncomplete clears", async () => {
+    fakeRef.current = new FakeSupabase(seed("four_ball_match"));
+    // Side B short one player → incomplete. Teams: A=1, B=2.
+    const { groupNumber, matches: created } = await createGroup({ sessionId: 9, format: "four_ball_match", sideAPlayerIds: [1, 2], sideBPlayerIds: [4], teeId: 1 });
+    expect((await loadMatch(created[0].id)).isIncomplete).toBe(true);
+
+    await updateGroup({ sessionId: 9, groupNumber, teamNumber: 2, toPlayerId: 5 }); // fill B's empty seat
+
+    const row = rps().find((r) => r.player_id === 5);
+    expect(row).toMatchObject({ team_number: 2, tee_id: 1, course_handicap: 16 }); // Bud HI 16 @ tee 1
+    expect((await loadMatch(created[0].id)).isIncomplete).toBe(false);
+  });
+
+  it("clears an occupied seat: row deleted, team_number & group_number intact, amber returns", async () => {
+    fakeRef.current = new FakeSupabase(seed("four_ball_match"));
+    const { groupNumber, matches: created } = await createGroup({ sessionId: 9, format: "four_ball_match", sideAPlayerIds: [1, 2], sideBPlayerIds: [4, 5], teeId: 1 });
+    const matchBefore = matches()[0];
+
+    await updateGroup({ sessionId: 9, groupNumber, teamNumber: 1, fromPlayerId: 1 }); // clear one A seat
+
+    expect(rps().some((r) => r.player_id === 1)).toBe(false);
+    expect(rps().filter((r) => r.team_number === 1)).toHaveLength(1); // seat gone, team_number kept
+    const matchAfter = matches()[0];
+    expect(matchAfter).toMatchObject({ id: matchBefore.id, group_number: matchBefore.group_number, side_a_team_number: 1 });
+    expect((await loadMatch(created[0].id)).isIncomplete).toBe(true);
+  });
+
+  it("rejects clearing the group's last remaining player", async () => {
+    fakeRef.current = new FakeSupabase(seed("four_ball_match"));
+    const { groupNumber } = await createGroup({ sessionId: 9, format: "four_ball_match", sideAPlayerIds: [1], sideBPlayerIds: [], teeId: 1 });
+    await expect(updateGroup({ sessionId: 9, groupNumber, teamNumber: 1, fromPlayerId: 1 })).rejects.toBeInstanceOf(EmptyGroupError);
+    expect(rps()).toHaveLength(1);
+  });
+
+  it("blocks fill and clear once the group has a score", async () => {
+    fakeRef.current = new FakeSupabase(seed("four_ball_match"));
+    const { groupNumber } = await createGroup({ sessionId: 9, format: "four_ball_match", sideAPlayerIds: [1, 2], sideBPlayerIds: [4], teeId: 1 });
+    const rpId = rps().find((r) => r.player_id === 1)!.id;
+    (fakeRef.current.data.scores as any[]).push({ id: 9999, round_player_id: rpId, hole_number: 1, strokes: 4 });
+
+    await expect(updateGroup({ sessionId: 9, groupNumber, teamNumber: 2, toPlayerId: 5 })).rejects.toBeInstanceOf(GroupHasScoresError);
+    await expect(updateGroup({ sessionId: 9, groupNumber, teamNumber: 1, fromPlayerId: 1 })).rejects.toBeInstanceOf(GroupHasScoresError);
+  });
+
+  it("validates a filled seat exactly like create (side match + not already grouped)", async () => {
+    fakeRef.current = new FakeSupabase(seed("four_ball_match"));
+    const { groupNumber } = await createGroup({ sessionId: 9, format: "four_ball_match", sideAPlayerIds: [1, 2], sideBPlayerIds: [4], teeId: 1 });
+    // team 2 is side B; filling it with a side-A player is a mismatch.
+    await expect(updateGroup({ sessionId: 9, groupNumber, teamNumber: 2, toPlayerId: 3 })).rejects.toBeInstanceOf(PlayerSideMismatchError);
+    // filling with someone already in the group.
+    await expect(updateGroup({ sessionId: 9, groupNumber, teamNumber: 2, toPlayerId: 4 })).rejects.toBeInstanceOf(PlayerAlreadyGroupedError);
+  });
+});

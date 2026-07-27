@@ -23,7 +23,9 @@ import {
   setPlayerSide,
   TournamentDayDateTakenError,
 } from "@/lib/tournament/mutations";
+import { loadSessionMatches } from "@/lib/tournament/loadMatch";
 import type {
+  LoadedMatch,
   SessionFormat,
   SessionRoundStatus,
   Side,
@@ -31,6 +33,49 @@ import type {
   TournamentPlayerJoined,
   TournamentSession,
 } from "@/lib/tournament/types";
+
+// §3 — a compact per-day pairings summary, built from loadSessionMatches (no new
+// query path, no recomputation). One entry per day; `error` is set when that
+// day's loader threw (mixed tees / missing holes) so ONE bad day can't blank the
+// whole tab.
+interface DayGroupSummary {
+  groupNumber: number | null;
+  lines: Array<{ a: string; b: string }>; // one line per match (singles = 2)
+  incomplete: boolean;
+}
+interface DaySummary {
+  groups: DayGroupSummary[];
+  players: number;
+  error: boolean;
+}
+
+function summarizeDay(matches: LoadedMatch[]): DaySummary {
+  const byGroup = new Map<string, LoadedMatch[]>();
+  const order: string[] = [];
+  const playerIds = new Set<number>();
+  for (const m of matches) {
+    const key = String(m.match.group_number ?? `m${m.match.id}`);
+    if (!byGroup.has(key)) {
+      byGroup.set(key, []);
+      order.push(key);
+    }
+    byGroup.get(key)!.push(m);
+    for (const p of m.sideA.players) playerIds.add(p.playerId);
+    for (const p of m.sideB.players) playerIds.add(p.playerId);
+  }
+  const groups = order.map((k) => {
+    const ms = byGroup.get(k)!;
+    return {
+      groupNumber: ms[0].match.group_number,
+      lines: ms.map((m) => ({
+        a: m.sideA.players.map((p) => p.displayName).join(" / ") || "—",
+        b: m.sideB.players.map((p) => p.displayName).join(" / ") || "—",
+      })),
+      incomplete: ms.some((m) => m.isIncomplete),
+    };
+  });
+  return { groups, players: playerIds.size, error: false };
+}
 
 const C = {
   navy: "#0c3057",
@@ -46,8 +91,8 @@ const C = {
 const FONT = "system-ui, sans-serif";
 
 const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Greensomes",
-  four_ball_match: "Four-ball",
+  greensomes: "Alternate Shot",
+  four_ball_match: "Best Ball",
   singles_match: "Singles",
 };
 const FORMAT_OPTIONS: SessionFormat[] = ["greensomes", "four_ball_match", "singles_match"];
@@ -130,6 +175,8 @@ export default function Tournament({ allPlayers }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   // §3 — days that couldn't be auto-created because a league round owns the date.
   const [dayCollisions, setDayCollisions] = useState<FailedStandardDay[]>([]);
+  // §3 — per-day pairings summaries, keyed by session id.
+  const [pairingsBySession, setPairingsBySession] = useState<Record<number, DaySummary>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,11 +192,24 @@ export default function Tournament({ allPlayers }: Props) {
     const full = await getTournamentWithSessions(active.id);
     setTournament(full?.tournament ?? active);
     setAssigned(full?.players ?? []);
-    setSessions(full?.sessions ?? []);
+    const sesss = full?.sessions ?? [];
+    setSessions(sesss);
     const sm: Record<number, Side | undefined> = {};
     for (const tp of full?.players ?? []) sm[tp.player_id] = tp.side;
     setSideMap(sm);
     setLoading(false);
+
+    // §3 — pairings summaries per day, batched + isolated per day (allSettled) so
+    // one misconfigured day can't reject the batch and blank the whole tab.
+    const results = await Promise.allSettled(
+      sesss.map((s) => (s.round_id != null ? loadSessionMatches(s.id) : Promise.resolve([] as LoadedMatch[]))),
+    );
+    const pmap: Record<number, DaySummary> = {};
+    sesss.forEach((s, i) => {
+      const r = results[i];
+      pmap[s.id] = r.status === "fulfilled" ? summarizeDay(r.value) : { groups: [], players: 0, error: true };
+    });
+    setPairingsBySession(pmap);
   }, []);
 
   useEffect(() => {
@@ -434,11 +494,11 @@ export default function Tournament({ allPlayers }: Props) {
               padding: 12,
               marginBottom: 10,
               display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              flexDirection: "column",
               gap: 10,
             }}
           >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: C.navy, fontSize: "0.95rem" }}>{s.name}</div>
               <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: 2 }}>
@@ -521,6 +581,8 @@ export default function Tournament({ allPlayers }: Props) {
                 Delete
               </button>
             </div>
+            </div>
+            {s.round_id != null && <DayPairings summary={pairingsBySession[s.id]} />}
           </div>
         ))}
       </div>
@@ -624,6 +686,46 @@ export default function Tournament({ allPlayers }: Props) {
           onCancel={() => setEndOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+// §3 — compact pairings summary under a day card. Lines come straight from the
+// loader (one line per match, so singles shows both 1-v-1s); amber dot marks an
+// incomplete group. `summary` undefined = still loading.
+function DayPairings({ summary }: { summary: DaySummary | undefined }) {
+  if (!summary) return null;
+  if (summary.error) {
+    return (
+      <div style={{ fontSize: "0.78rem", color: C.amber, background: C.amberBg, borderRadius: 6, padding: "6px 10px" }}>
+        Couldn’t load pairings — check this day’s groups.
+      </div>
+    );
+  }
+  if (summary.groups.length === 0) {
+    return <div style={{ fontSize: "0.78rem", color: C.muted }}>No pairings yet.</div>;
+  }
+  return (
+    <div style={{ fontSize: "0.8rem" }}>
+      <div style={{ fontWeight: 600, color: C.navy, marginBottom: 4 }}>
+        {summary.groups.length} {summary.groups.length === 1 ? "group" : "groups"} · {summary.players} players
+      </div>
+      {summary.groups.map((g, gi) => (
+        <div key={g.groupNumber ?? gi} style={{ marginBottom: 3 }}>
+          {g.lines.map((ln, li) => (
+            <div key={li} style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, lineHeight: 1.5 }}>
+              {g.incomplete && li === 0 && (
+                <span aria-label="incomplete" style={{ color: C.amber, fontWeight: 700 }}>
+                  ●
+                </span>
+              )}
+              <span>{ln.a}</span>
+              <span style={{ color: "#9ca3af", fontWeight: 700 }}>v</span>
+              <span>{ln.b}</span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
