@@ -485,26 +485,25 @@ interface Snapshot {
   ch: number | null;
 }
 
-// Per-player round_players snapshot: HI + tee + course handicap. There is NO
-// single existing helper that writes all three (RoundSetup snapshots HI on
-// check-in; the scorecard computes CH only when a tee is picked). This composes
-// the SAME pieces — the tee fallback `preferred_tee_id ?? DEFAULT_TEE_ID` the
-// scorecard uses, and `computeCourseHandicap` — without adding new handicap math
-// and without touching the league surfaces.
-async function resolveSnapshots(playerIds: number[]): Promise<Map<number, Snapshot>> {
+// Per-player round_players snapshot: HI + tee + course handicap. The tee is
+// EXPLICIT (the group's tee, chosen at pairing time), overriding preferred_tee_id
+// so a match can never span two tees — MixedTeesInMatchError becomes structurally
+// impossible. CH is computed from that tee via computeCourseHandicap (the same
+// path the scorecard uses); no new handicap math, no touching the league surfaces.
+async function resolveSnapshots(playerIds: number[], teeId: number): Promise<Map<number, Snapshot>> {
   const out = new Map<number, Snapshot>();
   if (playerIds.length === 0) return out;
   const { data: players } = await supabase
     .from("players")
-    .select("id, handicap_index, preferred_tee_id")
+    .select("id, handicap_index")
     .in("id", playerIds);
-  const { data: tees } = await supabase.from("tees").select("id, slope_rating, course_rating, par");
-  const teeById = new Map<number, { slope_rating: number; course_rating: number; par: number }>(
-    ((tees ?? []) as Array<{ id: number; slope_rating: number; course_rating: number; par: number }>).map((t) => [t.id, t]),
-  );
-  for (const p of (players ?? []) as Array<{ id: number; handicap_index: number | null; preferred_tee_id: number | null }>) {
-    const teeId = p.preferred_tee_id ?? DEFAULT_TEE_ID;
-    const tee = teeById.get(teeId);
+  const { data: teeRow } = await supabase
+    .from("tees")
+    .select("slope_rating, course_rating, par")
+    .eq("id", teeId)
+    .maybeSingle();
+  const tee = teeRow as { slope_rating: number; course_rating: number; par: number } | null;
+  for (const p of (players ?? []) as Array<{ id: number; handicap_index: number | null }>) {
     const ch = tee ? computeCourseHandicap(p.handicap_index ?? null, tee.slope_rating, tee.course_rating, tee.par) : null;
     out.set(p.id, { teeId, hi: p.handicap_index ?? null, ch });
   }
@@ -519,27 +518,32 @@ async function resolveSnapshots(playerIds: number[]): Promise<Map<number, Snapsh
 export async function createGroup(input: {
   sessionId: number;
   format: SessionFormat;
-  sideAPlayerIds: number[];
-  sideBPlayerIds: number[];
-}): Promise<{ matches: TournamentMatch[]; teamNumbers: number[] }> {
+  // Slot arrays. `null` = an empty slot; for singles the INDEX is the pairing
+  // (aIds[i] plays bIds[i]), so positions are preserved and nulls are not dropped.
+  sideAPlayerIds: Array<number | null>;
+  sideBPlayerIds: Array<number | null>;
+  teeId: number;
+}): Promise<{ matches: TournamentMatch[]; teamNumbers: number[]; groupNumber: number }> {
   const session = await loadSessionCore(input.sessionId);
   const format = session.format; // session is the format authority
   const roundId = session.round_id as number;
   const aIds = [...input.sideAPlayerIds];
   const bIds = [...input.sideBPlayerIds];
-  const allIds = [...aIds, ...bIds];
+  const presentA = aIds.filter((x): x is number => x != null);
+  const presentB = bIds.filter((x): x is number => x != null);
+  const present = [...presentA, ...presentB];
 
-  if (allIds.length === 0) throw new EmptyGroupError();
-  if (aIds.length > 2) throw new GroupOverfilledError("a", aIds.length);
-  if (bIds.length > 2) throw new GroupOverfilledError("b", bIds.length);
+  if (present.length === 0) throw new EmptyGroupError(); // §5 floor
+  if (presentA.length > 2) throw new GroupOverfilledError("a", presentA.length);
+  if (presentB.length > 2) throw new GroupOverfilledError("b", presentB.length);
 
   // Intra-call duplicate (same player in two slots).
-  if (new Set(allIds).size !== allIds.length) {
-    const dup = allIds.find((id, i) => allIds.indexOf(id) !== i) as number;
+  if (new Set(present).size !== present.length) {
+    const dup = present.find((id, i) => present.indexOf(id) !== i) as number;
     throw new PlayerAlreadyGroupedError(dup);
   }
 
-  // Every player assigned to the matching side.
+  // Every present player assigned to the matching side.
   const sideBy = await sideAssignments(session.tournament_id);
   const checkSide = (ids: number[], slot: Side) => {
     for (const id of ids) {
@@ -548,8 +552,8 @@ export async function createGroup(input: {
       if (s !== slot) throw new PlayerSideMismatchError(id, slot, s);
     }
   };
-  checkSide(aIds, "a");
-  checkSide(bIds, "b");
+  checkSide(presentA, "a");
+  checkSide(presentB, "b");
 
   // A player may be in only one group per day; find the team_number high-water.
   const { data: existingRps } = await supabase
@@ -563,18 +567,21 @@ export async function createGroup(input: {
     grouped.add(rp.player_id);
     if (rp.team_number > maxTeam) maxTeam = rp.team_number;
   }
-  for (const id of allIds) if (grouped.has(id)) throw new PlayerAlreadyGroupedError(id);
+  for (const id of present) if (grouped.has(id)) throw new PlayerAlreadyGroupedError(id);
 
   const { data: existingMatches } = await supabase
     .from("tournament_matches")
-    .select("match_number")
+    .select("match_number, group_number")
     .eq("session_id", input.sessionId);
   let maxMatchNo = 0;
-  for (const m of (existingMatches ?? []) as Array<{ match_number: number }>) {
+  let maxGroupNo = 0;
+  for (const m of (existingMatches ?? []) as Array<{ match_number: number; group_number: number | null }>) {
     if (m.match_number > maxMatchNo) maxMatchNo = m.match_number;
+    if ((m.group_number ?? 0) > maxGroupNo) maxGroupNo = m.group_number ?? 0;
   }
+  const groupNumber = maxGroupNo + 1;
 
-  const snaps = await resolveSnapshots(allIds);
+  const snaps = await resolveSnapshots(present, input.teeId);
   let nextTeam = maxTeam + 1;
   const rpRows: Array<Record<string, unknown>> = [];
   const matchSpecs: Array<{ aTeam: number; bTeam: number }> = [];
@@ -584,29 +591,32 @@ export async function createGroup(input: {
       round_id: roundId,
       player_id: playerId,
       team_number: teamNumber,
-      tee_id: s?.teeId ?? DEFAULT_TEE_ID,
+      tee_id: input.teeId, // the group's tee — every row stamped identically
       handicap_index_snapshot: s?.hi ?? null,
       course_handicap: s?.ch ?? null,
     });
   };
 
   if (format === "singles_match") {
-    // One 1-v-1 match per slot index (Dad's ordering encodes the pairing). Both
-    // team_numbers are stamped on the match even if a seat is empty — the match
-    // must exist for an override to land on it.
-    const matchCount = Math.max(aIds.length, bIds.length);
-    for (let i = 0; i < matchCount; i++) {
+    // One 1-v-1 match per PAIRING ROW (slot index encodes who plays whom). A row
+    // with a single filled seat still makes a match (both team_numbers stamped) so
+    // an override can land on it; a fully-empty row makes nothing.
+    const rowCount = Math.max(aIds.length, bIds.length);
+    for (let i = 0; i < rowCount; i++) {
+      const a = aIds[i] ?? null;
+      const b = bIds[i] ?? null;
+      if (a == null && b == null) continue;
       const aTeam = nextTeam++;
       const bTeam = nextTeam++;
-      if (aIds[i] != null) pushRp(aIds[i], aTeam);
-      if (bIds[i] != null) pushRp(bIds[i], bTeam);
+      if (a != null) pushRp(a, aTeam);
+      if (b != null) pushRp(b, bTeam);
       matchSpecs.push({ aTeam, bTeam });
     }
   } else {
     const aTeam = nextTeam++;
     const bTeam = nextTeam++;
-    for (const id of aIds) pushRp(id, aTeam);
-    for (const id of bIds) pushRp(id, bTeam);
+    for (const id of aIds) if (id != null) pushRp(id, aTeam);
+    for (const id of bIds) if (id != null) pushRp(id, bTeam);
     matchSpecs.push({ aTeam, bTeam });
   }
 
@@ -619,6 +629,7 @@ export async function createGroup(input: {
     tournament_id: session.tournament_id,
     session_id: input.sessionId,
     match_number: maxMatchNo + 1 + i,
+    group_number: groupNumber, // singles: BOTH matches share this foursome id
     side_a_team_number: spec.aTeam,
     side_b_team_number: spec.bTeam,
     status: "pending" as const,
@@ -631,87 +642,140 @@ export async function createGroup(input: {
   return {
     matches: (created as TournamentMatch[] | null) ?? [],
     teamNumbers: matchSpecs.flatMap((s) => [s.aTeam, s.bTeam]),
+    groupNumber,
   };
 }
 
-// Swap the player occupying a team_number for another — allowed only while that
-// team's match has no scores. Keyed on TEAM_NUMBER, never re-derived from slot
-// index, so a singles swap leaves both matches' opponents (their team_numbers)
-// untouched. The match rows are not written at all.
+// All matches of a group (by group_number) and all their team numbers. A singles
+// foursome has two matches sharing one group_number; greensomes/four-ball one.
+async function groupMatches(sessionId: number, groupNumber: number): Promise<{ matchIds: number[]; teamNumbers: number[] }> {
+  const { data } = await supabase
+    .from("tournament_matches")
+    .select("id, side_a_team_number, side_b_team_number")
+    .eq("session_id", sessionId)
+    .eq("group_number", groupNumber);
+  const matchIds: number[] = [];
+  const teams = new Set<number>();
+  for (const m of (data ?? []) as Array<{ id: number; side_a_team_number: number; side_b_team_number: number }>) {
+    matchIds.push(m.id);
+    teams.add(m.side_a_team_number);
+    teams.add(m.side_b_team_number);
+  }
+  return { matchIds, teamNumbers: [...teams] };
+}
+
+async function groupHasScores(roundId: number, teamNumbers: number[], format: SessionFormat): Promise<boolean> {
+  for (const tn of teamNumbers) {
+    if (await teamHasScores(roundId, tn, format)) return true;
+  }
+  return false;
+}
+
+// Edit a group — swap a seat and/or change the group's tee. Allowed only while
+// the group has no scores. A swap is keyed on TEAM_NUMBER (never re-derived from
+// slot index) so a singles swap leaves both matches' pairings untouched. A teeId
+// restamps EVERY round_players row in the group and recomputes their course
+// handicaps (a tee change can't create a mixed-tee match). The match rows are
+// never rewritten.
 export async function updateGroup(input: {
   sessionId: number;
-  teamNumber: number;
-  fromPlayerId: number;
-  toPlayerId: number;
+  groupNumber: number;
+  teamNumber?: number;
+  fromPlayerId?: number;
+  toPlayerId?: number;
+  teeId?: number;
 }): Promise<void> {
   const session = await loadSessionCore(input.sessionId);
   const roundId = session.round_id as number;
 
-  if (await teamHasScores(roundId, input.teamNumber, session.format)) throw new GroupHasScoresError();
+  const { teamNumbers } = await groupMatches(input.sessionId, input.groupNumber);
+  if (await groupHasScores(roundId, teamNumbers, session.format)) throw new GroupHasScoresError();
 
-  if (input.toPlayerId !== input.fromPlayerId) {
-    const slotSide = await sideOfTeamNumber(input.sessionId, input.teamNumber);
-    const sideBy = await sideAssignments(session.tournament_id);
-    const s = sideBy.get(input.toPlayerId);
-    if (s == null) throw new PlayerNotAssignedToSideError(input.toPlayerId);
-    if (slotSide != null && s !== slotSide) throw new PlayerSideMismatchError(input.toPlayerId, slotSide, s);
+  // Current group tee — the incoming swapped player inherits it unless teeId overrides.
+  const { data: groupRows } = await supabase
+    .from("round_players")
+    .select("tee_id")
+    .eq("round_id", roundId)
+    .in("team_number", teamNumbers.length ? teamNumbers : [-1]);
+  const currentTee = ((groupRows ?? []) as Array<{ tee_id: number | null }>).find((r) => r.tee_id != null)?.tee_id ?? DEFAULT_TEE_ID;
+  const effectiveTee = input.teeId ?? currentTee;
 
-    const { data: existing } = await supabase
+  // Tee change → restamp every row in the group + recompute CH.
+  if (input.teeId != null && teamNumbers.length > 0) {
+    const { data: rows } = await supabase
       .from("round_players")
       .select("player_id")
       .eq("round_id", roundId)
-      .gt("team_number", 0);
-    if (((existing ?? []) as Array<{ player_id: number }>).some((r) => r.player_id === input.toPlayerId)) {
-      throw new PlayerAlreadyGroupedError(input.toPlayerId);
+      .in("team_number", teamNumbers);
+    const playerIds = ((rows ?? []) as Array<{ player_id: number }>).map((r) => r.player_id);
+    const snaps = await resolveSnapshots(playerIds, input.teeId);
+    for (const pid of playerIds) {
+      const snap = snaps.get(pid);
+      const { error } = await supabase
+        .from("round_players")
+        .update({ tee_id: input.teeId, course_handicap: snap?.ch ?? null })
+        .eq("round_id", roundId)
+        .in("team_number", teamNumbers)
+        .eq("player_id", pid);
+      if (error) throw new Error("updateGroup (tee): " + error.message);
     }
   }
 
-  const snaps = await resolveSnapshots([input.toPlayerId]);
-  const snap = snaps.get(input.toPlayerId);
-  const { error } = await supabase
-    .from("round_players")
-    .update({
-      player_id: input.toPlayerId,
-      tee_id: snap?.teeId ?? DEFAULT_TEE_ID,
-      handicap_index_snapshot: snap?.hi ?? null,
-      course_handicap: snap?.ch ?? null,
-    })
-    .eq("round_id", roundId)
-    .eq("team_number", input.teamNumber)
-    .eq("player_id", input.fromPlayerId);
-  if (error) throw new Error("updateGroup: " + error.message);
+  // Seat swap.
+  if (input.teamNumber != null && input.fromPlayerId != null && input.toPlayerId != null) {
+    if (input.toPlayerId !== input.fromPlayerId) {
+      const slotSide = await sideOfTeamNumber(input.sessionId, input.teamNumber);
+      const sideBy = await sideAssignments(session.tournament_id);
+      const s = sideBy.get(input.toPlayerId);
+      if (s == null) throw new PlayerNotAssignedToSideError(input.toPlayerId);
+      if (slotSide != null && s !== slotSide) throw new PlayerSideMismatchError(input.toPlayerId, slotSide, s);
+
+      const { data: existing } = await supabase
+        .from("round_players")
+        .select("player_id")
+        .eq("round_id", roundId)
+        .gt("team_number", 0);
+      if (((existing ?? []) as Array<{ player_id: number }>).some((r) => r.player_id === input.toPlayerId)) {
+        throw new PlayerAlreadyGroupedError(input.toPlayerId);
+      }
+    }
+
+    const snaps = await resolveSnapshots([input.toPlayerId], effectiveTee);
+    const snap = snaps.get(input.toPlayerId);
+    const { error } = await supabase
+      .from("round_players")
+      .update({
+        player_id: input.toPlayerId,
+        tee_id: effectiveTee,
+        handicap_index_snapshot: snap?.hi ?? null,
+        course_handicap: snap?.ch ?? null,
+      })
+      .eq("round_id", roundId)
+      .eq("team_number", input.teamNumber)
+      .eq("player_id", input.fromPlayerId);
+    if (error) throw new Error("updateGroup (swap): " + error.message);
+  }
 }
 
-// Remove a group: its matches and the round_players on those matches' team
-// numbers. Blocked once any involved team has scores — same rule as delete-day.
-export async function deleteGroup(input: { sessionId: number; matchIds: number[] }): Promise<void> {
+// Remove a whole group by group_number: its matches and the round_players on
+// those matches' team numbers. Blocked once any team in the group has scores.
+export async function deleteGroup(input: { sessionId: number; groupNumber: number }): Promise<void> {
   const session = await loadSessionCore(input.sessionId);
   const roundId = session.round_id as number;
 
-  const { data: matchRows } = await supabase
-    .from("tournament_matches")
-    .select("id, side_a_team_number, side_b_team_number")
-    .in("id", input.matchIds);
-  const teams = new Set<number>();
-  for (const m of (matchRows ?? []) as Array<{ side_a_team_number: number; side_b_team_number: number }>) {
-    teams.add(m.side_a_team_number);
-    teams.add(m.side_b_team_number);
-  }
+  const { matchIds, teamNumbers } = await groupMatches(input.sessionId, input.groupNumber);
+  if (await groupHasScores(roundId, teamNumbers, session.format)) throw new GroupHasScoresError();
 
-  for (const tn of teams) {
-    if (await teamHasScores(roundId, tn, session.format)) throw new GroupHasScoresError();
-  }
-
-  if (input.matchIds.length > 0) {
-    const { error: mErr } = await supabase.from("tournament_matches").delete().in("id", input.matchIds);
+  if (matchIds.length > 0) {
+    const { error: mErr } = await supabase.from("tournament_matches").delete().in("id", matchIds);
     if (mErr) throw new Error("deleteGroup (matches): " + mErr.message);
   }
-  if (teams.size > 0) {
+  if (teamNumbers.length > 0) {
     const { error: rpErr } = await supabase
       .from("round_players")
       .delete()
       .eq("round_id", roundId)
-      .in("team_number", [...teams]);
+      .in("team_number", teamNumbers);
     if (rpErr) throw new Error("deleteGroup (round_players): " + rpErr.message);
   }
 }

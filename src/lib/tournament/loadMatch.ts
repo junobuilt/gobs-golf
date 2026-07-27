@@ -12,12 +12,8 @@
 // / scores / team_scores / holes).
 
 import { supabase } from "@/lib/supabase";
-import {
-  computeMatchState,
-  computeMatchStrokes,
-  greensomesTeamHandicap,
-  resolveMatchResult,
-} from "./matchplay";
+import { computeMatchState, resolveMatchResult } from "./matchplay";
+import { computeSideStrokes } from "./matchStrokes";
 import type {
   HoleMeta,
   LoadedMatch,
@@ -156,32 +152,13 @@ function assembleMatch(
   const state = computeMatchState(matchInput);
   const resolved = resolveMatchResult(state, { result_source: match.result_source, result: match.result });
 
-  // ── Per-unit match strokes — via matchplay.ts, never recomputed here. ──
-  let aStrokes: number[];
-  let bStrokes: number[];
-  let aCollapsed: number | null = null;
-  let bCollapsed: number | null = null;
-  let aSideStrokes: number | null = null;
-  let bSideStrokes: number | null = null;
-
-  if (format === "greensomes") {
-    // Each pair collapses to one handicap; §2.1 runs across the TWO sides.
-    aCollapsed = greensomesTeamHandicap(aRps[0]?.course_handicap ?? null, aRps[1]?.course_handicap ?? null);
-    bCollapsed = greensomesTeamHandicap(bRps[0]?.course_handicap ?? null, bRps[1]?.course_handicap ?? null);
-    const [msA, msB] = computeMatchStrokes([aCollapsed, bCollapsed]);
-    aSideStrokes = msA;
-    bSideStrokes = msB;
-    // Per-player strokes carry the side value (both partners share it).
-    aStrokes = aRps.map(() => msA);
-    bStrokes = bRps.map(() => msB);
-  } else {
-    // singles / four-ball: units are the individual players, PH = 100% CH. The
-    // combined-then-sliced order MIRRORS matchplay's sideHoleNets exactly.
-    const phs = allRps.map((rp) => rp.course_handicap ?? 0);
-    const ms = computeMatchStrokes(phs);
-    aStrokes = ms.slice(0, aRps.length);
-    bStrokes = ms.slice(aRps.length);
-  }
+  // ── Per-unit match strokes — via the shared computeSideStrokes (matchplay.ts).
+  // Same helper the pre-save pairings preview uses, so screen and card agree.
+  const { aStrokes, bStrokes, aCollapsed, bCollapsed, aSideStrokes, bSideStrokes } = computeSideStrokes(
+    format,
+    aRps.map((rp) => rp.course_handicap),
+    bRps.map((rp) => rp.course_handicap),
+  );
 
   const toLoadedPlayer = (rp: RoundPlayerRow, strokes: number): LoadedMatchPlayer => ({
     playerId: rp.player_id,
@@ -225,6 +202,7 @@ function assembleMatch(
     tournament: { id: tournament.id, sideAName: tournament.side_a_name, sideBName: tournament.side_b_name },
     sideA,
     sideB,
+    teeId,
     holes,
     state,
     resolved,
@@ -246,24 +224,22 @@ function grossByHole(rows: Array<{ round_player_id: number; hole_number: number;
   return byRp;
 }
 
-// Greensomes team gross per team_number. Rows carry ball_index; a greensomes side
-// plays one ball, so the lowest ball_index present on a hole is that side's score.
+// Greensomes team gross per team_number. Greensomes writes exactly ONE team_scores
+// row per (round, team, hole) at ball_index = 1 (the column default), enforced by
+// team_scores_round_team_hole_ball_key UNIQUE. We read ball_index = 1 EXPLICITLY
+// rather than taking the lowest — a stray ball_index = 2 row is a visible bug
+// (surfacing as a missing/odd score), never silently folded in.
 function teamGrossByTeam(rows: Array<{ team_number: number; hole_number: number; ball_index: number; strokes: number }>): Map<number, (number | null)[]> {
-  const bestBall = new Map<string, number>(); // `${team}|${hole}` -> min ball_index seen
   const byTeam = new Map<number, (number | null)[]>();
   for (const r of rows) {
+    if (r.ball_index !== 1) continue;
     if (r.hole_number < 1 || r.hole_number > 18) continue;
     let arr = byTeam.get(r.team_number);
     if (!arr) {
       arr = new Array(18).fill(null);
       byTeam.set(r.team_number, arr);
     }
-    const key = `${r.team_number}|${r.hole_number}`;
-    const prevBall = bestBall.get(key);
-    if (prevBall === undefined || r.ball_index < prevBall) {
-      bestBall.set(key, r.ball_index);
-      arr[r.hole_number - 1] = r.strokes;
-    }
+    arr[r.hole_number - 1] = r.strokes;
   }
   return byTeam;
 }

@@ -89,6 +89,10 @@ export interface TournamentMatch {
   tournament_id: number;
   session_id: number;
   match_number: number;
+  // Foursome identifier (migration 033). One match for greensomes/four-ball;
+  // TWO matches share one group_number for a singles foursome. Sequential within
+  // a session. Nullable for pre-033 rows (none existed).
+  group_number: number | null;
   side_a_team_number: number;
   side_b_team_number: number;
   status: MatchStatus;
@@ -250,6 +254,7 @@ export interface LoadedMatch {
   tournament: { id: number; sideAName: string; sideBName: string };
   sideA: LoadedMatchSide;
   sideB: LoadedMatchSide;
+  teeId: number | null; // the group's single tee (holes are its allocation set)
   holes: HoleMeta[]; // the match's single allocation set (one tee)
   state: MatchState; // computeMatchState
   resolved: ResolvedResult; // resolveMatchResult (admin override precedence)

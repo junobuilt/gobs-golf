@@ -153,7 +153,7 @@ describe("loadMatch — four-ball golden", () => {
 describe("loadMatch — greensomes golden", () => {
   it("collapsed side handicaps and team-gross nets drive the result", async () => {
     const teamScores = (team: number, g: number) =>
-      Array.from({ length: 18 }, (_, i) => ({ id: team * 1000 + i, round_id: 50, team_number: team, hole_number: i + 1, ball_index: 0, strokes: g }));
+      Array.from({ length: 18 }, (_, i) => ({ id: team * 1000 + i, round_id: 50, team_number: team, hole_number: i + 1, ball_index: 1, strokes: g }));
     fakeRef.current = new FakeSupabase(
       baseData({
         players: [

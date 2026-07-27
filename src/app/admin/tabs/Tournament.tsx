@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DangerModal from "../components/DangerModal";
+import PairingsPanel from "../components/PairingsPanel";
 import type { Player } from "../page";
 import { formatDisplayDate, todayLocal } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
@@ -118,6 +119,7 @@ export default function Tournament({ allPlayers }: Props) {
   const [addDayOpen, setAddDayOpen] = useState(false);
   const [dayError, setDayError] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<TournamentSession | null>(null);
+  const [pairingTarget, setPairingTarget] = useState<TournamentSession | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
     { session: TournamentSession; status: SessionRoundStatus } | null
@@ -458,7 +460,24 @@ export default function Tournament({ allPlayers }: Props) {
                   No round — cannot hold scores
                 </div>
               ) : (
-                <div style={{ color: "#9ca3af", fontSize: "0.75rem", marginTop: 4 }}>Pairings — coming next</div>
+                <button
+                  onClick={() => setPairingTarget(s)}
+                  style={{
+                    marginTop: 6,
+                    minHeight: 40,
+                    padding: "0 14px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${C.navy}`,
+                    background: "white",
+                    color: C.navy,
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    cursor: "pointer",
+                    fontFamily: FONT,
+                  }}
+                >
+                  Pairings →
+                </button>
               )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -575,6 +594,17 @@ export default function Tournament({ allPlayers }: Props) {
 
       {blockedNotice && (
         <InfoModal message={blockedNotice} onClose={() => setBlockedNotice(null)} />
+      )}
+
+      {pairingTarget && pairingTarget.round_id != null && (
+        <PairingsPanel
+          session={pairingTarget}
+          tournament={tournament}
+          onClose={() => {
+            setPairingTarget(null);
+            load();
+          }}
+        />
       )}
 
       {endOpen && (

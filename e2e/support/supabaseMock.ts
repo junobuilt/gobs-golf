@@ -50,6 +50,7 @@ export interface SeedData {
   tournaments?: Row[];
   tournament_players?: Row[];
   tournament_sessions?: Row[];
+  tournament_matches?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -72,10 +73,11 @@ const KNOWN_TABLES = [
   // Backup Admin PIN (migration 028).
   "admin_backup_pin",
   "admin_backup_audit",
-  // Tournament tables (migration 031).
+  // Tournament tables (migration 031/033).
   "tournaments",
   "tournament_players",
   "tournament_sessions",
+  "tournament_matches",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */
@@ -181,6 +183,13 @@ function applyEmbeds(table: string, select: string, rows: Row[], db: MockDb): Ro
     return rows.map((rp) => {
       const player = db.tables.players?.find((p) => looseEq(p.id, rp.player_id)) ?? null;
       return { ...rp, players: player };
+    });
+  }
+  // tournament_players embeds players (TD2) — the pairings roster reads names/HI here.
+  if (table === "tournament_players" && /players\s*\(/.test(select)) {
+    return rows.map((tp) => {
+      const player = db.tables.players?.find((p) => looseEq(p.id, tp.player_id)) ?? null;
+      return { ...tp, players: player };
     });
   }
   return rows;
