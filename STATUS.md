@@ -2,10 +2,52 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-25 (Tournament Phase 2.2a — canonical match loader + pairings data layer; branch `tournament`)
-**Session purpose:** Build the single source of truth for match data and the pairings data layer — loader-first, NO UI this session (§3 pairings builder is next). **`src/lib/tournament/loadMatch.ts`** is THE assembler: `loadMatch(id)` / `loadSessionMatches(sessionId)` turn DB rows into a `LoadedMatch` (match row + session/tournament meta + both sides with per-player `matchStrokes` + greensomes collapsed side handicap + hole meta + `MatchState` + resolved result + `isIncomplete`). All handicap/match math comes from `matchplay.ts` — the loader assembles inputs and calls it, no score arithmetic. `loadSessionMatches` is **batched** (one read each for session/matches/tournament/round_players/scores/team_scores/holes, NOT N×loadMatch) and asserts the scores read isn't truncated at the 1000-row cap (`ScoresTruncatedError`). **Mixed tees within a match → `MixedTeesInMatchError`** (thrown, never silently mis-allocated — correction #6). Pairings data layer in `mutations.ts`: **`createGroup`** (sequential team numbers, never reused; 1 match for greensomes/four-ball, 2 for singles paired by slot index), **`updateGroup`** (swap keyed on team_number so a singles swap never re-pairs), **`deleteGroup`** (has-scores gate). §5: partial groups persist + flag `isIncomplete` (so the envelope-rule admin-override can land), but a zero-player group is rejected. Tee fallback mirrors the scorecard's `preferred_tee_id ?? DEFAULT_TEE_ID` (the real constant, verified — correction #5). Piggyback §0: Add-Day league-collision copy now uses `formatDisplayDate`. **1100/1100 vitest (+20), tsc clean, 51/51 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032).**
+**Last updated:** 2026-07-27 (Tournament Phase 2.2b — pairings builder UI + per-match tee; branch `tournament`)
+**Session purpose:** The pairings surface. Wired the day card's `Pairings →` to a full-screen **`PairingsPanel`** (in-component panel, not a route — the whole `/admin` tree is panel-state). It reads groups from `loadSessionMatches` and renders **one card per group** (greensomes/four-ball = one 2-v-2; singles = one card with two 1-v-1 matches), strokes beside every name **from the loader**, greensomes collapsed team CH, amber on `isIncomplete`, and a "misconfigured" state if the loader throws (mixed tees / missing holes) — never a page crash. Add Group builder: per-side `PlayerCombobox` slots filtered to that side's ungrouped players, a tee selector, a **live strokes preview** (via the shared `computeSideStrokes` helper the loader uses), partial saves allowed, all-empty rejected. Edit (tee change + occupied-seat swap) / Remove (has-scores `DangerModal`). Every typed 2.2a error maps to its own plain-language copy (`pairingsCopy.ts`). **§1 per-match tee (mixed tees impossible by construction):** `createGroup` now takes a required `teeId`, stamps it on every `round_players` row (overriding `preferred_tee_id`) and computes CH from it; `updateGroup` gains optional `teeId` (restamps the whole group + recomputes CH). **Migration 033** (`tournament_matches.group_number`, nullable + index) committed verbatim; `createGroup` assigns `group_number = max+1` (singles: both matches share it), `deleteGroup` removes by it. Loader now reads greensomes `team_scores` at **`ball_index = 1` explicitly** (the `team_scores_round_team_hole_ball_key` UNIQUE already guarantees one row — no migration needed) and exposes `LoadedMatch.teeId`. **1111/1111 vitest (+11), tsc clean, 52/52 Playwright (+1).** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
-*Prior session (2026-07-25):* Tournament Phase 2.1a — admin bug fixes + standard-days redesign — see the section below.
+*Prior session (2026-07-25):* Tournament Phase 2.2a — canonical match loader + pairings data layer — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 2.2b — pairings builder UI + per-match tee; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2b — the pairings builder, wired to the 2.2a loader/data-layer. Reachable from each day card. NO scorecard/dashboard (those consume this next).
+
+- **Routing decision: in-component full-screen panel** (`src/app/admin/components/PairingsPanel.tsx`, opened via `pairingTarget` state in `Tournament.tsx`), NOT a route. The `/admin` tree navigates purely by panel state; a sub-route would re-mount + re-auth + re-fetch tournament context for no gain. Header has a "← Days" back button.
+- **Single source:** every stroke/handicap/status comes from `loadSessionMatches`/`loadMatch`. The pre-save builder preview uses the SAME `src/lib/tournament/matchStrokes.ts` `computeSideStrokes` the loader uses (extracted this session), so preview and saved card can't diverge. The panel fetches its OWN side roster (`getTournamentPlayers`) rather than trusting a parent prop that goes stale after a Sides edit.
+- **One card per group** (via `group_number`): singles renders two labelled "Match 1 / Match 2" sub-blocks in one card. Amber `isIncomplete` with a "Waiting on N <side> player(s)" reason; loader-throw groups render a "misconfigured" card, not a crash.
+- **Builder:** per-side `PlayerCombobox` slots (filtered to that side's ungrouped players), tee `<select>` (default `DEFAULT_TEE_ID`), live per-slot strokes preview (singles = per pairing row; greensomes/four-ball over filled players). Empty-slot save allowed; all-empty disabled. **Edit** = tee change (whole-group restamp) + occupied-seat swap (adding/clearing a seat → recreate; noted limitation). **Remove** = `DangerModal`, blocked once scores exist.
+- **Error copy:** `pairingsCopy.ts` (pure) maps every typed 2.2a error to distinct plain-language text; `MixedTees`/`MatchHolesMissing` → the misconfigured-card copy. No raw error text, no shared generic. Failures render via the 2.1a banner pattern.
+
+### §1 per-match tee + migration 033
+
+- **Migration 033** (`tournament_matches.group_number` nullable `>0` + `idx_tm_session_group`) — committed verbatim (applied to prod 2026-07-27 via MCP; DO NOT re-apply).
+- `createGroup({…, teeId})` — `teeId` REQUIRED; stamps `round_players.tee_id = teeId` on every row (overrides `preferred_tee_id`) and computes CH from it → a match can never span two tees → `MixedTeesInMatchError` is structurally impossible (test proves `createGroup` output never triggers it). Assigns `group_number = max(session)+1` (singles: both matches share it). `sideAPlayerIds/sideBPlayerIds` are now `(number|null)[]` — nulls are empty slots, positions preserved so singles pairing (index → who-plays-whom) survives partial groups.
+- `updateGroup({…, teeId?})` — optional tee restamps the whole group + recomputes CH; swap still keyed on team_number (singles-swap immune). `deleteGroup({sessionId, groupNumber})` removes by group.
+- **`team_scores` UNIQUE finding:** migration 018's `team_scores_round_team_hole_ball_key UNIQUE (round_id, team_number, hole_number, ball_index)` already enforces one row per (round,team,hole) at `ball_index = 1` — **no migration needed.** Loader reads `ball_index === 1` explicitly (a stray `ball_index = 2` is a visible bug, not silently folded).
+
+### Tests / verification
+
+- **1111/1111 vitest (+11), tsc clean, 52/52 Playwright (+1).**
+- `tests/components/pairings-panel.test.tsx` (+9: error-copy mapping; strokes EQUAL the loader; header counts + tee label; greensomes collapsed CH; singles two matches / one group; partial amber; builder create; failed-mutation banner; has-scores Remove block). `pairings.test.ts` extended for tee stamping/restamping + `createGroup` never triggers `MixedTees` + group_number. `e2e/pairings.spec.ts` (+1: create group → strokes render → change tee → remove).
+- **Test-infra (additive):** e2e `supabaseMock` learned `tournament_matches` + the `tournament_players→players` embed; vitest `FakeSupabase` already had them.
+- **`roundsQueryGuard` unchanged** — the panel + pairings mutations add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **Edit can't add/clear a seat in place** (updateGroup is swap+tee, safely in-place — delete+recreate would risk data loss if the recreate failed). To fill an amber "waiting on 1 player" group or clear a seat, Remove + re-add. Flagged for your call; a safe in-place add/remove would extend `updateGroup`.
+- **Greensomes write shape** (one `team_scores` row at `ball_index = 1`) is now the loader's read contract; Phase 3 score entry must honor it.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2b — Pairings builder UI + per-match tee (DONE 2026-07-27, branch `tournament`).** Full-screen `PairingsPanel` per day: one card per group (singles = two matches), strokes from the loader, live builder preview via the shared `computeSideStrokes`, tee selector, amber-incomplete + misconfigured states, Edit/Remove under the has-scores rule, every typed error mapped to its own copy. `createGroup` stamps a required per-match tee (mixed tees impossible by construction) + a `group_number` (migration 033); greensomes `team_scores` read locked to `ball_index = 1`.
+
+### Tomorrow's priority
+
+- Phase 3: the match-play scorecard consuming `loadMatch` (singles = one card per foursome, both matches on screen) + score entry writing `scores` / greensomes `team_scores` at `ball_index = 1`.
 
 ---
 
