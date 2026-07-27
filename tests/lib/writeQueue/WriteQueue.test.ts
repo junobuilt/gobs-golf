@@ -8,12 +8,29 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WriteQueue } from "@/lib/writeQueue/WriteQueue";
 import { createStorage } from "@/lib/writeQueue/storage";
 import { backoffMs } from "@/lib/writeQueue/backoff";
-import type { QueueItem, ScorePayload, WriteResult } from "@/lib/writeQueue/types";
+import type { QueueItem, ScorePayload, TeamScorePayload, WriteResult } from "@/lib/writeQueue/types";
 
 function payload(rp: number, hole: number, strokes: number): ScorePayload {
   return { round_id: 1, round_player_id: rp, hole_number: hole, strokes };
 }
 const display = { player_name: "P", hole_label: "Hole" };
+
+function teamPayload(team: number, hole: number, strokes: number, ball = 1): TeamScorePayload {
+  return { round_id: 1, team_number: team, hole_number: hole, ball_index: ball, strokes };
+}
+
+function makeTeamQueue(opts: {
+  writer?: (item: QueueItem<TeamScorePayload>) => Promise<WriteResult>;
+  storageKey?: string;
+}) {
+  return new WriteQueue<TeamScorePayload>({
+    writer: opts.writer ?? (async () => ({ success: true })),
+    storage: createStorage<TeamScorePayload>({ key: opts.storageKey }),
+    kind: "team_score_upsert",
+    hailMaryStaggerMs: 0,
+    backstopIntervalMs: 30_000,
+  });
+}
 
 function makeQueue(opts: {
   writer?: (item: QueueItem) => Promise<WriteResult>;
@@ -521,5 +538,76 @@ describe("WriteQueue — subscribe", () => {
     q.enqueue(payload(101, 1, 4), display);
     await flush();
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+// ── Team-score queue (tournament greensomes) ──────────────────────────────────
+// Same durable machinery, TeamScorePayload instead of ScorePayload. Proves the
+// generic WriteQueue<P> gives alt-shot the offline tolerance individual scores
+// already have (§1.5 gap closed).
+describe("WriteQueue<TeamScorePayload> — greensomes", () => {
+  it("enqueue → drain → writer gets the team payload, item removed", async () => {
+    const writer = vi.fn(async () => ({ success: true as const }));
+    const q = makeTeamQueue({ writer });
+    q.enqueue(teamPayload(3, 5, 4), display);
+    await flush();
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(writer).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "team_score_upsert", payload: teamPayload(3, 5, 4) }),
+    );
+    expect(q.getItems()).toHaveLength(0);
+  });
+
+  it("collapses same (round,team,hole,ball); does NOT collapse a different ball_index", async () => {
+    let resolve!: (r: WriteResult) => void;
+    const gate = new Promise<WriteResult>(r => { resolve = r; });
+    let first = true;
+    const writer = vi.fn(() => {
+      if (first) { first = false; return gate; }
+      return Promise.resolve({ success: true as const });
+    });
+    const q = makeTeamQueue({ writer });
+    // First goes in_flight and parks on the gate.
+    q.enqueue(teamPayload(3, 5, 4), display);
+    await flush();
+    // Same key while one is in_flight → a fresh pending (D5), collapses among pendings.
+    q.enqueue(teamPayload(3, 5, 6), display); // same team/hole/ball → collapses pending
+    q.enqueue(teamPayload(3, 5, 7), display); // still same key → overwrites that pending
+    q.enqueue(teamPayload(3, 5, 8, 2), display); // ball_index 2 → distinct key, separate item
+    const pendings = q.getItems({ state: "pending" });
+    // one collapsed pending for ball 1 (strokes 7) + one for ball 2 (strokes 8).
+    expect(pendings).toHaveLength(2);
+    expect(pendings.find(i => i.payload.ball_index === 1)?.payload.strokes).toBe(7);
+    expect(pendings.find(i => i.payload.ball_index === 2)?.payload.strokes).toBe(8);
+    resolve({ success: true });
+    await flush();
+  });
+
+  it("persists to its own storage key and resurrects in_flight as pending", async () => {
+    const KEY = "gobs:team-write-queue:test";
+    let resolve!: (r: WriteResult) => void;
+    const writer = vi.fn(() => new Promise<WriteResult>(r => { resolve = r; }));
+    const q1 = makeTeamQueue({ writer, storageKey: KEY });
+    q1.enqueue(teamPayload(3, 7, 5), display);
+    await flush();
+    expect(q1.getItems()[0].state).toBe("in_flight");
+
+    // Rebuild against the same key: item survives, resurrected pending.
+    const q2 = makeTeamQueue({ writer: async () => ({ success: true }), storageKey: KEY });
+    expect(q2.getItems()).toHaveLength(1);
+    expect(q2.getItems()[0].state).toBe("pending");
+    expect(q2.getItems()[0].payload).toEqual(teamPayload(3, 7, 5));
+    resolve({ success: true });
+  });
+
+  it("individual and team queues on different keys don't see each other's items", async () => {
+    const scoreQ = makeQueue({});
+    const teamQ = makeTeamQueue({ storageKey: "gobs:team-write-queue:iso" });
+    scoreQ.enqueue(payload(101, 1, 4), display);
+    teamQ.enqueue(teamPayload(3, 1, 4), display);
+    await flush();
+    // Each drained its own; neither leaked into the other (distinct storage).
+    expect(scoreQ.getItems()).toHaveLength(0);
+    expect(teamQ.getItems()).toHaveLength(0);
   });
 });

@@ -11,18 +11,31 @@
 import type {
   QueueItem,
   QueueItemDisplay,
+  QueueKind,
   ScorePayload,
   SentryReporter,
+  TeamScorePayload,
   WriterFn,
 } from "./types";
 import { backoffMs, STUCK_TOO_LONG_MS } from "./backoff";
 import { createStorage, type QueueStorage } from "./storage";
 
-export interface WriteQueueOptions {
+export interface WriteQueueOptions<P = ScorePayload> {
   /** Performs the actual remote write. Phase C wires this to Supabase upsert. */
-  writer: WriterFn;
+  writer: WriterFn<P>;
   /** Storage adapter. Defaults to localStorage with in-memory fallback. */
-  storage?: QueueStorage;
+  storage?: QueueStorage<P>;
+  /**
+   * Item kind stamped on every enqueued item. Defaults to "score_upsert" so the
+   * individual score queue is unchanged; the team queue passes "team_score_upsert".
+   */
+  kind?: QueueKind;
+  /**
+   * localStorage key for this queue's durable items. Defaults to the individual
+   * score queue key; the team queue passes its own so a stuck team item never
+   * shares state with (or blocks) individual scores.
+   */
+  storageKey?: string;
   /** Sentry reporter for terminal failures, evictions, and crashes (D14). */
   sentry?: SentryReporter;
   /** Clock injection for tests. */
@@ -42,10 +55,11 @@ const NOOP_SENTRY: SentryReporter = {
 
 type Listener = () => void;
 
-export class WriteQueue {
-  private items: QueueItem[] = [];
-  private storage: QueueStorage;
-  private writer: WriterFn;
+export class WriteQueue<P = ScorePayload> {
+  private items: QueueItem<P>[] = [];
+  private storage: QueueStorage<P>;
+  private writer: WriterFn<P>;
+  private kind: QueueKind;
   private sentry: SentryReporter;
   private now: () => number;
   private backstopIntervalMs: number;
@@ -63,15 +77,17 @@ export class WriteQueue {
   } = {};
   private largeQueueWarned = false;
 
-  constructor(opts: WriteQueueOptions) {
+  constructor(opts: WriteQueueOptions<P>) {
     this.writer = opts.writer;
+    this.kind = opts.kind ?? "score_upsert";
     this.sentry = opts.sentry ?? NOOP_SENTRY;
     this.now = opts.now ?? Date.now;
     this.backstopIntervalMs = opts.backstopIntervalMs ?? 30_000;
     this.hailMaryStaggerMs = opts.hailMaryStaggerMs ?? 100;
     this.storage =
       opts.storage ??
-      createStorage({
+      createStorage<P>({
+        key: opts.storageKey,
         onEvict: (item, reason) => {
           this.sentry.captureMessage("writeQueue.evicted", {
             reason,
@@ -141,7 +157,7 @@ export class WriteQueue {
    * same (round_player_id, hole_number) key. D4. In-flight items with the
    * same key are NOT collapsed — D5 appends a fresh pending instead.
    */
-  enqueue(payload: ScorePayload, display: QueueItemDisplay): void {
+  enqueue(payload: P, display: QueueItemDisplay): void {
     const key = keyOf(payload);
     const existing = this.items.find(i => keyOf(i.payload) === key && i.state === "pending");
     if (existing) {
@@ -157,7 +173,7 @@ export class WriteQueue {
     }
     this.items.push({
       id: makeId(),
-      kind: "score_upsert",
+      kind: this.kind,
       payload,
       enqueued_at: this.now(),
       attempts: 0,
@@ -203,7 +219,7 @@ export class WriteQueue {
   }
 
   /** Snapshot of current items. Optional filter by state. */
-  getItems(filter?: { state?: QueueItem["state"] }): QueueItem[] {
+  getItems(filter?: { state?: QueueItem<P>["state"] }): QueueItem<P>[] {
     if (!filter?.state) return [...this.items];
     return this.items.filter(i => i.state === filter.state);
   }
@@ -271,7 +287,7 @@ export class WriteQueue {
    * callsites; defaults to "forget" for backward compatibility.
    */
   forget(ids: string[], reason: string = "forget"): void {
-    const removed: QueueItem[] = [];
+    const removed: QueueItem<P>[] = [];
     this.items = this.items.filter(i => {
       if (ids.includes(i.id)) {
         removed.push(i);
@@ -421,8 +437,15 @@ export class WriteQueue {
   }
 }
 
-function keyOf(p: ScorePayload): string {
-  return `${p.round_player_id}:${p.hole_number}`;
+// Collapse key. Structural over the two payload shapes: each WriteQueue holds a
+// single payload type (individual scores vs greensomes team scores), so the two
+// arms never coexist in one queue — the discriminant just picks the right key.
+// Score key stays exactly `${round_player_id}:${hole_number}` (unchanged);
+// team key is the team_scores UNIQUE tuple (round, team, hole, ball).
+function keyOf(p: unknown): string {
+  const t = p as Partial<ScorePayload & TeamScorePayload>;
+  if (t.round_player_id != null) return `${t.round_player_id}:${t.hole_number}`;
+  return `t:${t.round_id}:${t.team_number}:${t.hole_number}:${t.ball_index}`;
 }
 
 function makeId(): string {

@@ -8,6 +8,24 @@ export interface ScorePayload {
   strokes: number;
 }
 
+// Tournament greensomes (alternate shot) writes one collapsed team score per
+// (round, team, hole) at ball_index = 1. Persisted through a SEPARATE team
+// queue singleton (getTeamWriteQueue) so alt-shot gets the same offline
+// durability/retry as individual scores. Kept a distinct payload — NOT folded
+// into a union on ScorePayload — because the individual score queue's items are
+// read un-narrowed (item.payload.round_player_id) by the league scorecard, and
+// widening ScorePayload's item type would break those reads. The two queues are
+// generic instantiations of the same WriteQueue<P>; each holds one payload type.
+export interface TeamScorePayload {
+  round_id: number;
+  team_number: number;
+  hole_number: number;
+  ball_index: number;
+  strokes: number;
+}
+
+export type QueueKind = "score_upsert" | "team_score_upsert";
+
 export interface QueueItemDisplay {
   player_name: string;
   hole_label: string;
@@ -29,10 +47,10 @@ export interface QueueItemDisplay {
  */
 export type TerminalReason = "round_finalized" | null;
 
-export interface QueueItem {
+export interface QueueItem<P = ScorePayload> {
   id: string;
-  kind: "score_upsert";
-  payload: ScorePayload;
+  kind: QueueKind;
+  payload: P;
   enqueued_at: number;
   attempts: number;
   last_attempt_at: number | null;
@@ -60,7 +78,7 @@ export type WriteResult =
       error?: unknown;
     };
 
-export type WriterFn = (item: QueueItem) => Promise<WriteResult>;
+export type WriterFn<P = ScorePayload> = (item: QueueItem<P>) => Promise<WriteResult>;
 
 export interface SentryReporter {
   captureMessage(msg: string, ctx?: Record<string, unknown>): void;
