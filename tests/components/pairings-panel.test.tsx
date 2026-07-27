@@ -281,6 +281,26 @@ describe("PairingsPanel — Edit slot selection (bug 2.2c)", () => {
       expect(team1).not.toContain(1); // Al out
     });
   });
+
+  it("lets a swapped-out player be re-selected in the same session and saves back unchanged", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    // Swap slot 1 Al → Abe, then change your mind and pick Al again (same modal).
+    fireEvent.focus(await screen.findByLabelText("USA slot 1"));
+    fireEvent.click(screen.getByRole("option", { name: "Abe" }));
+    fireEvent.focus(screen.getByLabelText("USA slot 1"));
+    fireEvent.click(screen.getByRole("option", { name: "Al" })); // Al is re-listed now
+    expect(inputVal("USA slot 1")).toBe("Al");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      const team1 = (fakeRef.current.data.round_players as any[]).filter((r) => r.team_number === 1).map((r) => r.player_id);
+      expect(team1).toContain(1); // Al restored
+      expect(team1).not.toContain(3); // Abe never saved
+    });
+  });
 });
 
 // §2 UI — fill an empty seat / clear an occupied one, in place.

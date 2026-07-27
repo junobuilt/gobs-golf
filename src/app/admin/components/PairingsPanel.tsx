@@ -740,7 +740,11 @@ function EditGroup({
   }, [liveGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const picked = new Set<number>(Object.values(desired).filter((x): x is number => x != null));
-  const excludeIds = new Set<number>([...groupedIds, ...picked]);
+  // The group's OWN saved members are re-selectable within this modal session, so
+  // subtract them from groupedIds before excluding — a player swapped out can be
+  // swapped back before saving. `picked` still blocks anyone currently in a slot.
+  const ownMembers = new Set<number>(seats.map((s) => s.original).filter((x): x is number => x != null));
+  const excludeIds = new Set<number>([...[...groupedIds].filter((id) => !ownMembers.has(id)), ...picked]);
 
   const reloadFromDb = async () => {
     try {
