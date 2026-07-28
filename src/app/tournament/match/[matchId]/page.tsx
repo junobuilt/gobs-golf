@@ -34,6 +34,7 @@ import {
 } from "@/lib/tournament/matchScorecard";
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
+import MatchReviewGrid from "./MatchReviewGrid";
 
 // Side A = blue, Side B = red (shared team palette, same as the admin pairings).
 const SIDE_COLOR: Record<Side, { border: string; bg: string; text: string }> = {
@@ -491,6 +492,7 @@ function MatchCard({
   // Single source of truth: recompute the canonical state locally from the same
   // pure engine the loader calls, over the optimistic scores. Never our own math.
   const state = useMemo(() => recomputeState(loaded, scores), [loaded, scores]);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const holeMeta = loaded.holes[hole - 1];
   const gap = missingHoleGap(state);
@@ -736,6 +738,32 @@ function MatchCard({
             : `${outcome === "side_a" ? loaded.sideA.displayName : loaded.sideB.displayName} wins the hole`}
         </div>
       )}
+
+      {/* §C — read-only 18-hole review grid (paper verification at the turn/end).
+          Collapsed by default; no entry here. */}
+      <div style={{ marginTop: "12px" }}>
+        <button
+          type="button"
+          data-testid={`review-toggle-${loaded.match.id}`}
+          aria-expanded={reviewOpen}
+          onClick={() => setReviewOpen((v) => !v)}
+          style={{
+            background: "none",
+            border: "1px solid #cbd5e1",
+            borderRadius: "8px",
+            padding: "8px 12px",
+            fontSize: "0.8rem",
+            fontWeight: 700,
+            color: "#0c3057",
+            cursor: "pointer",
+          }}
+        >
+          {reviewOpen ? "Hide 18-hole review" : "Review 18 holes"}
+        </button>
+        {reviewOpen && (
+          <MatchReviewGrid loaded={loaded} scores={scores} state={state} flaggedHole={flaggedHole} />
+        )}
+      </div>
     </div>
   );
 }

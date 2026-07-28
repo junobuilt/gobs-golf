@@ -667,6 +667,63 @@ describe("match scorecard — flag this hole (B)", () => {
   });
 });
 
+// ── C: read-only 18-hole review grid ─────────────────────────────────────────
+describe("match scorecard — 18-hole review grid (C)", () => {
+  it("expands a read-only grid whose hole outcomes read the canonical MatchState", async () => {
+    // A wins hole 1 (P1 net 4 vs B best 6); B wins hole 2 (5 vs 4).
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "four_ball_match",
+        a: [{ playerId: 1, ch: 0, scored: { 1: 4, 2: 5 } }, { playerId: 2, ch: 0, scored: {} }],
+        b: [{ playerId: 3, ch: 0, scored: { 1: 6, 2: 4 } }, { playerId: 4, ch: 0, scored: {} }],
+      }),
+    );
+    await renderPage();
+
+    // Collapsed by default.
+    expect(screen.queryByTestId("review-grid-500")).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("review-toggle-500"));
+      await flush();
+    });
+
+    const grid = screen.getByTestId("review-grid-500");
+    // Both sides + all four players (four-ball) render.
+    expect(within(grid).getByTestId("review-side-a")).toHaveTextContent("P1");
+    expect(within(grid).getByTestId("review-side-a")).toHaveTextContent("P2");
+    expect(within(grid).getByTestId("review-side-b")).toHaveTextContent("P3");
+
+    // Hole outcomes are READ from the engine, not recomputed here.
+    expect(within(grid).getByTestId("review-outcome-1")).toHaveTextContent("A");
+    expect(within(grid).getByTestId("review-outcome-2")).toHaveTextContent("B");
+    expect(within(grid).getByTestId("review-outcome-3")).toHaveTextContent(""); // unresolved
+
+    // Read-only: no steppers anywhere in the grid.
+    expect(within(grid).queryAllByTestId("ball-1-plus")).toHaveLength(0);
+    // 18 holes rendered (PlayerHoleGrid + strip both carry hole 18).
+    expect(within(grid).getAllByText("18").length).toBeGreaterThan(0);
+  });
+
+  it("a flagged hole is marked on the review grid", async () => {
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "singles_match",
+        a: [{ playerId: 1, ch: 0, scored: {} }],
+        b: [{ playerId: 2, ch: 0, scored: {} }],
+        flaggedHole: 7,
+      }),
+    );
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("review-toggle-500"));
+      await flush();
+    });
+    // The flagged hole's cell in the strip carries the ⚑ marker.
+    const grid = screen.getByTestId("review-grid-500");
+    expect(within(grid).getByText("⚑")).toBeInTheDocument();
+  });
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 function range(lo: number, hi: number): number[] {
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
