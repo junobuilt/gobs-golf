@@ -55,16 +55,18 @@ describe("computeMatchStrokes (§2.1)", () => {
 });
 
 // ── §6.3 correction — greensomes min is across the two SIDES ─────────────────
-describe("greensomes team handicap + side strokes (§2.2 / correction 3)", () => {
-  it("5+15 (team 10) vs 10+20 (team 15) → team handicaps 10 & 15", () => {
-    expect(greensomesTeamHandicap(5, 15)).toBe(10);
-    expect(greensomesTeamHandicap(10, 20)).toBe(15);
+describe("greensomes team handicap + side strokes (§2.2 / correction 3 / Q4 60-40)", () => {
+  it("Q4 60/40: 5+15 → 9, 10+20 → 14 (0.6·low + 0.4·high, .5 up)", () => {
+    // Q4 weighted: 0.6·5 + 0.4·15 = 9; 0.6·10 + 0.4·20 = 14 (was 10 & 15 under
+    // half-of-combined). Only these two values move under the 60/40 flip.
+    expect(greensomesTeamHandicap(5, 15)).toBe(9);
+    expect(greensomesTeamHandicap(10, 20)).toBe(14);
   });
 
   it("yields TWO side strokes 0 and 5 — not four per-player values", () => {
-    const phA = greensomesTeamHandicap(5, 15); // 10
-    const phB = greensomesTeamHandicap(10, 20); // 15
-    expect(computeMatchStrokes([phA, phB])).toEqual([0, 5]);
+    const phA = greensomesTeamHandicap(5, 15); // 9
+    const phB = greensomesTeamHandicap(10, 20); // 14
+    expect(computeMatchStrokes([phA, phB])).toEqual([0, 5]); // 14−9 = 5 (spread preserved)
   });
 });
 
@@ -101,9 +103,9 @@ describe("handicap stroke changes the hole winner vs gross", () => {
   });
 
   it("greensomes: the higher team's stroke flips a gross A win into a halve", () => {
-    // Hole 1 (SI 1). Team A = 5+15 → 10; Team B = 10+20 → 15. minPH 10 → B gets
-    // 5 strokes, 1 on SI 1. teamGross A 4, B 5 → gross A WIN. B matchNet 5−1=4,
-    // A 4 → HALVE.
+    // Hole 1 (SI 1). Q4 60/40: Team A = 5+15 → 9; Team B = 10+20 → 14. minPH 9 →
+    // B gets 5 strokes (14−9, spread preserved), 1 on SI 1. teamGross A 4, B 5 →
+    // gross A WIN. B matchNet 5−1=4, A 4 → HALVE (outcome unchanged from 50/50).
     const teamA = gross({ 1: 4 });
     const teamB = gross({ 1: 5 });
     const input: MatchInput = {

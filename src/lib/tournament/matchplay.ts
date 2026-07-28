@@ -27,15 +27,15 @@ import type {
 } from "./types";
 
 // ── Greensomes team handicap ────────────────────────────────────────────────
-// Greensomes and foursomes share the SAME "half of combined, .5 up" allowance.
-// That formula already lives in the scoring core as computeTeamHandicap's
-// `alternate_shot` (2-player) branch — so this wrapper is the ONE place the
-// alternate_shot token stands in for a greensomes pair. Flip
-// GREENSOMES_TEAM_HANDICAP_METHOD to "sixty_forty" (60% low + 40% high, the
-// other common greensomes convention) as a one-line change here + a golden
-// update, if Dad confirms that instead. Nothing else in the codebase changes.
+// Q4 (Dad confirmed 2026-07-27): greensomes team handicap is 60% of the LOWER
+// course handicap + 40% of the higher, added, rounded .5 up (Math.round on the
+// non-negative CHs we store). This replaced the earlier "half of combined"
+// convention. Flip GREENSOMES_TEAM_HANDICAP_METHOD back to "half_combined" (which
+// reuses the scoring core's computeTeamHandicap alternate_shot branch) + a golden
+// update if it ever reverts. This wrapper is tournament-only; the LEAGUE
+// alternate_shot format uses computeTeamHandicap directly and is unaffected.
 export const GREENSOMES_TEAM_HANDICAP_METHOD: "half_combined" | "sixty_forty" =
-  "half_combined";
+  "sixty_forty";
 
 export function greensomesTeamHandicap(
   chA: number | null,
