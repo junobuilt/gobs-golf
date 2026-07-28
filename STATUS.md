@@ -2,10 +2,53 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-27 (Tournament Phase 3.1 FIX — hole context + offline crash; branch `tournament`)
-**Session purpose:** Two fixes from browser testing of the new match scorecard, one commit (`f5d315f`). **F2 (Critical):** a live card taken offline was being replaced ~3s later by "This match couldn't be found." Two defects: (1) the §8 background refetch shared one load path with the mount load and `setState`'d the error/not-found state on failure, destroying the live card — split into `initialLoad` (owns error UI) + best-effort `backgroundRefresh` (swallows failures, never clears state, may only promote a transient `offline` mount → `ready`); (2) every `loadMatch` read ignored the Supabase `error` field so an offline read (`data:null`) threw `MatchNotFoundError` — added `MatchLoadError` + an `unwrap({data,error})` on every read so a network failure → a new retryable `offline` state (never the not-found copy), a genuine zero-row result still → not-found. Reconcile now ports the league card's **load-then-overlay** (`overlayPending`: server truth base + this match's pending/in-flight queue items) so a refresh picks up other scorers' writes without clobbering local un-synced entries. **Self-recovery:** the 30s visible-poll fires regardless of load state (stuck-offline foreground card recovers ~30s, no tab switch) + a new `window` `online` listener for near-instant recovery. **F1 (Medium):** the card showed no hole context — surfaced `HoleMeta.yardage` additively and render a per-hole row (Hole # · Par · yds · SI) once per card, all three formats. **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+**Last updated:** 2026-07-27 (Tournament Phase 3.1 FIX — soft closeout; branch `tournament`)
+**Session purpose:** One render-branch fix on the match scorecard, one commit (`374a6ab`). **Soft closeout:** the card hid its score inputs the instant a match decided (`status === "complete"` → inputs gone), so a fat-fingered stray tap that closed a match early was uncorrectable — the inputs that would fix it were gone (confirmed live: a match closed on a stray tap and scoring was locked out). That contradicted the locked "soft closeout" intent. **Fix (`MatchCard` render):** the finish banner now renders ABOVE the inputs, and the inputs (steppers + hole context + outcome line) ALWAYS render — no hide, no edit-mode tap, no gate. Because the banner is derived from `computeMatchState` over the optimistic scores, correcting a stroke that un-decides the match recomputes to `in_progress` and the banner clears **automatically** — no reopen path. Removed the now-misleading `inputsHidden` seam helper. `scoredBeyondCloseout` + the Phase-4 `onRequestReopen` hook unchanged. Singles: per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner. No engine/`matchplay.ts` change. **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
-*Prior session (2026-07-27):* Tournament Phase 3.1 — the match-play scorecard itself — see the section below.
+*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — hole context + offline crash — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 FIX — soft closeout; branch `tournament`)
+
+### Where we left off
+
+One render-branch fix on the match scorecard, one commit (`374a6ab`). Surface only (`src/app/tournament/match/[matchId]/` + its seam `matchScorecard.ts`). No change to `scorecard/page.tsx`, the league engine, or `matchplay.ts`. SSOT holds. Next is still 3.2 (scorer claim, opposing read-only view, 18-hole review grid, device memory).
+
+- **The flaw.** `MatchCard` gated on `const hidden = inputsHidden(state)` (= `status === "complete"`); a ternary `{hidden ? banner : inputs}` rendered ONLY the banner when decided, dropping the steppers/hole-context/outcome. A stray tap that closed a match early was then uncorrectable — the halve test couldn't even be run because scoring was locked out.
+- **Fix.** Replaced the ternary: `{banner && <MatchClosedBanner/>}` (with a bottom margin) renders ABOVE, and the inputs block ALWAYS renders below. Banner = "currently decided", inputs = "correct if needed". No confirmation / edit-mode / admin gate — one trusted in-person group with paper backup; a stray tap is a far smaller cost than a lockout.
+- **Auto-clear falls out of the existing recompute.** `banner = finishBanner(state, loaded)` and `state = useMemo(() => recomputeState(loaded, scores), ...)` = `computeMatchState` over the optimistic scores; `finishBanner` returns null unless `status === "complete"`. So correcting a stroke → scores change → recompute → not complete → banner gone, match live again. No reopen path.
+- **Removed `inputsHidden`** from the seam (now misleading — inputs are never hidden) + its page import + its one seam-test assertion (→ `expect(state.status).toBe("complete")`).
+- **Singles:** each `MatchCard` derives its own state, so it's automatically per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner.
+- This supersedes the original §5 "remaining holes are not offered" — inputs now stay live for all holes on a decided match, exactly as during live play. `onRequestReopen` stays for genuine post-round admin edits (Phase 4).
+
+### DB changes
+
+- **None.** Render-branch only.
+
+### Tests / verification
+
+- **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.**
+- `tournament-match-scorecard.test.tsx`: +5 (decided match renders banner + editable inputs for singles / four-ball / greensomes; correcting a stroke that un-decides → banner disappears + inputs still editable, DOM drives the real recompute; singles — correcting the decided match clears only its banner, the other untouched). **Inverted 2 existing assertions** (the closeout test + the singles-independence test) from "inputs hidden on complete" → "inputs present". `matchScorecard.test.ts`: dropped the `inputsHidden` assertion.
+- The match e2e (`e2e/matchScorecard.spec.ts`) still passes — it enters through a closeout and asserts the banner, which still shows; it never asserted inputs were hidden.
+
+### Considered but not changed (confession)
+
+- No engine/`matchplay.ts` change — status + banner stay derived; the fix is purely which branches render.
+- Removed `inputsHidden` rather than leave misleading dead code; kept `finishBanner`/`missingHoleGap`/etc.
+- Pre-existing lint (`react-hooks/set-state-in-effect` `Tournament.tsx:216`, unused `Side` in `loadMatch.ts`) untouched; new code lint-clean.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 fix — soft closeout (DONE 2026-07-27, branch `tournament`).** A decided match keeps its score inputs live beneath the finish banner (no hide, no gate), so a stray tap that closes a match early is correctable in-round. The banner is derived from `computeMatchState`, so a correction that un-decides the match clears the banner automatically — no reopen path. Applies per-match on singles.
+
+### Tomorrow's priority
+
+- **Phase 3.2:** scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid; "who are you?" device memory (localStorage).
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37.
+
+--- a live card taken offline was being replaced ~3s later by "This match couldn't be found." Two defects: (1) the §8 background refetch shared one load path with the mount load and `setState`'d the error/not-found state on failure, destroying the live card — split into `initialLoad` (owns error UI) + best-effort `backgroundRefresh` (swallows failures, never clears state, may only promote a transient `offline` mount → `ready`); (2) every `loadMatch` read ignored the Supabase `error` field so an offline read (`data:null`) threw `MatchNotFoundError` — added `MatchLoadError` + an `unwrap({data,error})` on every read so a network failure → a new retryable `offline` state (never the not-found copy), a genuine zero-row result still → not-found. Reconcile now ports the league card's **load-then-overlay** (`overlayPending`: server truth base + this match's pending/in-flight queue items) so a refresh picks up other scorers' writes without clobbering local un-synced entries. **Self-recovery:** the 30s visible-poll fires regardless of load state (stuck-offline foreground card recovers ~30s, no tab switch) + a new `window` `online` listener for near-instant recovery. **F1 (Medium):** the card showed no hole context — surfaced `HoleMeta.yardage` additively and render a per-hole row (Hole # · Par · yds · SI) once per card, all three formats. **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
 ---
 
