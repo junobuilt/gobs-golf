@@ -12,15 +12,33 @@ import type { Tournament, TournamentSession } from "@/lib/tournament/types";
 const mocks = vi.hoisted(() => ({
   getActiveTournament: vi.fn(),
   getTournamentSessions: vi.fn(),
+  getTournamentPlayers: vi.fn(),
   loadSessionMatches: vi.fn(),
+  // Full-league-roster players returned by the inline supabase read.
+  players: [] as Array<{ id: number; full_name: string; display_name: string | null; is_active: boolean }>,
 }));
 
 vi.mock("@/lib/tournament/queries", () => ({
   getActiveTournament: mocks.getActiveTournament,
   getTournamentSessions: mocks.getTournamentSessions,
+  getTournamentPlayers: mocks.getTournamentPlayers,
 }));
 vi.mock("@/lib/tournament/loadMatch", () => ({
   loadSessionMatches: mocks.loadSessionMatches,
+}));
+// Only the landing's inline `players` read hits supabase (loaders are mocked
+// above). The chain resolves at `.order(...)` with the seeded roster.
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: () => {
+      const chain: any = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => Promise.resolve({ data: mocks.players, error: null }),
+      };
+      return chain;
+    },
+  },
 }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: any) => React.createElement("a", { href, ...rest }, children),
@@ -68,7 +86,10 @@ beforeEach(() => {
   window.localStorage.clear();
   mocks.getActiveTournament.mockReset();
   mocks.getTournamentSessions.mockReset();
+  mocks.getTournamentPlayers.mockReset();
+  mocks.getTournamentPlayers.mockResolvedValue([]);
   mocks.loadSessionMatches.mockReset();
+  mocks.players = [];
 });
 
 describe("tournament landing", () => {
@@ -195,16 +216,118 @@ describe("tournament landing", () => {
     expect(screen.getByTestId("go-to-your-match")).toHaveAttribute("href", "/tournament/match/611"); // P1's match today
   });
 
-  it("device memory: a stored identity with no match today shows the no-match note", async () => {
+  it("Fix 1: a future-dated match resolves to the nearest match (doesn't blank), naming the day", async () => {
+    // today = 2026-07-15; match is Aug 1 (future). Old behaviour blanked; now it
+    // resolves to the player's nearest today-or-later match.
     window.localStorage.setItem("gobs:tournament-player-id", "1");
     mocks.getActiveTournament.mockResolvedValue(tournament());
-    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-08-01")]); // NOT today
+    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-08-01")]);
     mocks.loadSessionMatches.mockResolvedValue([
       makeLoaded({ id: 700, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] }),
     ]);
     await renderPage();
-    expect(screen.getByTestId("device-identity")).toBeInTheDocument();
-    expect(screen.getByTestId("no-match-today")).toBeInTheDocument();
+    const link = screen.getByTestId("go-to-your-match");
+    expect(link).toHaveAttribute("href", "/tournament/match/700");
+    expect(link).toHaveTextContent("Your Day 1 match"); // day-named, not "today"
+    expect(screen.queryByTestId("no-match")).not.toBeInTheDocument();
+  });
+
+  it("Fix 1: picks the SOONEST today-or-later day when a player is matched on several", async () => {
+    window.localStorage.setItem("gobs:tournament-player-id", "1");
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([
+      session(9, 1, "singles_match", "2026-07-10"), // past
+      session(10, 2, "singles_match", "2026-07-20"), // soonest upcoming
+      session(11, 3, "singles_match", "2026-07-25"), // later
+    ]);
+    mocks.loadSessionMatches.mockImplementation(async (id: number) => {
+      const mid = id === 9 ? 900 : id === 10 ? 1000 : 1100;
+      return [makeLoaded({ id: mid, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] })];
+    });
+    await renderPage();
+    const link = screen.getByTestId("go-to-your-match");
+    expect(link).toHaveAttribute("href", "/tournament/match/1000"); // day 2 (soonest ≥ today)
+    expect(link).toHaveTextContent("Your Day 2 match");
+  });
+
+  it("Fix 1: an all-past tournament falls back to the most recent match", async () => {
+    window.localStorage.setItem("gobs:tournament-player-id", "1");
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([
+      session(9, 1, "singles_match", "2026-07-01"),
+      session(10, 2, "singles_match", "2026-07-05"), // most recent past
+    ]);
+    mocks.loadSessionMatches.mockImplementation(async (id: number) => {
+      const mid = id === 9 ? 900 : 1000;
+      return [makeLoaded({ id: mid, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] })];
+    });
+    await renderPage();
+    expect(screen.getByTestId("go-to-your-match")).toHaveAttribute("href", "/tournament/match/1000");
+  });
+
+  it("Fix 1: a stored player genuinely not matched on any day shows the no-match note", async () => {
+    window.localStorage.setItem("gobs:tournament-player-id", "99"); // in no match
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-07-15")]);
+    mocks.loadSessionMatches.mockResolvedValue([
+      makeLoaded({ id: 700, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] }),
+    ]);
+    await renderPage();
+    expect(screen.getByTestId("no-match")).toBeInTheDocument();
+    expect(screen.queryByTestId("go-to-your-match")).not.toBeInTheDocument();
+  });
+
+  it("Fix 2: full-roster fallback lists all league players; a tournament player resolves normally", async () => {
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-07-15")]);
+    mocks.loadSessionMatches.mockResolvedValue([
+      makeLoaded({ id: 700, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] }),
+    ]);
+    // Full league roster includes P1 (in tournament) + P8 (a league player NOT in it).
+    mocks.players = [
+      { id: 1, full_name: "Adam Apple", display_name: "Adam", is_active: true },
+      { id: 8, full_name: "Zed Zephyr", display_name: "Zed", is_active: true },
+    ];
+    mocks.getTournamentPlayers.mockResolvedValue([{ player_id: 1 }, { player_id: 2 }]);
+
+    await renderPage();
+    // Open the full roster.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("see-all-players"));
+      await flush();
+    });
+    expect(screen.getByTestId("all-players")).toBeInTheDocument();
+    expect(screen.getByTestId("allplayers-1")).toBeInTheDocument();
+    expect(screen.getByTestId("allplayers-8")).toBeInTheDocument();
+
+    // Pick P1 (a tournament participant) → resolves normally to their match.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("allplayers-1"));
+      await flush();
+    });
+    expect(screen.getByTestId("go-to-your-match")).toHaveAttribute("href", "/tournament/match/700");
+  });
+
+  it("Fix 2: picking a league player NOT in the tournament shows 'ask the admin' and does not store", async () => {
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-07-15")]);
+    mocks.loadSessionMatches.mockResolvedValue([
+      makeLoaded({ id: 700, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] }),
+    ]);
+    mocks.players = [{ id: 8, full_name: "Zed Zephyr", display_name: "Zed", is_active: true }];
+    mocks.getTournamentPlayers.mockResolvedValue([{ player_id: 1 }, { player_id: 2 }]); // 8 not in
+
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("see-all-players"));
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("allplayers-8"));
+      await flush();
+    });
+    expect(screen.getByTestId("not-in-tournament")).toHaveTextContent("ask the admin to add you");
+    expect(window.localStorage.getItem("gobs:tournament-player-id")).toBeNull(); // not stored
     expect(screen.queryByTestId("go-to-your-match")).not.toBeInTheDocument();
   });
 

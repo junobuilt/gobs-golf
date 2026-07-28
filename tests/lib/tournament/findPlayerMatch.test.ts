@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { findMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
+import { findMatchForPlayer, findNearestMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
 import { makeLoaded } from "../../support/matchFixture";
+
+function day(dayNumber: number, playedOn: string | null, matches: ReturnType<typeof makeLoaded>[]) {
+  return { session: { day_number: dayNumber, played_on: playedOn }, matches };
+}
+function singlesMatch(id: number, aId: number, bId: number) {
+  return makeLoaded({ id, format: "singles_match", teamA_number: aId, teamB_number: bId, a: [{ playerId: aId, ch: 0, scored: {} }], b: [{ playerId: bId, ch: 0, scored: {} }] });
+}
 
 describe("findMatchForPlayer", () => {
   it("resolves a player to their match on either side; undefined when absent", () => {
@@ -20,6 +27,39 @@ describe("findMatchForPlayer", () => {
     ];
     expect(findMatchForPlayer(day1, 1)?.match.id).toBe(500);
     expect(findMatchForPlayer(day2, 1)?.match.id).toBe(601);
+  });
+});
+
+describe("findNearestMatchForPlayer", () => {
+  const TODAY = "2026-07-15";
+
+  it("picks the soonest today-or-later day the player is matched on", () => {
+    const days = [
+      day(1, "2026-07-10", [singlesMatch(900, 1, 2)]), // past
+      day(2, "2026-07-20", [singlesMatch(1000, 1, 3)]), // soonest upcoming
+      day(3, "2026-07-25", [singlesMatch(1100, 1, 4)]), // later
+    ];
+    const r = findNearestMatchForPlayer(days, 1, TODAY);
+    expect(r?.match.match.id).toBe(1000);
+    expect(r?.day.session.day_number).toBe(2);
+  });
+
+  it("counts today as upcoming", () => {
+    const days = [day(1, "2026-07-15", [singlesMatch(700, 1, 2)])];
+    expect(findNearestMatchForPlayer(days, 1, TODAY)?.match.match.id).toBe(700);
+  });
+
+  it("falls back to the most recent when all the player's days are past", () => {
+    const days = [
+      day(1, "2026-07-01", [singlesMatch(900, 1, 2)]),
+      day(2, "2026-07-05", [singlesMatch(1000, 1, 3)]), // most recent
+    ];
+    expect(findNearestMatchForPlayer(days, 1, TODAY)?.match.match.id).toBe(1000);
+  });
+
+  it("returns null when the player has no match on any day", () => {
+    const days = [day(1, "2026-07-20", [singlesMatch(900, 2, 3)])];
+    expect(findNearestMatchForPlayer(days, 1, TODAY)).toBeNull();
   });
 });
 

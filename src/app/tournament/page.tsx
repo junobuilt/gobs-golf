@@ -4,9 +4,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { todayLocal, formatDisplayDate } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
-import { getActiveTournament, getTournamentSessions } from "@/lib/tournament/queries";
+import { supabase } from "@/lib/supabase";
+import { getActiveTournament, getTournamentSessions, getTournamentPlayers } from "@/lib/tournament/queries";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
-import { findMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
+import { findNearestMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
 import { getStoredPlayerId, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
 import type { LoadedMatch, SessionFormat, Side, Tournament, TournamentSession } from "@/lib/tournament/types";
 
@@ -125,6 +126,7 @@ export default function TournamentLandingPage() {
       <DeviceMemoryPanel
         days={state.days}
         today={today}
+        tournamentId={state.tournament.id}
         storedId={storedId}
         onPick={pickPlayer}
         onSwitch={switchPlayer}
@@ -149,17 +151,65 @@ export default function TournamentLandingPage() {
 function DeviceMemoryPanel({
   days,
   today,
+  tournamentId,
   storedId,
   onPick,
   onSwitch,
 }: {
   days: DayData[];
   today: string;
+  tournamentId: number;
   storedId: number | null;
   onPick: (playerId: number) => void;
   onSwitch: () => void;
 }) {
   const roster = tournamentPlayersFromDays(days.map((d) => d.matches));
+
+  // Fix 2 — full-league-roster fallback (lazy). fullRoster = every active player;
+  // participantIds = the authoritative tournament_players set (membership). Both
+  // fetched only when "See all players" is tapped — no extra load for the common
+  // case, no rounds read.
+  const [fullRoster, setFullRoster] = useState<Array<{ playerId: number; displayName: string }> | null>(null);
+  const [participantIds, setParticipantIds] = useState<Set<number>>(new Set());
+  const [loadingRoster, setLoadingRoster] = useState(false);
+  const [notInMsg, setNotInMsg] = useState<string | null>(null);
+
+  const openFullRoster = useCallback(async () => {
+    setLoadingRoster(true);
+    try {
+      const [{ data }, participants] = await Promise.all([
+        supabase
+          .from("players")
+          .select("id, full_name, display_name, is_active")
+          .eq("is_active", true)
+          .order("full_name"),
+        getTournamentPlayers(tournamentId),
+      ]);
+      setParticipantIds(new Set(participants.map((tp) => tp.player_id)));
+      setFullRoster(
+        (data ?? []).map((p: { id: number; full_name: string; display_name: string | null }) => ({
+          playerId: p.id,
+          displayName: p.display_name || p.full_name,
+        })),
+      );
+    } catch {
+      setFullRoster([]); // best-effort — a read failure just shows an empty list
+    } finally {
+      setLoadingRoster(false);
+    }
+  }, [tournamentId]);
+
+  const pickFromFullRoster = useCallback(
+    (p: { playerId: number; displayName: string }) => {
+      if (participantIds.has(p.playerId)) {
+        onPick(p.playerId); // in the tournament → resolves normally
+      } else {
+        setNotInMsg("You’re not in this tournament yet — ask the admin to add you.");
+      }
+    },
+    [participantIds, onPick],
+  );
+
   if (roster.length === 0) return null;
 
   const cardStyle: React.CSSProperties = {
@@ -169,41 +219,66 @@ function DeviceMemoryPanel({
     padding: "12px 14px",
     marginBottom: "14px",
   };
+  const nameBtn: React.CSSProperties = {
+    minHeight: "40px",
+    padding: "0 14px",
+    borderRadius: "8px",
+    border: "1px solid #cbd5e1",
+    background: "white",
+    color: "#0c3057",
+    fontWeight: 600,
+    cursor: "pointer",
+  };
 
-  // Not-yet-identified → the one-time picker.
+  // Not-yet-identified → the one-time picker (+ full-roster fallback).
   if (storedId == null) {
     return (
       <div data-testid="who-are-you" style={cardStyle}>
         <div style={{ fontWeight: 800, color: "#0c3057", marginBottom: "8px" }}>Who are you?</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
           {roster.map((p) => (
-            <button
-              key={p.playerId}
-              data-testid={`whoami-${p.playerId}`}
-              onClick={() => onPick(p.playerId)}
-              style={{
-                minHeight: "40px",
-                padding: "0 14px",
-                borderRadius: "8px",
-                border: "1px solid #cbd5e1",
-                background: "white",
-                color: "#0c3057",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
+            <button key={p.playerId} data-testid={`whoami-${p.playerId}`} onClick={() => onPick(p.playerId)} style={nameBtn}>
               {p.displayName}
             </button>
           ))}
         </div>
+
+        {fullRoster == null ? (
+          <button
+            data-testid="see-all-players"
+            onClick={openFullRoster}
+            disabled={loadingRoster}
+            style={{ marginTop: "10px", background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}
+          >
+            {loadingRoster ? "Loading…" : "Don’t see your name? See all players"}
+          </button>
+        ) : (
+          <div data-testid="all-players" style={{ marginTop: "10px" }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 800, color: "#6b7280", textTransform: "uppercase", marginBottom: "6px" }}>
+              All players
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {fullRoster.map((p) => (
+                <button key={p.playerId} data-testid={`allplayers-${p.playerId}`} onClick={() => pickFromFullRoster(p)} style={nameBtn}>
+                  {p.displayName}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {notInMsg && (
+          <div data-testid="not-in-tournament" style={{ marginTop: "10px", fontSize: "0.82rem", color: "#92400e", background: "#fef3c7", border: "1px solid #92400e", borderRadius: "8px", padding: "8px 10px" }}>
+            {notInMsg}
+          </div>
+        )}
       </div>
     );
   }
 
-  // Identified → resolve THIS device's player to their match for the current day.
+  // Identified → resolve THIS device's player to their NEAREST match (soonest
+  // today-or-later; else most recent). Names the day, not "today".
   const storedName = roster.find((p) => p.playerId === storedId)?.displayName ?? "you";
-  const todayDay = days.find((d) => d.session.played_on === today);
-  const myMatch = todayDay ? findMatchForPlayer(todayDay.matches, storedId) : undefined;
+  const nearest = findNearestMatchForPlayer(days, storedId, today);
 
   return (
     <div data-testid="device-identity" style={cardStyle}>
@@ -217,9 +292,9 @@ function DeviceMemoryPanel({
           Not you? Switch player
         </button>
       </div>
-      {myMatch ? (
+      {nearest ? (
         <Link
-          href={`/tournament/match/${myMatch.match.id}`}
+          href={`/tournament/match/${nearest.match.match.id}`}
           data-testid="go-to-your-match"
           style={{
             display: "block",
@@ -233,11 +308,11 @@ function DeviceMemoryPanel({
             textDecoration: "none",
           }}
         >
-          Go to your match →
+          Your Day {nearest.day.session.day_number} match ({formatDisplayDate(nearest.day.session.played_on ?? "")}) →
         </Link>
       ) : (
-        <div data-testid="no-match-today" style={{ marginTop: "8px", fontSize: "0.82rem", color: "#6b7280" }}>
-          No match for you today — check the days below.
+        <div data-testid="no-match" style={{ marginTop: "8px", fontSize: "0.82rem", color: "#6b7280" }}>
+          You’re in the tournament but not matched — check the days below.
         </div>
       )}
     </div>
