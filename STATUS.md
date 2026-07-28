@@ -2,10 +2,51 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-27 (Tournament Phase 3.1 — match-play scorecard; branch `tournament`)
-**Session purpose:** The first genuinely new player-facing surface: the public `/tournament/match/[matchId]` score-entry card for all three formats (alternate shot / best ball / singles). Single source of truth throughout — every stroke, net, hole outcome, status, margin, point, and counting-ball mark comes from `loadMatch` / the pure `matchplay` engine; the surface does **no** score arithmetic. It seeds an optimistic score map from the loader's grosses and re-runs `computeMatchState` **locally** on every entry, so status updates immediately offline. **Commit 1 (standalone):** made `WriteQueue` generic (`WriteQueue<P>`) + added `getTeamWriteQueue()` so greensomes `team_scores` writes get the same durable retry/offline tolerance as individual scores (chose two generic singletons over a discriminated union so the off-limits league scorecard's un-narrowed `payload.round_player_id` reads stay valid). **Commit 2:** the scorecard + the authorised additive engine field `countingUnit{A,B}` (four-ball counting ball) + loader surfacing `gross`/`teamGross`/`roundPlayerId` + the §0 day-card side-colour piggyback. **1156/1156 vitest (+34 net over 1122), tsc clean, 53/53 Playwright (+1); all 27 match goldens unchanged.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+**Last updated:** 2026-07-27 (Tournament Phase 3.1 FIX — hole context + offline crash; branch `tournament`)
+**Session purpose:** Two fixes from browser testing of the new match scorecard, one commit (`f5d315f`). **F2 (Critical):** a live card taken offline was being replaced ~3s later by "This match couldn't be found." Two defects: (1) the §8 background refetch shared one load path with the mount load and `setState`'d the error/not-found state on failure, destroying the live card — split into `initialLoad` (owns error UI) + best-effort `backgroundRefresh` (swallows failures, never clears state, may only promote a transient `offline` mount → `ready`); (2) every `loadMatch` read ignored the Supabase `error` field so an offline read (`data:null`) threw `MatchNotFoundError` — added `MatchLoadError` + an `unwrap({data,error})` on every read so a network failure → a new retryable `offline` state (never the not-found copy), a genuine zero-row result still → not-found. Reconcile now ports the league card's **load-then-overlay** (`overlayPending`: server truth base + this match's pending/in-flight queue items) so a refresh picks up other scorers' writes without clobbering local un-synced entries. **Self-recovery:** the 30s visible-poll fires regardless of load state (stuck-offline foreground card recovers ~30s, no tab switch) + a new `window` `online` listener for near-instant recovery. **F1 (Medium):** the card showed no hole context — surfaced `HoleMeta.yardage` additively and render a per-hole row (Hole # · Par · yds · SI) once per card, all three formats. **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
-*Prior session (2026-07-27):* Tournament Phase 2.2c — pairings fixes + day-card visibility — see the section below.
+*Prior session (2026-07-27):* Tournament Phase 3.1 — the match-play scorecard itself — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 FIX — hole context + offline crash; branch `tournament`)
+
+### Where we left off
+
+Two browser-found fixes on the new match scorecard, one commit (`f5d315f`). Surface only (`src/app/tournament/match/[matchId]/` + `loadMatch`). No change to `scorecard/page.tsx` or the league engine. SSOT holds. Next is still 3.2 (scorer claim, opposing read-only view, 18-hole review grid, device memory).
+
+- **F2 defect #1 — background failure destroyed the live card.** `page.tsx` had one `doLoad` that `setState`'d on every call; the §8 focus/visibility/poll effect called it, so a background network failure returned `{kind:"error"|"not_found"}` and blew away the `{ready}` card. **Fix:** `initialLoad()` alone owns the error UI; `backgroundRefresh()` is best-effort — `if (next.kind !== "ready") return;` (swallow, keep card + local scores). On success it reconciles; `setState(prev => prev.kind==="ready"||prev.kind==="offline" ? next : prev)` promotes a transient offline mount → ready but never demotes a live card.
+- **F2 defect #2 — network error rendered as "not found."** Every `loadMatch` read ignored the Supabase `error`; offline (`data:null,error:set`) → `MatchNotFoundError`. **Fix:** new `MatchLoadError` (transient) + `unwrap({data,error})` on ALL reads (primary matches, session, tournament, round_players, scores, team_scores, holes). Supabase `error` → `MatchLoadError` → new `offline` state (retry copy, NEVER "not found"); genuine null-rows (no error) → `MatchNotFoundError`. `loadGroup` catch order: MixedTees/HolesMissing → setup_error; MatchNotFoundError → not_found; MatchLoadError → offline; else → error.
+- **Reconcile (load-then-overlay).** New pure `overlayPending(loaded, base, pendingScores, pendingTeam)` in `matchScorecard.ts`: base = server truth (`initOptimisticScores`), overlay this match's non-terminal queue items (score by `round_player_id → playerId`, team by `team_number → side`), scoped to `session.roundId`. Used on BOTH initial + background success, so a refresh surfaces other scorers' server writes while keeping the local scorer's un-synced entries.
+- **Self-recovery of a stuck foreground card.** The §8 effect is mounted independent of load state → its **30s visible-poll keeps firing in the `offline` state** (recovers ~30s, no tab switch). Plus a new `window` `online` listener → **near-instant** recovery when signal returns. All triggers (`online` / 30s poll / focus / visibility) route through `backgroundRefresh`, so a failed refresh can never crash the card.
+- **F1 — hole context.** `HoleMeta.yardage?` added; `loadHolesByTee` select gains `yardage` (no new query). `MatchCard` renders `Hole {n} · Par {p} · {y} yds · SI {si}` once per hole from `loaded.holes[hole-1]`, identical across all three formats (yardage segment omitted if null).
+
+### DB changes
+
+- **None.** Code-only. `holes.yardage` already existed; the loader just selects it now.
+
+### Tests / verification
+
+- **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.**
+- `matchScorecard.test.ts` +3 (`overlayPending`: score overlay by rp→player; ignores wrong-round/unknown-player; greensomes team overlay). `loadMatchErrors.test.ts` +2 NEW (Supabase error → `MatchLoadError` not `MatchNotFoundError`; null-rows → `MatchNotFoundError` — direct supabase mock). `tournament-match-scorecard.test.tsx` +6 (background-fail keeps card + preserves score + no not-found; MatchLoadError initial → offline not not-found; genuine bad-ID → not-found; self-recovery via `online`; reconcile overlays server + keeps pending; F1 hole-context row). `loadMatch.test.ts` +2 asserts (yardage surfaced). `e2e/matchScorecard.spec.ts` +hole-context assertion (350 yds via the real loader).
+- **`roundsQueryGuard` untouched** — no new `from("rounds")` reads; `unwrap` and the yardage column are the only loader edits.
+
+### Considered but not changed (confession)
+
+- Did NOT touch `scorecard/page.tsx`/league engine — ported the overlay pattern.
+- `matchplay.ts` unchanged; `HoleMeta.yardage` optional so all fixtures/goldens stay valid.
+- Background refresh recovers a card from `ready`/`offline` only; genuine `not_found`/`setup_error`/`error` stay put until reload (background never routes TO the error UI, only away from a transient offline).
+- Pre-existing lint (`react-hooks/set-state-in-effect` in `Tournament.tsx:216`, `Side` unused in `loadMatch.ts`) left untouched — not this fix's scope; new code lint-clean.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 fix — hole context + offline crash (DONE 2026-07-27, branch `tournament`).** Match card shows per-hole #/par/yds/SI (yardage surfaced additively on `HoleMeta`). Background refresh is best-effort — a failed offline refetch no longer destroys the live card, and a network error is classified transient (`MatchLoadError` → retryable `offline` state), never "match not found." Self-recovers via the 30s poll + an `online` listener. Reconcile ports the league card's load-then-overlay (`overlayPending`: server truth + pending queue items).
+
+### Tomorrow's priority
+
+- **Phase 3.2:** scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid; "who are you?" device memory (localStorage).
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37.
 
 ---
 
