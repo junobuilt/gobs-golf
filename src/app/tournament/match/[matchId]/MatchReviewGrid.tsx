@@ -28,12 +28,12 @@ export default function MatchReviewGrid({
   loaded,
   scores,
   state,
-  flaggedHole,
+  flaggedHoles,
 }: {
   loaded: LoadedMatch;
   scores: OptimisticScores;
   state: MatchState;
-  flaggedHole: number | null;
+  flaggedHoles: number[];
 }) {
   const par = loaded.holes.map((h) => h.par);
   const alloc18 = (ms: number) => loaded.holes.map((h) => strokeDots(ms, h.strokeIndex));
@@ -80,7 +80,7 @@ export default function MatchReviewGrid({
 
   return (
     <div data-testid={`review-grid-${loaded.match.id}`} style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px" }}>
-      <OutcomeStrip outcomes={state.holeOutcomes} loaded={loaded} flaggedHole={flaggedHole} />
+      <OutcomeStrip outcomes={state.holeOutcomes} loaded={loaded} flaggedHoles={flaggedHoles} />
       {sideBlock("a")}
       {sideBlock("b")}
     </div>
@@ -93,11 +93,11 @@ export default function MatchReviewGrid({
 function OutcomeStrip({
   outcomes,
   loaded,
-  flaggedHole,
+  flaggedHoles,
 }: {
   outcomes: MatchState["holeOutcomes"];
   loaded: LoadedMatch;
-  flaggedHole: number | null;
+  flaggedHoles: number[];
 }) {
   const cell = (i: number) => {
     const holeNo = i + 1;
@@ -110,7 +110,7 @@ function OutcomeStrip({
     return (
       <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1px" }}>
         <div style={{ height: "10px", fontSize: "9px", color: "#b45309", lineHeight: 1 }}>
-          {flaggedHole === holeNo ? "⚑" : ""}
+          {flaggedHoles.includes(holeNo) ? "⚑" : ""}
         </div>
         <div style={{ fontSize: "9px", color: "#64748b" }}>{holeNo}</div>
         <div

@@ -150,17 +150,19 @@ export async function setMatchScorer(matchId: number, playerId: number | null): 
   if (error) throw new Error("setMatchScorer: " + error.message);
 }
 
-// "Flag this hole" — the opposing side marks the CURRENT hole as needing a
-// second look (a suspected wrong score) without seizing the scorer's control.
-// Metadata ONLY: it never changes a score / status / outcome. Migration 036 adds
-// tournament_matches.flagged_hole (nullable int). Pass null to clear the flag
-// (the scorer clears it by correcting the score, or dismisses it).
-export async function setMatchFlag(matchId: number, hole: number | null): Promise<void> {
+// "Flag this hole" — the opposing side marks holes as needing a second look
+// (suspected wrong scores) without seizing the scorer's control. Metadata ONLY:
+// it never changes a score / status / outcome. Migration 037 widened this to
+// tournament_matches.flagged_holes (int[]) so several holes can be flagged at
+// once. Writes the WHOLE set (read-modify-write from the caller's optimistic
+// state); pass [] to clear all. The scorer resolves a hole by correcting its
+// score or dismissing it (the caller drops that element and re-writes the set).
+export async function setMatchFlags(matchId: number, holes: number[]): Promise<void> {
   const { error } = await supabase
     .from("tournament_matches")
-    .update({ flagged_hole: hole })
+    .update({ flagged_holes: holes })
     .eq("id", matchId);
-  if (error) throw new Error("setMatchFlag: " + error.message);
+  if (error) throw new Error("setMatchFlags: " + error.message);
 }
 
 export async function endTournament(id: number): Promise<void> {

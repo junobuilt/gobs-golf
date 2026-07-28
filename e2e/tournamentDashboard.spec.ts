@@ -34,7 +34,7 @@ function seedTournament(published: boolean) {
   const match = (id: number, session: number, num: number) => ({
     id, tournament_id: 1, session_id: session, match_number: num, group_number: num,
     side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null,
-    result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_hole: null, admin_note: null,
+    result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_holes: [], admin_note: null,
   });
   return {
     players: [PLAYERS.adam, PLAYERS.betty],

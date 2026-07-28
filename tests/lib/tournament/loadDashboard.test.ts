@@ -68,7 +68,7 @@ function match(id: number, session_id: number, match_number: number, aTeam: numb
     result_source: "engine",
     closed_out_hole: null,
     scorer_label: null,
-    flagged_hole: null,
+    flagged_holes: [],
     admin_note: null,
     ...over,
   };

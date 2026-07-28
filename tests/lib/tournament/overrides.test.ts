@@ -54,7 +54,7 @@ function seed(): FakeData {
     tournaments: [TOURN],
     tournament_players: [],
     tournament_sessions: [{ id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false }],
-    tournament_matches: [{ id: 500, tournament_id: 1, session_id: 9, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_hole: null, admin_note: null }],
+    tournament_matches: [{ id: 500, tournament_id: 1, session_id: 9, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_holes: [], admin_note: null }],
     tournament_point_adjustments: [],
   };
 }

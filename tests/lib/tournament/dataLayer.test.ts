@@ -31,7 +31,7 @@ import {
   editSession,
   endTournament,
   LeagueRoundOwnsDateError,
-  setMatchFlag,
+  setMatchFlags,
   setMatchScorer,
   setPlayerSide,
   setTournamentPublished,
@@ -274,7 +274,7 @@ describe("editSession", () => {
 });
 
 // ── Phase 3.2 Relay B — scorer-claim + flag are coordination metadata ─────────
-describe("tournament data layer — setMatchScorer / setMatchFlag (coordination)", () => {
+describe("tournament data layer — setMatchScorer / setMatchFlags (coordination)", () => {
   beforeEach(() => {
     fakeRef.current = new FakeSupabase({
       ...seed(),
@@ -292,7 +292,7 @@ describe("tournament data layer — setMatchScorer / setMatchFlag (coordination)
           result_source: "engine",
           closed_out_hole: null,
           scorer_label: null,
-          flagged_hole: null,
+          flagged_holes: [],
           admin_note: null,
         },
       ],
@@ -312,14 +312,22 @@ describe("tournament data layer — setMatchScorer / setMatchFlag (coordination)
     expect(row().scorer_label).toBeNull();
   });
 
-  it("setMatchFlag marks / clears a hole without touching score/status", async () => {
-    await setMatchFlag(500, 4);
-    expect(row().flagged_hole).toBe(4);
+  it("setMatchFlags writes the whole hole set / clears it without touching score/status", async () => {
+    await setMatchFlags(500, [4]);
+    expect(row().flagged_holes).toEqual([4]);
     expect(row().status).toBe("pending");
     expect(row().result).toBeNull();
     expect(row().scorer_label).toBeNull();
 
-    await setMatchFlag(500, null);
-    expect(row().flagged_hole).toBeNull();
+    // Multiple holes flagged at once.
+    await setMatchFlags(500, [4, 8]);
+    expect(row().flagged_holes).toEqual([4, 8]);
+
+    // Resolving one hole re-writes the reduced set.
+    await setMatchFlags(500, [8]);
+    expect(row().flagged_holes).toEqual([8]);
+
+    await setMatchFlags(500, []);
+    expect(row().flagged_holes).toEqual([]);
   });
 });

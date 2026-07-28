@@ -104,7 +104,7 @@ function ReviewBody({ loaded }: { loaded: LoadedMatch }) {
         loaded={loaded}
         scores={scores}
         state={loaded.state}
-        flaggedHole={loaded.match.flagged_hole ?? null}
+        flaggedHoles={loaded.match.flagged_holes ?? []}
       />
     </div>
   );

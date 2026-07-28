@@ -14,7 +14,7 @@ import {
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
 import { getStoredPlayerId } from "@/lib/deviceMemory";
-import { setMatchScorer, setMatchFlag } from "@/lib/tournament/mutations";
+import { setMatchScorer, setMatchFlags } from "@/lib/tournament/mutations";
 import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
 import ScoreMark from "@/components/scorecard/ScoreMark";
@@ -92,12 +92,13 @@ function seedScorers(group: LoadedMatch[]): Record<number, string | null> {
   return out;
 }
 
-// The opposing side's "flag this hole" marker (Commit B). Like the claim it lives
-// on the match row (tournament_matches.flagged_hole, migration 036) so it rides
-// the same refresh — the scorer's device sees the flag within the poll interval.
-function seedFlags(group: LoadedMatch[]): Record<number, number | null> {
-  const out: Record<number, number | null> = {};
-  for (const m of group) out[m.match.id] = m.match.flagged_hole ?? null;
+// The opposing side's "flag this hole" markers (Commit B). Like the claim they
+// live on the match row (tournament_matches.flagged_holes int[], migration 037)
+// so they ride the same refresh — the scorer's device sees flags within the poll
+// interval. A set of holes: the opposing side can flag several at once.
+function seedFlags(group: LoadedMatch[]): Record<number, number[]> {
+  const out: Record<number, number[]> = {};
+  for (const m of group) out[m.match.id] = m.match.flagged_holes ?? [];
   return out;
 }
 
@@ -108,7 +109,7 @@ export default function MatchScorecardPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [scoresByMatch, setScoresByMatch] = useState<Record<number, OptimisticScores>>({});
   const [scorerByMatch, setScorerByMatch] = useState<Record<number, string | null>>({});
-  const [flagByMatch, setFlagByMatch] = useState<Record<number, number | null>>({});
+  const [flagByMatch, setFlagByMatch] = useState<Record<number, number[]>>({});
   const [currentHole, setCurrentHole] = useState(1);
   const [syncFailed, setSyncFailed] = useState(false);
 
@@ -124,7 +125,7 @@ export default function MatchScorecardPage() {
   useEffect(() => {
     scorerRef.current = scorerByMatch;
   }, [scorerByMatch]);
-  const flagRef = React.useRef<Record<number, number | null>>({});
+  const flagRef = React.useRef<Record<number, number[]>>({});
   useEffect(() => {
     flagRef.current = flagByMatch;
   }, [flagByMatch]);
@@ -263,25 +264,42 @@ export default function MatchScorecardPage() {
     [myPlayerId, claimFor],
   );
 
-  // Flag / clear a hole (Commit B). Optimistic + persist (best-effort; refresh
-  // reconciles). Metadata only — never touches a score. `clearFlag` is called
-  // both by the scorer's dismiss tap and automatically when the flagged hole's
-  // score is corrected.
-  const setFlag = useCallback((mId: number, hole: number | null) => {
-    flagRef.current = { ...flagRef.current, [mId]: hole };
-    setFlagByMatch((prev) => ({ ...prev, [mId]: hole }));
-    void setMatchFlag(mId, hole).catch(() => {
+  // Flag set for a match (Commit B, migration 037). Optimistic + persist the WHOLE
+  // set (best-effort; refresh reconciles). Metadata only — never touches a score.
+  const writeFlags = useCallback((mId: number, next: number[]) => {
+    flagRef.current = { ...flagRef.current, [mId]: next };
+    setFlagByMatch((prev) => ({ ...prev, [mId]: next }));
+    void setMatchFlags(mId, next).catch(() => {
       /* soft signal — self-heals on the next refresh */
     });
   }, []);
 
-  // The scorer corrected a score on a hole that was flagged → the flag has served
-  // its purpose; clear it.
+  // Opposing side flags a hole (dedupe, kept sorted for a stable "Holes 5, 8" read).
+  const addFlag = useCallback(
+    (mId: number, hole: number) => {
+      const cur = flagRef.current[mId] ?? [];
+      if (!cur.includes(hole)) writeFlags(mId, [...cur, hole].sort((a, b) => a - b));
+    },
+    [writeFlags],
+  );
+
+  // Resolve ONE flagged hole (scorer dismiss tap, or auto-clear on correction) —
+  // clears just that hole, leaving the others.
+  const resolveFlag = useCallback(
+    (mId: number, hole: number) => {
+      const cur = flagRef.current[mId] ?? [];
+      if (cur.includes(hole)) writeFlags(mId, cur.filter((h) => h !== hole));
+    },
+    [writeFlags],
+  );
+
+  // The scorer corrected a score on a flagged hole → that flag has served its
+  // purpose; clear just that one.
   const clearFlagIfOnHole = useCallback(
     (mId: number, hole: number) => {
-      if ((flagRef.current[mId] ?? null) === hole) setFlag(mId, null);
+      if ((flagRef.current[mId] ?? []).includes(hole)) resolveFlag(mId, hole);
     },
-    [setFlag],
+    [resolveFlag],
   );
 
   const setPlayerScore = useCallback(
@@ -451,9 +469,9 @@ export default function MatchScorecardPage() {
             iAmScorer={iAmScorer}
             claimantName={claimantName}
             onTakeOver={() => takeOver(m.match.id)}
-            flaggedHole={flagByMatch[m.match.id] ?? null}
-            onFlagHole={() => setFlag(m.match.id, currentHole)}
-            onClearFlag={() => setFlag(m.match.id, null)}
+            flaggedHoles={flagByMatch[m.match.id] ?? []}
+            onFlagHole={() => addFlag(m.match.id, currentHole)}
+            onResolveHole={(hole) => resolveFlag(m.match.id, hole)}
             onSetPlayer={setPlayerScore}
             onSetTeam={setTeamScore}
             onJumpToHole={setCurrentHole}
@@ -486,9 +504,9 @@ function MatchCard({
   iAmScorer,
   claimantName,
   onTakeOver,
-  flaggedHole,
+  flaggedHoles,
   onFlagHole,
-  onClearFlag,
+  onResolveHole,
   onSetPlayer,
   onSetTeam,
   onJumpToHole,
@@ -500,9 +518,9 @@ function MatchCard({
   iAmScorer: boolean;
   claimantName: string | null; // resolved name of whoever holds the claim, or null
   onTakeOver: () => void;
-  flaggedHole: number | null;
+  flaggedHoles: number[];
   onFlagHole: () => void;
-  onClearFlag: () => void;
+  onResolveHole: (hole: number) => void;
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void;
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void;
   onJumpToHole: (hole: number) => void;
@@ -562,18 +580,19 @@ function MatchCard({
         </span>
       </div>
 
-      {/* Flag marker (§B). Metadata only — a hole the opposing side flagged for a
-          second look; it never changes a score/status. Visible to everyone (the
-          scorer especially); tap to jump to the hole; the scorer dismisses it or
-          it auto-clears when that hole's score is corrected. */}
-      {flaggedHole != null && (
+      {/* Flag markers (§B, migration 037 multi-flag). Metadata only — holes the
+          opposing side flagged for a second look; never a score/status. Visible to
+          everyone (the scorer especially). The set is shown at once (flagging a
+          new hole never replaces an earlier one); tap a hole to jump to it; the
+          scorer resolves each independently (✕), or a hole auto-clears when its
+          score is corrected. */}
+      {flaggedHoles.length > 0 && (
         <div
           data-testid={`flag-marker-${loaded.match.id}`}
           style={{
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "10px",
+            flexDirection: "column",
+            gap: "6px",
             background: "#fef3c7",
             border: "1px solid #b45309",
             borderRadius: "8px",
@@ -581,40 +600,46 @@ function MatchCard({
             marginBottom: "10px",
           }}
         >
-          <button
-            type="button"
-            onClick={() => onJumpToHole(flaggedHole)}
-            style={{
-              background: "none",
-              border: "none",
-              padding: 0,
-              textAlign: "left",
-              fontSize: "0.82rem",
-              fontWeight: 700,
-              color: "#92400e",
-              cursor: "pointer",
-            }}
-          >
-            ⚑ Hole {flaggedHole} flagged — check this score
-          </button>
-          {iAmScorer && (
-            <button
-              type="button"
-              aria-label="Dismiss flag"
-              data-testid={`flag-dismiss-${loaded.match.id}`}
-              onClick={onClearFlag}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#92400e",
-                fontSize: "1rem",
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              ✕
-            </button>
-          )}
+          <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#92400e" }}>
+            ⚑ {flaggedHoles.length === 1 ? "Hole" : "Holes"} {flaggedHoles.join(", ")} flagged —
+            check {flaggedHoles.length === 1 ? "this score" : "these"}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {flaggedHoles.map((h) => (
+              <span
+                key={h}
+                data-testid={`flag-hole-${loaded.match.id}-${h}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  background: "#fff7e6",
+                  border: "1px solid #d9a441",
+                  borderRadius: "999px",
+                  padding: "2px 8px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => onJumpToHole(h)}
+                  style={{ background: "none", border: "none", padding: 0, fontSize: "0.78rem", fontWeight: 700, color: "#92400e", cursor: "pointer" }}
+                >
+                  Hole {h}
+                </button>
+                {iAmScorer && (
+                  <button
+                    type="button"
+                    aria-label={`Resolve hole ${h}`}
+                    data-testid={`flag-resolve-${loaded.match.id}-${h}`}
+                    onClick={() => onResolveHole(h)}
+                    style={{ background: "none", border: "none", padding: 0, color: "#92400e", fontSize: "0.9rem", fontWeight: 800, cursor: "pointer", lineHeight: 1 }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -789,7 +814,7 @@ function MatchCard({
           {reviewOpen ? "Hide 18-hole review" : "Review 18 holes"}
         </button>
         {reviewOpen && (
-          <MatchReviewGrid loaded={loaded} scores={scores} state={state} flaggedHole={flaggedHole} />
+          <MatchReviewGrid loaded={loaded} scores={scores} state={state} flaggedHoles={flaggedHoles} />
         )}
       </div>
     </div>

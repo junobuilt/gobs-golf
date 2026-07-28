@@ -106,9 +106,10 @@ export interface TournamentMatch {
   scorer_label: string | null;
   // Phase 3.2 Relay B — coordination metadata (never score data):
   // scorer_label = the current scorer's player_id as text (soft claim);
-  // flagged_hole = a hole the opposing side flagged for a second look (migration
-  // 036). Both are signals; neither changes a score / status / outcome.
-  flagged_hole: number | null;
+  // flagged_holes = the holes the opposing side flagged for a second look
+  // (migration 037 int[]; the pre-037 single flagged_hole int is frozen). Both
+  // are signals; neither changes a score / status / outcome.
+  flagged_holes: number[];
   admin_note: string | null;
   created_at?: string;
   updated_at?: string;

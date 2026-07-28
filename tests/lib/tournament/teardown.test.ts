@@ -45,7 +45,7 @@ function seed(): FakeData {
     tournaments: [{ id: 1, name: "Cup", is_active: true, is_published: true, started_on: "2026-08-01", side_a_name: "USA", side_b_name: "Canada", holder_side: "b", season_id: null, ended_on: null, notes: null }],
     tournament_players: [{ id: 1, tournament_id: 1, player_id: 2, side: "a" }],
     tournament_sessions: [{ id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false }],
-    tournament_matches: [{ id: 500, tournament_id: 1, session_id: 9, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_hole: null, admin_note: null }],
+    tournament_matches: [{ id: 500, tournament_id: 1, session_id: 9, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_holes: [], admin_note: null }],
     tournament_point_adjustments: [{ id: 1, tournament_id: 1, side: "a", points: 0.5, reason: "envelope", created_at: "2026-08-01T00:00:00Z" }],
   };
 }

@@ -137,7 +137,7 @@ function makeLoaded(opts: {
       result_source: "engine",
       closed_out_hole: null,
       scorer_label: null,
-      flagged_hole: null,
+      flagged_holes: [],
       admin_note: null,
     },
     session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },
