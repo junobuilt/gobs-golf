@@ -12,6 +12,8 @@ import {
 } from "@/lib/tournament/loadMatch";
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
+import { getStoredPlayerId } from "@/lib/deviceMemory";
+import { setMatchScorer } from "@/lib/tournament/mutations";
 import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
 import {
@@ -73,14 +75,42 @@ async function loadGroup(matchId: number): Promise<LoadState> {
   }
 }
 
+// Seed the per-match soft-claim map from the loaded group. The claim (who is
+// scoring) lives on tournament_matches.scorer_label — the player_id as text — so
+// it rides the same loadMatch refetch as scores: every backgroundRefresh reseeds
+// from server truth, which is exactly how a takeover on another device
+// propagates here (the map flips to the new claimant → this device's inputs
+// disable). Optimistic local claims (this device just claimed/took over) are
+// re-read on the next refresh; a brief flip-back before our own write lands is
+// benign — nothing is ever gated on the claim.
+function seedScorers(group: LoadedMatch[]): Record<number, string | null> {
+  const out: Record<number, string | null> = {};
+  for (const m of group) out[m.match.id] = m.match.scorer_label ?? null;
+  return out;
+}
+
 export default function MatchScorecardPage() {
   const params = useParams<{ matchId: string }>();
   const matchId = Number(params?.matchId);
 
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [scoresByMatch, setScoresByMatch] = useState<Record<number, OptimisticScores>>({});
+  const [scorerByMatch, setScorerByMatch] = useState<Record<number, string | null>>({});
   const [currentHole, setCurrentHole] = useState(1);
   const [syncFailed, setSyncFailed] = useState(false);
+
+  // Device identity (Relay A). Read once on mount (window-guarded → no hydration
+  // mismatch). Drives "am I the scorer" — an EXACT player_id match, not a name.
+  const [myPlayerId, setMyPlayerId] = useState<number | null>(null);
+  useEffect(() => setMyPlayerId(getStoredPlayerId()), []);
+
+  // Mirror scorerByMatch into a ref so the score-write callbacks can read the
+  // current claim synchronously (to claim-on-first-score) without stale closures
+  // or re-created callbacks.
+  const scorerRef = React.useRef<Record<number, string | null>>({});
+  useEffect(() => {
+    scorerRef.current = scorerByMatch;
+  }, [scorerByMatch]);
 
   // Reconcile = load-then-overlay: server truth (initOptimisticScores) as the
   // base, overlaid with each match's still-pending/in-flight queue items — so a
@@ -110,7 +140,10 @@ export default function MatchScorecardPage() {
     }
     const next = await loadGroup(matchId);
     setState(next);
-    if (next.kind === "ready") setScoresByMatch(reconcileScores(next.group));
+    if (next.kind === "ready") {
+      setScoresByMatch(reconcileScores(next.group));
+      setScorerByMatch(seedScorers(next.group));
+    }
   }, [matchId, reconcileScores]);
 
   // BEST-EFFORT background refresh — never routes to the error UI, never clears a
@@ -124,6 +157,7 @@ export default function MatchScorecardPage() {
     if (next.kind !== "ready") return; // failure → keep whatever is shown
     setState((prev) => (prev.kind === "ready" || prev.kind === "offline" ? next : prev));
     setScoresByMatch(reconcileScores(next.group));
+    setScorerByMatch(seedScorers(next.group)); // server truth → propagates takeovers
   }, [matchId, reconcileScores]);
 
   useEffect(() => {
@@ -177,8 +211,42 @@ export default function MatchScorecardPage() {
     };
   }, []);
 
+  // Optimistically reassign the claim to this device and persist it (best-effort;
+  // refresh reconciles). Both claim-on-first-score and one-tap "Take over" route
+  // here. NEVER gates a write — takeover just flips who the card shows as scoring
+  // and re-enables this device's inputs instantly.
+  const claimFor = useCallback(
+    (mId: number, pid: number | null) => {
+      const label = pid == null ? null : String(pid);
+      scorerRef.current = { ...scorerRef.current, [mId]: label };
+      setScorerByMatch((prev) => ({ ...prev, [mId]: label }));
+      void setMatchScorer(mId, pid).catch(() => {
+        /* soft signal — a failed claim self-heals on the next refresh */
+      });
+    },
+    [],
+  );
+
+  // First score on an UNCLAIMED match soft-claims it for this device. If claimed
+  // (by me or — after a takeover — someone else) it's left alone. Unidentified
+  // devices (no stored id) score without claiming.
+  const claimIfUnclaimed = useCallback(
+    (mId: number) => {
+      if (myPlayerId == null) return;
+      if ((scorerRef.current[mId] ?? null) != null) return;
+      claimFor(mId, myPlayerId);
+    },
+    [myPlayerId, claimFor],
+  );
+
+  const takeOver = useCallback(
+    (mId: number) => claimFor(mId, myPlayerId),
+    [myPlayerId, claimFor],
+  );
+
   const setPlayerScore = useCallback(
     (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => {
+      claimIfUnclaimed(m.match.id);
       setScoresByMatch((prev) => {
         const cur = prev[m.match.id] ?? initOptimisticScores(m);
         return {
@@ -200,11 +268,12 @@ export default function MatchScorecardPage() {
         );
       }
     },
-    [],
+    [claimIfUnclaimed],
   );
 
   const setTeamScore = useCallback(
     (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => {
+      claimIfUnclaimed(m.match.id);
       setScoresByMatch((prev) => {
         const cur = prev[m.match.id] ?? initOptimisticScores(m);
         return {
@@ -224,7 +293,7 @@ export default function MatchScorecardPage() {
         );
       }
     },
-    [],
+    [claimIfUnclaimed],
   );
 
   if (state.kind === "loading") {
@@ -307,18 +376,29 @@ export default function MatchScorecardPage() {
 
       <HoleDotRail currentHole={currentHole} onSelect={setCurrentHole} hasScore={anyScoreAtHole} />
 
-      {group.map((m) => (
-        <MatchCard
-          key={m.match.id}
-          loaded={m}
-          scores={scoresByMatch[m.match.id] ?? initOptimisticScores(m)}
-          hole={currentHole}
-          compact={group.length > 1}
-          onSetPlayer={setPlayerScore}
-          onSetTeam={setTeamScore}
-          onJumpToHole={setCurrentHole}
-        />
-      ))}
+      {group.map((m) => {
+        const claimant = scorerByMatch[m.match.id] ?? null;
+        // Unclaimed OR claimed by this device → this device may score. Claimed by
+        // someone else → read-only-styled + one-tap takeover (never a hard lock).
+        const iAmScorer = claimant == null || (myPlayerId != null && String(myPlayerId) === claimant);
+        const claimantName =
+          claimant == null ? null : displayForPlayer(m, Number(claimant), "Someone");
+        return (
+          <MatchCard
+            key={m.match.id}
+            loaded={m}
+            scores={scoresByMatch[m.match.id] ?? initOptimisticScores(m)}
+            hole={currentHole}
+            compact={group.length > 1}
+            iAmScorer={iAmScorer}
+            claimantName={claimantName}
+            onTakeOver={() => takeOver(m.match.id)}
+            onSetPlayer={setPlayerScore}
+            onSetTeam={setTeamScore}
+            onJumpToHole={setCurrentHole}
+          />
+        );
+      })}
 
       <HolePrevNext currentHole={currentHole} onSelect={setCurrentHole} />
     </Shell>
@@ -331,9 +411,9 @@ const FORMAT_LABEL: Record<LoadedMatch["session"]["format"], string> = {
   singles_match: "Singles",
 };
 
-function displayForPlayer(m: LoadedMatch, playerId: number): string {
+function displayForPlayer(m: LoadedMatch, playerId: number, fallback = "Player"): string {
   const p = [...m.sideA.players, ...m.sideB.players].find((x) => x.playerId === playerId);
-  return p?.displayName ?? "Player";
+  return p?.displayName ?? fallback;
 }
 
 // ── One match card: header + missing-hole prompt + inputs or finish banner ────
@@ -342,6 +422,9 @@ function MatchCard({
   scores,
   hole,
   compact,
+  iAmScorer,
+  claimantName,
+  onTakeOver,
   onSetPlayer,
   onSetTeam,
   onJumpToHole,
@@ -350,6 +433,9 @@ function MatchCard({
   scores: OptimisticScores;
   hole: number;
   compact: boolean;
+  iAmScorer: boolean;
+  claimantName: string | null; // resolved name of whoever holds the claim, or null
+  onTakeOver: () => void;
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void;
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void;
   onJumpToHole: (hole: number) => void;
@@ -398,6 +484,57 @@ function MatchCard({
             : `${marginWithSide(state, loaded)}${marginWithSide(state, loaded) ? " · " : ""}thru ${thruDisplay(state)}`}
         </span>
       </div>
+
+      {/* Soft scorer-claim (§A). Someone else scoring → read-only-styled inputs +
+          one-tap "Take over" (no confirm — a scorer who walks away must hand off
+          instantly). Never a hard lock: taking over is one tap and writes are
+          never gated on the claim. */}
+      {claimantName != null && !iAmScorer && (
+        <div
+          data-testid={`scorer-claim-${loaded.match.id}`}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "10px",
+            flexWrap: "wrap",
+            background: "#eef2f7",
+            border: "1px solid #cbd5e1",
+            borderRadius: "8px",
+            padding: "8px 10px",
+            marginBottom: "10px",
+          }}
+        >
+          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#374151" }}>
+            {claimantName} is scoring
+          </span>
+          <button
+            type="button"
+            data-testid={`take-over-${loaded.match.id}`}
+            onClick={onTakeOver}
+            style={{
+              background: "#0c3057",
+              color: "white",
+              border: "none",
+              borderRadius: "8px",
+              padding: "8px 12px",
+              fontSize: "0.8rem",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Take over scoring
+          </button>
+        </div>
+      )}
+      {claimantName != null && iAmScorer && (
+        <div
+          data-testid={`scoring-me-${loaded.match.id}`}
+          style={{ marginBottom: "10px", fontSize: "0.78rem", fontWeight: 600, color: "#276e34" }}
+        >
+          You’re scoring
+        </div>
+      )}
 
       {/* Missing-hole amber (§6 + Decision E): carried on every hole; inputs stay live. */}
       {gap != null && (
@@ -461,8 +598,8 @@ function MatchCard({
         </div>
       )}
       {loaded.session.format === "greensomes"
-        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam)
-        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer)}
+        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam, !iAmScorer)
+        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer, !iAmScorer)}
       {/* Hole outcome line (§4.4): nothing when a side has no score. */}
       {outcome != null && (
         <div
@@ -487,6 +624,7 @@ function renderGreensomes(
   hole: number,
   holeMeta: { par: number; strokeIndex: number },
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void,
+  readOnly: boolean,
 ) {
   const row = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
@@ -502,6 +640,7 @@ function renderGreensomes(
           par={holeMeta.par}
           dots={strokeDots(ms, holeMeta.strokeIndex)}
           net={net}
+          disabled={readOnly}
           onSet={(v) => onSetTeam(loaded, side, ls.teamNumber, hole, v)}
         />
       </SideBlock>
@@ -524,6 +663,7 @@ function renderIndividual(
   holeMeta: { par: number; strokeIndex: number },
   state: ReturnType<typeof recomputeState>,
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void,
+  readOnly: boolean,
 ) {
   const sideRow = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
@@ -550,6 +690,7 @@ function renderIndividual(
                 dots={strokeDots(p.matchStrokes, holeMeta.strokeIndex)}
                 net={net}
                 counting={marks[i]}
+                disabled={readOnly}
                 onSet={(v) => onSetPlayer(loaded, p.playerId, p.roundPlayerId, hole, v)}
               />
             </div>
@@ -597,6 +738,7 @@ function ScoreBox({
   dots,
   net,
   counting,
+  disabled,
   onSet,
 }: {
   testid: string;
@@ -605,11 +747,12 @@ function ScoreBox({
   dots: number;
   net: number | null;
   counting?: boolean;
+  disabled?: boolean;
   onSet: (value: number) => void;
 }) {
   return (
     <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-      <TeamHoleEntry ballCount={1} balls={balls} par={par} onSet={(_, v) => onSet(v)} />
+      <TeamHoleEntry ballCount={1} balls={balls} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
         {dots > 0 && (
           <div style={{ display: "flex", gap: "3px" }}>

@@ -46,6 +46,8 @@ export function makeLoaded(opts: {
   groupNumber?: number | null;
   teamA_number?: number;
   teamB_number?: number;
+  scorerLabel?: string | null;
+  flaggedHole?: number | null;
 }): LoadedMatch {
   const H = holes();
   const { format } = opts;
@@ -129,7 +131,8 @@ export function makeLoaded(opts: {
       result: null,
       result_source: "engine",
       closed_out_hole: null,
-      scorer_label: null,
+      scorer_label: opts.scorerLabel ?? null,
+      flagged_hole: opts.flaggedHole ?? null,
       admin_note: null,
     },
     session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },

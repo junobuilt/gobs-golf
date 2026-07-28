@@ -31,6 +31,8 @@ import {
   editSession,
   endTournament,
   LeagueRoundOwnsDateError,
+  setMatchFlag,
+  setMatchScorer,
   setPlayerSide,
   setTournamentPublished,
   TournamentDayDateTakenError,
@@ -268,5 +270,56 @@ describe("editSession", () => {
     // Compensating write restored the session date; the round never moved.
     expect((fakeRef.current.data.tournament_sessions as any[]).find((x) => x.id === s.id).played_on).toBe("2026-08-01");
     expect((fakeRef.current.data.rounds as any[]).find((r) => r.id === s.round_id).played_on).toBe("2026-08-01");
+  });
+});
+
+// ── Phase 3.2 Relay B — scorer-claim + flag are coordination metadata ─────────
+describe("tournament data layer — setMatchScorer / setMatchFlag (coordination)", () => {
+  beforeEach(() => {
+    fakeRef.current = new FakeSupabase({
+      ...seed(),
+      tournament_matches: [
+        {
+          id: 500,
+          tournament_id: 1,
+          session_id: 9,
+          match_number: 1,
+          group_number: null,
+          side_a_team_number: 1,
+          side_b_team_number: 2,
+          status: "pending",
+          result: null,
+          result_source: "engine",
+          closed_out_hole: null,
+          scorer_label: null,
+          flagged_hole: null,
+          admin_note: null,
+        },
+      ],
+    });
+  });
+
+  const row = () => (fakeRef.current.data.tournament_matches as any[]).find((m) => m.id === 500);
+
+  it("setMatchScorer writes the player_id as text; null releases the claim", async () => {
+    await setMatchScorer(500, 7);
+    expect(row().scorer_label).toBe("7"); // text, exact identity
+    // No score/status/result touched.
+    expect(row().status).toBe("pending");
+    expect(row().result).toBeNull();
+
+    await setMatchScorer(500, null);
+    expect(row().scorer_label).toBeNull();
+  });
+
+  it("setMatchFlag marks / clears a hole without touching score/status", async () => {
+    await setMatchFlag(500, 4);
+    expect(row().flagged_hole).toBe(4);
+    expect(row().status).toBe("pending");
+    expect(row().result).toBeNull();
+    expect(row().scorer_label).toBeNull();
+
+    await setMatchFlag(500, null);
+    expect(row().flagged_hole).toBeNull();
   });
 });

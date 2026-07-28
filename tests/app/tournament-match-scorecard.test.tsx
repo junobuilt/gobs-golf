@@ -17,11 +17,27 @@ const mocks = vi.hoisted(() => ({
   teamEnqueue: vi.fn(),
   scoreItems: [] as Array<{ state: string; payload?: Record<string, number> }>,
   teamItems: [] as Array<{ state: string; payload?: Record<string, number> }>,
+  storedPlayerId: null as number | null,
+  setMatchScorer: vi.fn(),
+  setMatchFlag: vi.fn(),
 }));
 
 // loadMatch.ts imports the supabase client at module load; stub it (we never
 // call the real loader — it's mocked below) so no real client is constructed.
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
+
+// Device identity (Relay A) — controllable per test.
+vi.mock("@/lib/deviceMemory", () => ({
+  getStoredPlayerId: () => mocks.storedPlayerId,
+  setStoredPlayerId: vi.fn(),
+  clearStoredPlayerId: vi.fn(),
+}));
+
+// Claim/flag coordination writes — capture without hitting the (stubbed) client.
+vi.mock("@/lib/tournament/mutations", () => ({
+  setMatchScorer: mocks.setMatchScorer,
+  setMatchFlag: mocks.setMatchFlag,
+}));
 
 vi.mock("@/lib/tournament/loadMatch", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/tournament/loadMatch")>();
@@ -64,6 +80,11 @@ beforeEach(() => {
   mocks.teamEnqueue.mockReset();
   mocks.scoreItems = [];
   mocks.teamItems = [];
+  mocks.storedPlayerId = null;
+  mocks.setMatchScorer.mockReset();
+  mocks.setMatchScorer.mockResolvedValue(undefined);
+  mocks.setMatchFlag.mockReset();
+  mocks.setMatchFlag.mockResolvedValue(undefined);
 });
 
 describe("match scorecard — four-ball rendering + counting ball", () => {
@@ -480,6 +501,97 @@ describe("match scorecard — hole context (F1)", () => {
     expect(ctx).toHaveTextContent("Par 4");
     expect(ctx).toHaveTextContent("300 yds"); // fixture yardage = 300 + (hole-1)*10
     expect(ctx).toHaveTextContent("SI 1");
+  });
+});
+
+// ── A: soft scorer-claim + one-tap takeover ──────────────────────────────────
+describe("match scorecard — soft scorer-claim (A)", () => {
+  function singles(scorerLabel: string | null = null) {
+    return makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+      scorerLabel,
+    });
+  }
+
+  it("first score on an unclaimed match soft-claims it for this device", async () => {
+    mocks.storedPlayerId = 1;
+    mocks.loadMatch.mockResolvedValue(singles(null));
+    await renderPage();
+    // Unclaimed → no claim banner, inputs live.
+    expect(screen.queryByTestId("scorer-claim-500")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus"));
+      await flush();
+    });
+
+    // Claimed for player 1 (as text) + the score still enqueued.
+    expect(mocks.setMatchScorer).toHaveBeenCalledWith(500, 1);
+    expect(mocks.scoreEnqueue).toHaveBeenCalled();
+    expect(screen.getByTestId("scoring-me-500")).toBeInTheDocument();
+  });
+
+  it("someone else scoring → read-only-styled inputs + a Take over button (no confirm)", async () => {
+    mocks.storedPlayerId = 1; // I am player 1; the claim is player 2.
+    mocks.loadMatch.mockResolvedValue(singles("2"));
+    await renderPage();
+
+    expect(screen.getByTestId("scorer-claim-500")).toHaveTextContent("P2 is scoring");
+    expect(screen.getByTestId("take-over-500")).toBeInTheDocument();
+    // Read-only STYLING: the stepper is disabled (a signal, not a data lock).
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeDisabled();
+  });
+
+  it("one-tap takeover reassigns the claim AND lets this device write (never hard-locked)", async () => {
+    mocks.storedPlayerId = 1;
+    mocks.loadMatch.mockResolvedValue(singles("2"));
+    await renderPage();
+
+    // One tap — no confirmation modal in between.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("take-over-500"));
+      await flush();
+    });
+    expect(mocks.setMatchScorer).toHaveBeenCalledWith(500, 1);
+    expect(screen.queryByTestId("scorer-claim-500")).not.toBeInTheDocument();
+
+    // Inputs are now live and a write goes through — nobody is stranded.
+    const plus = within(screen.getByTestId("player-1")).getByTestId("ball-1-plus");
+    expect(plus).not.toBeDisabled();
+    await act(async () => {
+      fireEvent.click(plus);
+      await flush();
+    });
+    expect(mocks.scoreEnqueue).toHaveBeenCalled();
+  });
+
+  it("claim state rides the refresh path — a background refresh surfaces a new scorer", async () => {
+    mocks.storedPlayerId = 1;
+    mocks.loadMatch.mockResolvedValueOnce(singles(null)); // mount: unclaimed
+    await renderPage();
+    expect(screen.queryByTestId("scorer-claim-500")).not.toBeInTheDocument();
+
+    // Another device claimed it; a background refetch reads the new scorer_label.
+    mocks.loadMatch.mockResolvedValue(singles("2"));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await flush();
+    });
+    expect(screen.getByTestId("scorer-claim-500")).toHaveTextContent("P2 is scoring");
+  });
+
+  it("an unidentified device can still score, but claims nothing", async () => {
+    mocks.storedPlayerId = null; // never picked "who are you?"
+    mocks.loadMatch.mockResolvedValue(singles(null));
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus"));
+      await flush();
+    });
+    expect(mocks.scoreEnqueue).toHaveBeenCalled(); // write not blocked
+    expect(mocks.setMatchScorer).not.toHaveBeenCalled(); // but no claim written
   });
 });
 

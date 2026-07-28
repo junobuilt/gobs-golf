@@ -134,6 +134,35 @@ export async function setTournamentPublished(id: number, isPublished: boolean): 
   await updateTournament(id, { is_published: isPublished });
 }
 
+// ── Phase 3.2 Relay B — scorer coordination metadata ─────────────────────────
+// SOFT claim: who is currently scoring a match. Stored as the scorer's player_id
+// (as text) in tournament_matches.scorer_label — an EXACT-identity check against
+// the device's stored player_id (getStoredPlayerId), resilient to this league's
+// duplicate first names. Coordination metadata ONLY: it never gates a score write
+// (the claim is a signal, not a lock — a non-claimant takes over in one tap and
+// writes). Best-effort; the 30s refresh reconciles from server truth. Pass null
+// to release the claim.
+export async function setMatchScorer(matchId: number, playerId: number | null): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ scorer_label: playerId == null ? null : String(playerId) })
+    .eq("id", matchId);
+  if (error) throw new Error("setMatchScorer: " + error.message);
+}
+
+// "Flag this hole" — the opposing side marks the CURRENT hole as needing a
+// second look (a suspected wrong score) without seizing the scorer's control.
+// Metadata ONLY: it never changes a score / status / outcome. Migration 036 adds
+// tournament_matches.flagged_hole (nullable int). Pass null to clear the flag
+// (the scorer clears it by correcting the score, or dismisses it).
+export async function setMatchFlag(matchId: number, hole: number | null): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ flagged_hole: hole })
+    .eq("id", matchId);
+  if (error) throw new Error("setMatchFlag: " + error.message);
+}
+
 export async function endTournament(id: number): Promise<void> {
   // ended_on must never predate started_on. Ending a not-yet-started tournament
   // (today < started_on) records the start date instead of today. Migration 032
