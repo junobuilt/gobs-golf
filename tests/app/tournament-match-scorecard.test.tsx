@@ -595,6 +595,78 @@ describe("match scorecard — soft scorer-claim (A)", () => {
   });
 });
 
+// ── B: "Flag this hole" — opposing-side escape valve (metadata only) ──────────
+describe("match scorecard — flag this hole (B)", () => {
+  function singles(opts: { scorerLabel?: string | null; flaggedHole?: number | null } = {}) {
+    return makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+      scorerLabel: opts.scorerLabel ?? null,
+      flaggedHole: opts.flaggedHole ?? null,
+    });
+  }
+
+  it("a non-scorer flags the current hole — metadata write, no score touched", async () => {
+    mocks.storedPlayerId = 1; // P2 is scoring; I'm the opposing P1.
+    mocks.loadMatch.mockResolvedValue(singles({ scorerLabel: "2" }));
+    await renderPage();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("flag-hole-500")); // current hole = 1
+      await flush();
+    });
+
+    expect(mocks.setMatchFlag).toHaveBeenCalledWith(500, 1);
+    expect(mocks.scoreEnqueue).not.toHaveBeenCalled(); // never a score write
+    expect(screen.getByTestId("flag-marker-500")).toHaveTextContent("Hole 1 flagged");
+  });
+
+  it("the flag rides the refresh path — a background refresh surfaces it to the scorer", async () => {
+    mocks.storedPlayerId = 1;
+    mocks.loadMatch.mockResolvedValueOnce(singles({ scorerLabel: "2", flaggedHole: null }));
+    await renderPage();
+    expect(screen.queryByTestId("flag-marker-500")).not.toBeInTheDocument();
+
+    mocks.loadMatch.mockResolvedValue(singles({ scorerLabel: "2", flaggedHole: 5 }));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await flush();
+    });
+    expect(screen.getByTestId("flag-marker-500")).toHaveTextContent("Hole 5 flagged");
+  });
+
+  it("correcting the flagged hole's score clears the flag automatically", async () => {
+    mocks.storedPlayerId = 1; // unclaimed → I'm the scorer; hole 1 is flagged.
+    mocks.loadMatch.mockResolvedValue(singles({ scorerLabel: null, flaggedHole: 1 }));
+    await renderPage();
+    expect(screen.getByTestId("flag-marker-500")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")); // correct hole 1
+      await flush();
+    });
+
+    expect(mocks.setMatchFlag).toHaveBeenCalledWith(500, null);
+    expect(screen.queryByTestId("flag-marker-500")).not.toBeInTheDocument();
+  });
+
+  it("the scorer can dismiss the flag; a non-scorer has no flag button on an unclaimed match", async () => {
+    mocks.storedPlayerId = 1;
+    mocks.loadMatch.mockResolvedValue(singles({ scorerLabel: null, flaggedHole: 3 }));
+    await renderPage();
+    // Unclaimed → I'm scorer → no "Flag this hole" button (that's the opposing view).
+    expect(screen.queryByTestId("flag-hole-500")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("flag-dismiss-500"));
+      await flush();
+    });
+    expect(mocks.setMatchFlag).toHaveBeenCalledWith(500, null);
+    expect(screen.queryByTestId("flag-marker-500")).not.toBeInTheDocument();
+  });
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 function range(lo: number, hi: number): number[] {
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);

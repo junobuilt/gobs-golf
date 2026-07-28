@@ -13,7 +13,7 @@ import {
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
 import { getStoredPlayerId } from "@/lib/deviceMemory";
-import { setMatchScorer } from "@/lib/tournament/mutations";
+import { setMatchScorer, setMatchFlag } from "@/lib/tournament/mutations";
 import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
 import {
@@ -89,6 +89,15 @@ function seedScorers(group: LoadedMatch[]): Record<number, string | null> {
   return out;
 }
 
+// The opposing side's "flag this hole" marker (Commit B). Like the claim it lives
+// on the match row (tournament_matches.flagged_hole, migration 036) so it rides
+// the same refresh — the scorer's device sees the flag within the poll interval.
+function seedFlags(group: LoadedMatch[]): Record<number, number | null> {
+  const out: Record<number, number | null> = {};
+  for (const m of group) out[m.match.id] = m.match.flagged_hole ?? null;
+  return out;
+}
+
 export default function MatchScorecardPage() {
   const params = useParams<{ matchId: string }>();
   const matchId = Number(params?.matchId);
@@ -96,6 +105,7 @@ export default function MatchScorecardPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [scoresByMatch, setScoresByMatch] = useState<Record<number, OptimisticScores>>({});
   const [scorerByMatch, setScorerByMatch] = useState<Record<number, string | null>>({});
+  const [flagByMatch, setFlagByMatch] = useState<Record<number, number | null>>({});
   const [currentHole, setCurrentHole] = useState(1);
   const [syncFailed, setSyncFailed] = useState(false);
 
@@ -111,6 +121,10 @@ export default function MatchScorecardPage() {
   useEffect(() => {
     scorerRef.current = scorerByMatch;
   }, [scorerByMatch]);
+  const flagRef = React.useRef<Record<number, number | null>>({});
+  useEffect(() => {
+    flagRef.current = flagByMatch;
+  }, [flagByMatch]);
 
   // Reconcile = load-then-overlay: server truth (initOptimisticScores) as the
   // base, overlaid with each match's still-pending/in-flight queue items — so a
@@ -143,6 +157,7 @@ export default function MatchScorecardPage() {
     if (next.kind === "ready") {
       setScoresByMatch(reconcileScores(next.group));
       setScorerByMatch(seedScorers(next.group));
+      setFlagByMatch(seedFlags(next.group));
     }
   }, [matchId, reconcileScores]);
 
@@ -158,6 +173,7 @@ export default function MatchScorecardPage() {
     setState((prev) => (prev.kind === "ready" || prev.kind === "offline" ? next : prev));
     setScoresByMatch(reconcileScores(next.group));
     setScorerByMatch(seedScorers(next.group)); // server truth → propagates takeovers
+    setFlagByMatch(seedFlags(next.group)); // and the opposing side's hole flags
   }, [matchId, reconcileScores]);
 
   useEffect(() => {
@@ -244,9 +260,31 @@ export default function MatchScorecardPage() {
     [myPlayerId, claimFor],
   );
 
+  // Flag / clear a hole (Commit B). Optimistic + persist (best-effort; refresh
+  // reconciles). Metadata only — never touches a score. `clearFlag` is called
+  // both by the scorer's dismiss tap and automatically when the flagged hole's
+  // score is corrected.
+  const setFlag = useCallback((mId: number, hole: number | null) => {
+    flagRef.current = { ...flagRef.current, [mId]: hole };
+    setFlagByMatch((prev) => ({ ...prev, [mId]: hole }));
+    void setMatchFlag(mId, hole).catch(() => {
+      /* soft signal — self-heals on the next refresh */
+    });
+  }, []);
+
+  // The scorer corrected a score on a hole that was flagged → the flag has served
+  // its purpose; clear it.
+  const clearFlagIfOnHole = useCallback(
+    (mId: number, hole: number) => {
+      if ((flagRef.current[mId] ?? null) === hole) setFlag(mId, null);
+    },
+    [setFlag],
+  );
+
   const setPlayerScore = useCallback(
     (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => {
       claimIfUnclaimed(m.match.id);
+      clearFlagIfOnHole(m.match.id, hole);
       setScoresByMatch((prev) => {
         const cur = prev[m.match.id] ?? initOptimisticScores(m);
         return {
@@ -268,12 +306,13 @@ export default function MatchScorecardPage() {
         );
       }
     },
-    [claimIfUnclaimed],
+    [claimIfUnclaimed, clearFlagIfOnHole],
   );
 
   const setTeamScore = useCallback(
     (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => {
       claimIfUnclaimed(m.match.id);
+      clearFlagIfOnHole(m.match.id, hole);
       setScoresByMatch((prev) => {
         const cur = prev[m.match.id] ?? initOptimisticScores(m);
         return {
@@ -293,7 +332,7 @@ export default function MatchScorecardPage() {
         );
       }
     },
-    [claimIfUnclaimed],
+    [claimIfUnclaimed, clearFlagIfOnHole],
   );
 
   if (state.kind === "loading") {
@@ -393,6 +432,9 @@ export default function MatchScorecardPage() {
             iAmScorer={iAmScorer}
             claimantName={claimantName}
             onTakeOver={() => takeOver(m.match.id)}
+            flaggedHole={flagByMatch[m.match.id] ?? null}
+            onFlagHole={() => setFlag(m.match.id, currentHole)}
+            onClearFlag={() => setFlag(m.match.id, null)}
             onSetPlayer={setPlayerScore}
             onSetTeam={setTeamScore}
             onJumpToHole={setCurrentHole}
@@ -425,6 +467,9 @@ function MatchCard({
   iAmScorer,
   claimantName,
   onTakeOver,
+  flaggedHole,
+  onFlagHole,
+  onClearFlag,
   onSetPlayer,
   onSetTeam,
   onJumpToHole,
@@ -436,6 +481,9 @@ function MatchCard({
   iAmScorer: boolean;
   claimantName: string | null; // resolved name of whoever holds the claim, or null
   onTakeOver: () => void;
+  flaggedHole: number | null;
+  onFlagHole: () => void;
+  onClearFlag: () => void;
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void;
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void;
   onJumpToHole: (hole: number) => void;
@@ -485,10 +533,67 @@ function MatchCard({
         </span>
       </div>
 
+      {/* Flag marker (§B). Metadata only — a hole the opposing side flagged for a
+          second look; it never changes a score/status. Visible to everyone (the
+          scorer especially); tap to jump to the hole; the scorer dismisses it or
+          it auto-clears when that hole's score is corrected. */}
+      {flaggedHole != null && (
+        <div
+          data-testid={`flag-marker-${loaded.match.id}`}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "10px",
+            background: "#fef3c7",
+            border: "1px solid #b45309",
+            borderRadius: "8px",
+            padding: "8px 10px",
+            marginBottom: "10px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onJumpToHole(flaggedHole)}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              textAlign: "left",
+              fontSize: "0.82rem",
+              fontWeight: 700,
+              color: "#92400e",
+              cursor: "pointer",
+            }}
+          >
+            ⚑ Hole {flaggedHole} flagged — check this score
+          </button>
+          {iAmScorer && (
+            <button
+              type="button"
+              aria-label="Dismiss flag"
+              data-testid={`flag-dismiss-${loaded.match.id}`}
+              onClick={onClearFlag}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#92400e",
+                fontSize: "1rem",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Soft scorer-claim (§A). Someone else scoring → read-only-styled inputs +
           one-tap "Take over" (no confirm — a scorer who walks away must hand off
           instantly). Never a hard lock: taking over is one tap and writes are
-          never gated on the claim. */}
+          never gated on the claim. The opposing viewer can instead "Flag this
+          hole" to signal a wrong score without seizing control (§B). */}
       {claimantName != null && !iAmScorer && (
         <div
           data-testid={`scorer-claim-${loaded.match.id}`}
@@ -508,23 +613,42 @@ function MatchCard({
           <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#374151" }}>
             {claimantName} is scoring
           </span>
-          <button
-            type="button"
-            data-testid={`take-over-${loaded.match.id}`}
-            onClick={onTakeOver}
-            style={{
-              background: "#0c3057",
-              color: "white",
-              border: "none",
-              borderRadius: "8px",
-              padding: "8px 12px",
-              fontSize: "0.8rem",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Take over scoring
-          </button>
+          <span style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              data-testid={`flag-hole-${loaded.match.id}`}
+              onClick={onFlagHole}
+              style={{
+                background: "white",
+                color: "#92400e",
+                border: "1px solid #b45309",
+                borderRadius: "8px",
+                padding: "8px 12px",
+                fontSize: "0.8rem",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              ⚑ Flag this hole
+            </button>
+            <button
+              type="button"
+              data-testid={`take-over-${loaded.match.id}`}
+              onClick={onTakeOver}
+              style={{
+                background: "#0c3057",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                padding: "8px 12px",
+                fontSize: "0.8rem",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Take over scoring
+            </button>
+          </span>
         </div>
       )}
       {claimantName != null && iAmScorer && (
