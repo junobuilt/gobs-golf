@@ -2,10 +2,57 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-27 (Tournament Phase 3.1 FIX — soft closeout; branch `tournament`)
-**Session purpose:** One render-branch fix on the match scorecard, one commit (`374a6ab`). **Soft closeout:** the card hid its score inputs the instant a match decided (`status === "complete"` → inputs gone), so a fat-fingered stray tap that closed a match early was uncorrectable — the inputs that would fix it were gone (confirmed live: a match closed on a stray tap and scoring was locked out). That contradicted the locked "soft closeout" intent. **Fix (`MatchCard` render):** the finish banner now renders ABOVE the inputs, and the inputs (steppers + hole context + outcome line) ALWAYS render — no hide, no edit-mode tap, no gate. Because the banner is derived from `computeMatchState` over the optimistic scores, correcting a stroke that un-decides the match recomputes to `in_progress` and the banner clears **automatically** — no reopen path. Removed the now-misleading `inputsHidden` seam helper. `scoredBeyondCloseout` + the Phase-4 `onRequestReopen` hook unchanged. Singles: per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner. No engine/`matchplay.ts` change. **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+**Last updated:** 2026-07-27 (Tournament Phase 3.2 Relay A — discovery + identity; branch `tournament`)
+**Session purpose:** Tournament discovery + player identity, five commits. **034 (migration file):** `tournaments.is_published boolean NOT NULL DEFAULT false` (Dad applied to prod on his track; committed verbatim, DO NOT re-apply). **Q4 (`5431640`):** greensomes team handicap flipped to 60/40 weighted (`GREENSOMES_TEAM_HANDICAP_METHOD` `sixty_forty` — branch already existed); deliberate value change, exactly 2 goldens moved (`greensomesTeamHandicap(5,15)` 10→9, `(10,20)` 15→14), 25/27 byte-identical (equal-spread pairs preserve match strokes; the equal-CH loadMatch golden unmoved). **Test/Live toggle (`177e5e1`):** `is_published` plumbed through `Tournament` type + `updateTournament`/`setTournamentPublished` + e2e mock default; `Toggle` promoted from Settings.tsx to `src/components/admin/Toggle.tsx`; one-tap Test/Live in the Tournament header card (default Test), optimistic-persist-reconcile like `assign`. **Landing (`3888770`):** public `/tournament` resolves the single active tournament, gated on `is_published`; lists all days (day-ordered) + pairings (§0 colours, players, tee "—"), current day highlighted, each match links to `/tournament/match/[id]`; empty state when none/Test; reuses Phase 2 loaders (Promise.allSettled per day); no new `rounds` reads. **Hero + device memory (`27e628f`):** homepage `TournamentHero` (own fetch → NULL unless `is_published && ended_on IS NULL`, so league homepage byte-identical) links to the landing; `src/lib/deviceMemory.ts` (guarded localStorage, `gobs:` namespace) stores a player IDENTITY; landing "Who are you?" picker → per-day resolve to the player's match (`findMatchForPlayer`) → "Go to your match" + "Switch player". **1192/1192 vitest (+20 net over 1172), tsc clean, 57/57 Playwright (+4); 25/27 goldens unchanged, 2 moved intentionally (Q4).** **Tee-time: no column exists — landing shows "—"; tee-time entry is a fast-follow needing its own migration.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD38 (folds 031 + 032 + 033 + 034).**
 
-*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — hole context + offline crash — see the section below.
+*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — soft closeout — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.2 Relay A — discovery + identity; branch `tournament`)
+
+### Where we left off
+
+Five commits (migration file + Q4 engine + 3 UI). Tournament discovery is live end-to-end: admin flips Test→Live, a hero appears on the homepage, the public `/tournament` landing lists the days + pairings, and a player self-identifies once to land on their match. Not touched: `scorecard/page.tsx`, league engine, the match scorecard surface. Next is **Relay B** (soft scorer-claim + takeover, flag-a-hole, 18-hole review grid, match-card polish, tee-time entry, Phase 4 dashboard/override).
+
+- **Migration 034 file** (`supabase/migrations/034_tournaments_is_published.sql`) — `is_published boolean NOT NULL DEFAULT false`, verbatim. Dad had applied it to prod (spec said "applied before this relay" but hadn't been; a read-only `information_schema` check first turned it up missing, then present after he fixed it). DO NOT re-apply.
+- **Q4 greensomes 60/40** (`matchplay.ts`) — flipped `GREENSOMES_TEAM_HANDICAP_METHOD` to `sixty_forty` (`0.6·low + 0.4·high`, `Math.round`; the branch already existed). Deliberate value change: **2 goldens moved** (`greensomesTeamHandicap(5,15)` 10→9; `(10,20)` 15→14). 25/27 stay byte-identical, verified by hand: side strokes `[0,5]` (14−9=5, spread preserved), the §3.2 halved outcome (same), and the loadMatch greensomes golden (equal-CH pairs (10,10)/(11,11) → 60/40 == 50/50). Tournament-only; league `computeTeamHandicap` (alternate_shot) untouched → no golden-master impact.
+- **is_published plumbing + Test/Live toggle** — `Tournament.is_published` (required); `createTournament` inserts `false` (default Test); `updateTournament` Pick + `setTournamentPublished(id, v)`. `Toggle` promoted from `Settings.tsx` → `src/components/admin/Toggle.tsx` (Settings imports it; behaviour unchanged). Tournament header card: Toggle + "Test — not shown to players" / "Live — shown on the homepage", optimistic flip → persist → `load()` on failure. e2e mock defaults `is_published:false` on seeded tournaments.
+- **Public `/tournament` landing** — client route; `getActiveTournament()` gated on `is_published` (Test/none → empty state). `getTournamentSessions` (day-ordered) → `loadSessionMatches` per day (`Promise.allSettled`, per-day error note). Days visible + collapsible, current day (`played_on === todayLocal()`) highlighted with a "Today" badge; each match row = coloured sides + players + tee "—", links to `/tournament/match/[id]`. **No new `rounds` reads → `roundsQueryGuard` untouched.**
+- **Homepage hero + device memory** — `TournamentHero` (own `getActiveTournament` fetch, renders NULL unless `is_published && ended_on == null`) at the top-of-main slot in `page.tsx`; league homepage byte-identical when null. `src/lib/deviceMemory.ts` stores `player_id` (identity) in localStorage (guarded, `gobs:` namespace). Landing panel: no id → "Who are you?" picker (roster from the loaded pairings) → pick stores; has id → resolve current day's match (`findMatchForPlayer`) → "Go to your match" + "Not you? Switch player" (clears). Identity (not match id) → day 2/3 auto-resolve.
+
+### DB changes
+
+- **Migration 034** applied to prod (Dad's track); file committed verbatim. `Tournament` type + e2e mock updated. Next `db:backup` folds 031+032+033+034 → **TD38**.
+
+### Tests / verification
+
+- **1192/1192 vitest (+20 over 1172), tsc clean, 57/57 Playwright (+4).**
+- Q4: 2 moved golden values + comment updates (`matchplay.test.ts`). Toggle: DOM flip both ways + persist (`admin-tournament`), `createTournament` default Test + `setTournamentPublished` (`dataLayer`). Landing: DOM (3 days + pairings future-dated, links, tee "—", today-highlight, per-day error isolation, empty state); e2e (published lists days + click-through; Test → empty). Hero: isolation (published&!ended → shows, else null); e2e (homepage shows/absent). Device memory: `deviceMemory` get/set/clear + guards; `findMatchForPlayer` per-identity across days + roster; landing who-are-you → pick → go-to-match → switch, stored id auto-resolves current day, no-match note.
+- **Isolation / `roundsQueryGuard` untouched** — landing/hero read tournaments + tournament_sessions + go through `loadSessionMatches`; zero new `from("rounds")`.
+
+### Considered but not changed (confession)
+
+- Not touching `scorecard/page.tsx` / league engine / match scorecard surface (`tournament/match/[matchId]/`). `matchplay.ts` change was the authorised Q4 flip only.
+- Landing route is `/tournament` (single active tournament), not id-based — per confirmed decision.
+- **Tee-time: no column exists** anywhere; landing renders "—". Entry is a fast-follow needing its own migration (out of scope).
+- Pre-existing `react-hooks/set-state-in-effect` lint errors (homepage + Tournament/Settings mount effects) left as-is (unchanged count); new code lint-clean.
+- Device-memory roster is built from loaded pairings (players who have a match), not `getTournamentPlayers` — no extra query, and "Who are you?" only needs players who can go to a match.
+
+### ROADMAP entries I would have written (did NOT edit ROADMAP.md)
+
+> **Q4 — Greensomes team handicap → 60/40 weighted (branch `tournament`).** 60% of the lower course handicap + 40% of the higher, .5 up. 2 goldens moved.
+>
+> **Phase 3.2 Relay A — tournament discovery + identity (branch `tournament`).** `tournaments.is_published` (migration 034) + admin Test/Live toggle (default Test). Public `/tournament` landing (3 days + pairings, links to match scorecards, empty state) gated on is_published. Homepage hero when a live, un-ended tournament exists (league byte-identical otherwise). "Who are you?" localStorage device memory (`player_id`) resolves per-day to the player's match; switch-player resets. Tee-time column is a fast-follow (none exists).
+
+### Tomorrow's priority
+
+- **Relay B:** soft scorer-claim + one-tap takeover; opposing-side read-only live view + "Flag this hole"; read-only 18-hole review grid; match-card visual polish; tee-time entry (needs a new migration + a session/match column); Phase 4 dashboard/override.
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD38 (folds 031 + 032 + 033 + 034).
+
+--- **Soft closeout:** the card hid its score inputs the instant a match decided (`status === "complete"` → inputs gone), so a fat-fingered stray tap that closed a match early was uncorrectable — the inputs that would fix it were gone (confirmed live: a match closed on a stray tap and scoring was locked out). That contradicted the locked "soft closeout" intent. **Fix (`MatchCard` render):** the finish banner now renders ABOVE the inputs, and the inputs (steppers + hole context + outcome line) ALWAYS render — no hide, no edit-mode tap, no gate. Because the banner is derived from `computeMatchState` over the optimistic scores, correcting a stroke that un-decides the match recomputes to `in_progress` and the banner clears **automatically** — no reopen path. Removed the now-misleading `inputsHidden` seam helper. `scoredBeyondCloseout` + the Phase-4 `onRequestReopen` hook unchanged. Singles: per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner. No engine/`matchplay.ts` change. **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+
+*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — soft closeout — see the section below.
 
 ---
 
