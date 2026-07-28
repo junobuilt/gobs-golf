@@ -27,6 +27,10 @@ Consult these at the start of any session:
 - **[GOBS_Game_Rules_v1.pdf](./GOBS_Game_Rules_v1.pdf)** — source of truth for
   *how* scoring works. Game formats, handicap application, blind draw,
   money allocation. Read before changing scoring logic or display.
+- **[DATA_PROTECTION.md](./DATA_PROTECTION.md)** — standing register of what
+  protects GOBS data from loss (PREVENT/RECOVER items R1–R10), created after
+  the 2026-07-27 round-loss incident. Update it whenever a data-protection item
+  changes status (`⬜`/`🟡`/`✅`/`🔵`/`❌`) or a new decision is logged.
 
 ---
 
