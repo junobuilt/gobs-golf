@@ -16,6 +16,7 @@ import { getStoredPlayerId } from "@/lib/deviceMemory";
 import { setMatchScorer, setMatchFlag } from "@/lib/tournament/mutations";
 import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
+import ScoreMark from "@/components/scorecard/ScoreMark";
 import {
   initOptimisticScores,
   overlayPending,
@@ -873,9 +874,10 @@ function SideBlock({
   const c = SIDE_COLOR[side];
   return (
     <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: "8px", padding: "8px 10px" }}>
-      <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.03em", color: c.text }}>
+      {/* Two-weight hierarchy, sentence case: bold side name (700), light meta (500). */}
+      <div style={{ fontSize: "0.82rem", fontWeight: 700, color: c.text }}>
         {title}
-        {subtitle && <span style={{ marginLeft: "8px", fontWeight: 600, textTransform: "none", color: "#6b7280" }}>{subtitle}</span>}
+        {subtitle && <span style={{ marginLeft: "8px", fontWeight: 500, color: "#6b7280" }}>{subtitle}</span>}
       </div>
       <div style={{ marginTop: "6px" }}>{children}</div>
     </div>
@@ -902,25 +904,30 @@ function ScoreBox({
   disabled?: boolean;
   onSet: (value: number) => void;
 }) {
+  // Polish (§D): stroke dots ABOVE the number (league dot-above-score pattern),
+  // the reused +/− stepper unchanged, then the net score cell carrying the
+  // traditional circle/square notation (ScoreMark, net vs par) with the
+  // counting-ball arrow inline. Presentation only — no score arithmetic here.
   return (
-    <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-      <TeamHoleEntry ballCount={1} balls={balls} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
-        {dots > 0 && (
-          <div style={{ display: "flex", gap: "3px" }}>
-            {Array.from({ length: dots }).map((_, i) => (
-              <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
-            ))}
-          </div>
-        )}
-        <span style={{ fontSize: "0.82rem", color: "#374151" }}>
-          net {net ?? "—"}
-          {counting && (
-            <span data-testid={`${testid}-counting`} style={{ marginLeft: "6px", color: "#276e34", fontWeight: 900 }}>
-              ←
-            </span>
-          )}
+    <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+        <div data-testid={`${testid}-dots`} style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center" }}>
+          {Array.from({ length: dots }).map((_, i) => (
+            <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
+          ))}
+        </div>
+        <TeamHoleEntry ballCount={1} balls={balls} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.82rem", color: "#374151" }}>
+        <span style={{ fontWeight: 500 }}>Net</span>
+        <span style={{ fontWeight: 700, color: "#0c3057", display: "inline-flex", alignItems: "center", minHeight: "22px" }}>
+          {net == null ? "—" : <ScoreMark delta={net - par} score={net} />}
         </span>
+        {counting && (
+          <span data-testid={`${testid}-counting`} title="Counting ball" style={{ color: "#276e34", fontWeight: 900 }}>
+            ←
+          </span>
+        )}
       </div>
     </div>
   );

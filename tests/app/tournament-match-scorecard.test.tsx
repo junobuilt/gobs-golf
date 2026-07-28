@@ -724,6 +724,31 @@ describe("match scorecard — 18-hole review grid (C)", () => {
   });
 });
 
+// ── D: match-card polish is presentation-only ────────────────────────────────
+describe("match scorecard — functional polish (D)", () => {
+  it("renders stroke dots above the number and the counting arrow inline — no engine change", async () => {
+    // Singles, P1 off 18 vs P2 off 0 → P1 gets 1 match stroke on every hole
+    // (SI 1..18). Enter hole-1 grosses so the hole resolves.
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "four_ball_match",
+        a: [{ playerId: 1, ch: 18, scored: { 1: 5 } }, { playerId: 2, ch: 0, scored: { 1: 9 } }],
+        b: [{ playerId: 3, ch: 0, scored: { 1: 6 } }, { playerId: 4, ch: 0, scored: { 1: 7 } }],
+      }),
+    );
+    await renderPage();
+
+    // Dots row above the stepper carries P1's one stroke on hole 1 (SI 1).
+    const dots = within(screen.getByTestId("player-1")).getByTestId("player-1-dots");
+    expect(dots.childElementCount).toBe(1);
+    // The stepper (reused) is present below the dots.
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+    // P1 net 4 (5−1) beats B best 6 → A wins hole 1, and P1 is the counting ball.
+    expect(screen.getByTestId("hole-outcome-500")).toHaveTextContent("USA wins the hole");
+    expect(screen.getByTestId("player-1-counting")).toBeInTheDocument();
+  });
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 function range(lo: number, hi: number): number[] {
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
