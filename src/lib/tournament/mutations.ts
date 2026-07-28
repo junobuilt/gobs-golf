@@ -951,3 +951,22 @@ export async function deletePointAdjustment(id: number): Promise<void> {
   const { error } = await supabase.from("tournament_point_adjustments").delete().eq("id", id);
   if (error) throw new Error("deletePointAdjustment: " + error.message);
 }
+
+// ── Phase 4 Commit C — self-serve safe teardown ─────────────────────────────
+export interface TournamentTeardownResult {
+  roundsDeleted: number;
+  tournamentDeleted: boolean;
+}
+
+// Transactional + leak-safe teardown via the 035 SECURITY DEFINER RPC
+// (delete_tournament_cascade): deletes the tournament's ROUNDS first (cascades
+// scores/team_scores/round_players/sessions/matches), then the tournament row —
+// every statement scoped to this tournament id, so a league round is physically
+// unreachable. The SQL lives in the migration (not here), so this adds no
+// `from("rounds")` to src/ and roundsQueryGuard is untouched.
+export async function deleteTournament(id: number): Promise<TournamentTeardownResult> {
+  const { data, error } = await supabase.rpc("delete_tournament_cascade", { p_tournament_id: id });
+  if (error) throw new Error("deleteTournament: " + error.message);
+  const row = (data ?? {}) as { rounds_deleted?: number; tournament_deleted?: boolean };
+  return { roundsDeleted: row.rounds_deleted ?? 0, tournamentDeleted: row.tournament_deleted ?? false };
+}

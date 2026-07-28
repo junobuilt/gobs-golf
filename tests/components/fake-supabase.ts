@@ -154,8 +154,52 @@ export class FakeSupabase {
    * rpcFinalizeResult }) when you want to exercise pool_too_small /
    * not_yet branches. Every call is recorded in rpcCalls.
    */
-  async rpc(name: string, args: any): Promise<{ data: string | null; error: unknown }> {
+  async rpc(name: string, args: any): Promise<{ data: any; error: unknown }> {
     this.rpcCalls.push({ name, args });
+
+    // Phase 4 — model the 035 delete_tournament_cascade SECURITY DEFINER RPC's
+    // leak-safe cascade in memory (the fake has no real FKs). Deletes the
+    // tournament's ROUNDS first — cascading round_players -> scores, team_scores,
+    // and tournament_sessions -> tournament_matches — then the tournament row
+    // (cascading tournament_players + point_adjustments). Every predicate is
+    // scoped to this tournament id, so a league round (tournament_id null or a
+    // different tournament) is untouched. Returns the RPC's jsonb counts. A live
+    // smoke against a throwaway confirms the real Postgres FK behavior.
+    if (name === "delete_tournament_cascade") {
+      const tid = args?.p_tournament_id;
+      const eq = (a: any, b: any) => a === b || String(a) === String(b);
+      const d: any = this.data;
+      const del = (table: string, pred: (r: any) => boolean) => {
+        const arr = d[table];
+        if (!Array.isArray(arr)) return;
+        for (let i = arr.length - 1; i >= 0; i--) if (pred(arr[i])) arr.splice(i, 1);
+      };
+      const doomedRounds = (d.rounds ?? []).filter((r: any) => eq(r.tournament_id, tid));
+      const roundIds = new Set(doomedRounds.map((r: any) => r.id));
+      const doomedRpIds = new Set(
+        (d.round_players ?? []).filter((rp: any) => roundIds.has(rp.round_id)).map((rp: any) => rp.id),
+      );
+      const doomedSessionIds = new Set(
+        (d.tournament_sessions ?? [])
+          .filter((s: any) => s.round_id != null && roundIds.has(s.round_id))
+          .map((s: any) => s.id),
+      );
+      const roundsDeleted = doomedRounds.length;
+      // Children first (mirror the FK cascade), then rounds.
+      del("scores", (s) => doomedRpIds.has(s.round_player_id));
+      del("round_players", (rp) => roundIds.has(rp.round_id));
+      del("team_scores", (ts) => roundIds.has(ts.round_id));
+      del("tournament_matches", (m) => doomedSessionIds.has(m.session_id) || eq(m.tournament_id, tid));
+      del("tournament_sessions", (s) => (s.round_id != null && roundIds.has(s.round_id)) || eq(s.tournament_id, tid));
+      del("rounds", (r) => roundIds.has(r.id));
+      // Then the tournament + its remaining children.
+      del("tournament_players", (tp) => eq(tp.tournament_id, tid));
+      del("tournament_point_adjustments", (a) => eq(a.tournament_id, tid));
+      const hadTournament = (d.tournaments ?? []).some((t: any) => eq(t.id, tid));
+      del("tournaments", (t) => eq(t.id, tid));
+      return { data: { rounds_deleted: roundsDeleted, tournament_deleted: hadTournament }, error: null };
+    }
+
     if (this.options.rpcFinalizeResult) return this.options.rpcFinalizeResult;
     return { data: "finalized", error: null };
   }

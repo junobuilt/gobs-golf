@@ -250,4 +250,35 @@ describe("admin Tournament tab", () => {
       expect(m.admin_note).toBe("envelope");
     });
   });
+
+  // ── Phase 4 Commit C — teardown type-to-confirm ───────────────────────────
+  it("teardown is gated by typing the tournament name, then deletes via the RPC", async () => {
+    fakeRef.current = new FakeSupabase({ ...seed(), tournament_point_adjustments: [] });
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("2026 Cup");
+
+    fireEvent.click(screen.getByTestId("delete-tournament"));
+    // Modal open. Wait out the 1.5s DangerModal delay; with an empty input the
+    // confirm stays DISABLED (the type-to-confirm gate, not just the timer).
+    await new Promise((r) => setTimeout(r, 1700));
+    const confirm = screen.getByRole("button", { name: "Delete tournament" });
+    expect(confirm).toBeDisabled();
+
+    // A wrong name keeps it disabled.
+    fireEvent.change(screen.getByTestId("teardown-confirm-input"), { target: { value: "wrong" } });
+    expect(screen.getByRole("button", { name: "Delete tournament" })).toBeDisabled();
+
+    // The exact name enables it → click fires the cascade RPC with the id.
+    fireEvent.change(screen.getByTestId("teardown-confirm-input"), { target: { value: "2026 Cup" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Delete tournament" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Delete tournament" }));
+
+    await waitFor(() => {
+      const call = (fakeRef.current.rpcCalls as any[]).find((c) => c.name === "delete_tournament_cascade");
+      expect(call).toBeTruthy();
+      expect(call.args).toEqual({ p_tournament_id: 10 });
+    });
+    // Tournament gone → the tab returns to the empty "No tournament yet" state.
+    expect(await screen.findByText(/No tournament yet/)).toBeTruthy();
+  });
 });

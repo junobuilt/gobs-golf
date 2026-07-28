@@ -20,6 +20,7 @@ import {
   createTournament,
   deletePointAdjustment,
   deleteSession,
+  deleteTournament,
   editSession,
   endTournament,
   type FailedStandardDay,
@@ -181,6 +182,9 @@ export default function Tournament({ allPlayers }: Props) {
   // Phase 4 — per-day override panel target + tournament-level point adjustments.
   const [overrideTarget, setOverrideTarget] = useState<TournamentSession | null>(null);
   const [adjustments, setAdjustments] = useState<TournamentPointAdjustment[]>([]);
+  // Phase 4 Commit C — self-serve teardown (type-to-confirm).
+  const [teardownOpen, setTeardownOpen] = useState(false);
+  const [teardownTyped, setTeardownTyped] = useState("");
   // §1 — a mutation that fails must never leave the screen unchanged. Any action
   // handler that throws sets this; it renders as a dismissible red banner.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -679,7 +683,56 @@ export default function Tournament({ allPlayers }: Props) {
         }}
       />
 
-      {/* E. Danger zone — self-serve teardown (Phase 4 Commit C wires this). */}
+      {/* E. Danger zone — self-serve safe teardown. */}
+      <div style={{ ...cardStyle, border: `1px solid ${C.red}` }}>
+        <div style={{ ...sectionHeader, color: C.red }}>Danger zone</div>
+        <div style={{ fontSize: "0.82rem", color: C.muted, marginBottom: 12 }}>
+          Permanently delete this tournament and all its rounds, scores, and pairings. League rounds are not affected.
+        </div>
+        <button
+          data-testid="delete-tournament"
+          style={{ ...primaryBtn, background: "white", color: C.red, border: `1.5px solid ${C.red}` }}
+          onClick={() => {
+            setTeardownTyped("");
+            setTeardownOpen(true);
+          }}
+        >
+          Delete tournament…
+        </button>
+      </div>
+
+      {teardownOpen && (
+        <DangerModal
+          title="Delete this tournament?"
+          description={`This permanently deletes '${tournament.name}' and all its rounds, scores, and pairings. League rounds are not affected. This cannot be undone.`}
+          cannotBeUndone={false}
+          confirmLabel="Delete tournament"
+          confirmDisabled={teardownTyped.trim() !== tournament.name}
+          onConfirm={async () => {
+            setTeardownOpen(false);
+            try {
+              await deleteTournament(tournament.id);
+            } catch {
+              setActionError("Couldn't delete the tournament. Please try again.");
+            }
+            await load();
+          }}
+          onCancel={() => setTeardownOpen(false)}
+        >
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, marginBottom: 4 }}>
+              Type <strong>{tournament.name}</strong> to confirm
+            </div>
+            <input
+              data-testid="teardown-confirm-input"
+              value={teardownTyped}
+              onChange={(e) => setTeardownTyped(e.target.value)}
+              placeholder={tournament.name}
+              style={{ ...inputStyle, width: "100%" }}
+            />
+          </div>
+        </DangerModal>
+      )}
 
       {overrideTarget && overrideTarget.round_id != null && (
         <MatchOverridePanel
