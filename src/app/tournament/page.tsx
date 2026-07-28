@@ -6,6 +6,8 @@ import { todayLocal, formatDisplayDate } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
 import { getActiveTournament, getTournamentSessions } from "@/lib/tournament/queries";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import { findMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
+import { getStoredPlayerId, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
 import type { LoadedMatch, SessionFormat, Side, Tournament, TournamentSession } from "@/lib/tournament/types";
 
 // Side A = blue, Side B = red — the §0 shared palette used across pairings + the
@@ -54,8 +56,14 @@ async function loadLanding(): Promise<LandingState> {
 
 export default function TournamentLandingPage() {
   const [state, setState] = useState<LandingState>({ kind: "loading" });
+  // Device memory (localStorage) — the player's identity on THIS device. Read
+  // post-mount to stay SSR/hydration-safe; null until known.
+  const [storedId, setStoredId] = useState<number | null>(null);
 
   const doLoad = useCallback(async () => {
+    // Read device memory here (inside the async callback, past the effect's
+    // await boundary) so it's not a synchronous setState in the effect body.
+    setStoredId(getStoredPlayerId());
     setState(await loadLanding());
   }, []);
 
@@ -64,6 +72,15 @@ export default function TournamentLandingPage() {
       await doLoad();
     })();
   }, [doLoad]);
+
+  const pickPlayer = useCallback((id: number) => {
+    setStoredPlayerId(id);
+    setStoredId(id);
+  }, []);
+  const switchPlayer = useCallback(() => {
+    clearStoredPlayerId();
+    setStoredId(null);
+  }, []);
 
   if (state.kind === "loading") {
     return (
@@ -105,6 +122,14 @@ export default function TournamentLandingPage() {
         </div>
       </div>
 
+      <DeviceMemoryPanel
+        days={state.days}
+        today={today}
+        storedId={storedId}
+        onPick={pickPlayer}
+        onSwitch={switchPlayer}
+      />
+
       {state.days.map((day) => (
         <DaySection
           key={day.session.id}
@@ -115,6 +140,107 @@ export default function TournamentLandingPage() {
         />
       ))}
     </Shell>
+  );
+}
+
+// "Who are you?" (first visit) → "Go to your match" (per current day) + switch.
+// Stores IDENTITY, so it resolves the player's NEW match on day 2/3 with no
+// re-ask. localStorage only, no accounts.
+function DeviceMemoryPanel({
+  days,
+  today,
+  storedId,
+  onPick,
+  onSwitch,
+}: {
+  days: DayData[];
+  today: string;
+  storedId: number | null;
+  onPick: (playerId: number) => void;
+  onSwitch: () => void;
+}) {
+  const roster = tournamentPlayersFromDays(days.map((d) => d.matches));
+  if (roster.length === 0) return null;
+
+  const cardStyle: React.CSSProperties = {
+    background: "#eef5fc",
+    border: `1px solid ${getTeamColor(4).border}`,
+    borderRadius: "10px",
+    padding: "12px 14px",
+    marginBottom: "14px",
+  };
+
+  // Not-yet-identified → the one-time picker.
+  if (storedId == null) {
+    return (
+      <div data-testid="who-are-you" style={cardStyle}>
+        <div style={{ fontWeight: 800, color: "#0c3057", marginBottom: "8px" }}>Who are you?</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {roster.map((p) => (
+            <button
+              key={p.playerId}
+              data-testid={`whoami-${p.playerId}`}
+              onClick={() => onPick(p.playerId)}
+              style={{
+                minHeight: "40px",
+                padding: "0 14px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: "white",
+                color: "#0c3057",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {p.displayName}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Identified → resolve THIS device's player to their match for the current day.
+  const storedName = roster.find((p) => p.playerId === storedId)?.displayName ?? "you";
+  const todayDay = days.find((d) => d.session.played_on === today);
+  const myMatch = todayDay ? findMatchForPlayer(todayDay.matches, storedId) : undefined;
+
+  return (
+    <div data-testid="device-identity" style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <span style={{ fontWeight: 700, color: "#0c3057" }}>You’re {storedName}</span>
+        <button
+          data-testid="switch-player"
+          onClick={onSwitch}
+          style={{ background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}
+        >
+          Not you? Switch player
+        </button>
+      </div>
+      {myMatch ? (
+        <Link
+          href={`/tournament/match/${myMatch.match.id}`}
+          data-testid="go-to-your-match"
+          style={{
+            display: "block",
+            marginTop: "10px",
+            textAlign: "center",
+            background: "#0c3057",
+            color: "white",
+            borderRadius: "8px",
+            padding: "12px",
+            fontWeight: 800,
+            textDecoration: "none",
+          }}
+        >
+          Go to your match →
+        </Link>
+      ) : (
+        <div data-testid="no-match-today" style={{ marginTop: "8px", fontSize: "0.82rem", color: "#6b7280" }}>
+          No match for you today — check the days below.
+        </div>
+      )}
+    </div>
   );
 }
 

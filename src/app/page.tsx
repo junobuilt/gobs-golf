@@ -10,6 +10,7 @@ import { getWriteQueue } from "@/lib/writeQueue";
 import type { QueueItem } from "@/lib/writeQueue";
 import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
+import TournamentHero from "@/components/tournament/TournamentHero";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { getPrimaryFlightByRound, getTeamFlightMap } from "@/lib/flights/resolve";
@@ -578,6 +579,10 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Tournament hero — self-contained; renders NULL (homepage byte-identical)
+          unless a live, un-ended tournament exists. Taps through to /tournament. */}
+      <TournamentHero />
 
       <div style={{ background: "linear-gradient(135deg, #0c3057, #0f4a7a)", borderRadius: "16px", padding: "24px", color: "white", marginBottom: "24px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
         <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800 }}>Good Ole Boys</h2>
