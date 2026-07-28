@@ -110,6 +110,7 @@ export async function createTournament(input: {
       side_b_name: input.sideBName,
       holder_side: input.holderSide,
       is_active: true,
+      is_published: false, // default Test — not shown to players until Dad goes Live
     })
     .select("*")
     .single();
@@ -120,11 +121,17 @@ export async function createTournament(input: {
 export async function updateTournament(
   id: number,
   patch: Partial<
-    Pick<Tournament, "name" | "side_a_name" | "side_b_name" | "holder_side" | "started_on" | "ended_on">
+    Pick<Tournament, "name" | "side_a_name" | "side_b_name" | "holder_side" | "started_on" | "ended_on" | "is_published">
   >,
 ): Promise<void> {
   const { error } = await supabase.from("tournaments").update(patch).eq("id", id);
   if (error) throw new Error("updateTournament: " + error.message);
+}
+
+// Q4 relay: flip Test/Live. Thin wrapper over updateTournament so the admin
+// toggle has an intention-revealing call.
+export async function setTournamentPublished(id: number, isPublished: boolean): Promise<void> {
+  await updateTournament(id, { is_published: isPublished });
 }
 
 export async function endTournament(id: number): Promise<void> {

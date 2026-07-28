@@ -32,6 +32,7 @@ import {
   endTournament,
   LeagueRoundOwnsDateError,
   setPlayerSide,
+  setTournamentPublished,
   TournamentDayDateTakenError,
 } from "@/lib/tournament/mutations";
 
@@ -67,9 +68,19 @@ describe("tournament data layer — create → assign → add day", () => {
     });
     expect(t.id).toBeTruthy();
     expect(t.is_active).toBe(true);
+    expect(t.is_published).toBe(false); // new tournaments default to Test
     const active = await getActiveTournament();
     expect(active?.id).toBe(t.id);
     expect(active?.holder_side).toBe("b");
+  });
+
+  it("setTournamentPublished flips is_published both ways", async () => {
+    const t = await createTournament({ name: "T", startedOn: "2026-08-01", sideAName: "USA", sideBName: "Canada", holderSide: "b" });
+    expect(t.is_published).toBe(false);
+    await setTournamentPublished(t.id, true);
+    expect((await getActiveTournament())?.is_published).toBe(true);
+    await setTournamentPublished(t.id, false);
+    expect((await getActiveTournament())?.is_published).toBe(false);
   });
 
   it("setPlayerSide upserts (idempotent) and null removes the row", async () => {

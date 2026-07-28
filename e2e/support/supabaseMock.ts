@@ -120,6 +120,15 @@ export class MockDb {
     }
     if (!effective.flight_teams) effective.flight_teams = [];
 
+    // Migration 034: tournaments.is_published NOT NULL DEFAULT false. Default it
+    // on seeded rows that omit it so mock rows match the prod column semantics.
+    if (effective.tournaments) {
+      effective.tournaments = effective.tournaments.map((t) => ({
+        is_published: false,
+        ...t,
+      }));
+    }
+
     for (const t of KNOWN_TABLES) {
       const rows = (effective as any)[t] ?? [];
       this.tables[t] = rows.map((r: Row) => ({ ...r }));

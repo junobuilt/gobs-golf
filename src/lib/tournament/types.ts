@@ -24,6 +24,10 @@ export interface Tournament {
   started_on: string; // ISO date
   ended_on: string | null;
   is_active: boolean;
+  // Migration 034. Test (false, default) = not shown to players; Live (true) =
+  // shown on the homepage hero + the public /tournament landing. The player-
+  // facing gate; `is_active` still identifies the one live tournament.
+  is_published: boolean;
   notes: string | null;
   created_at?: string;
   updated_at?: string;

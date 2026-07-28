@@ -21,9 +21,11 @@ import {
   type FailedStandardDay,
   LeagueRoundOwnsDateError,
   setPlayerSide,
+  setTournamentPublished,
   TournamentDayDateTakenError,
 } from "@/lib/tournament/mutations";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import Toggle from "@/components/admin/Toggle";
 import type {
   LoadedMatch,
   SessionFormat,
@@ -212,6 +214,22 @@ export default function Tournament({ allPlayers }: Props) {
     setPairingsBySession(pmap);
   }, []);
 
+  // Test/Live flip — optimistic-then-persist, reconcile via load() on failure
+  // (same pattern as `assign`). One tap, reversible, admin-only → no modal.
+  const togglePublished = useCallback(async () => {
+    setActionError(null);
+    const cur = tournament;
+    if (!cur) return;
+    const next = !cur.is_published;
+    setTournament((prev) => (prev ? { ...prev, is_published: next } : prev));
+    try {
+      await setTournamentPublished(cur.id, next);
+    } catch (e) {
+      await load();
+      setActionError(e instanceof Error ? e.message : "Couldn't update publish state.");
+    }
+  }, [tournament, load]);
+
   useEffect(() => {
     load();
   }, [load]);
@@ -388,6 +406,21 @@ export default function Tournament({ allPlayers }: Props) {
         <div style={{ fontSize: "1.15rem", fontWeight: 700, color: C.navy }}>{tournament.name}</div>
         <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: 4 }}>
           {tournament.side_a_name} vs {tournament.side_b_name} · started {formatDisplayDate(tournament.started_on)}
+        </div>
+        {/* Test / Live — flips is_published (default Test). Where Dad lands after
+            building teams, so going live is one obvious flip. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+          <Toggle
+            value={!!tournament.is_published}
+            onChange={togglePublished}
+            ariaLabel="Show tournament to players"
+          />
+          <span
+            data-testid="publish-label"
+            style={{ fontSize: "0.85rem", fontWeight: 600, color: tournament.is_published ? C.green : C.muted }}
+          >
+            {tournament.is_published ? "Live — shown on the homepage" : "Test — not shown to players"}
+          </span>
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
           <button

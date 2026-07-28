@@ -37,7 +37,7 @@ function seed(rounds: any[] = []): FakeData {
     players: PLAYERS.map((p) => ({ id: p.id, full_name: p.full_name, display_name: p.display_name, handicap_index: p.handicap_index, is_active: p.is_active })),
     scores: [],
     tournaments: [
-      { id: 10, name: "2026 Cup", is_active: true, started_on: "2026-08-01", side_a_name: "USA", side_b_name: "Canada", holder_side: "b", season_id: null, ended_on: null, notes: null },
+      { id: 10, name: "2026 Cup", is_active: true, is_published: false, started_on: "2026-08-01", side_a_name: "USA", side_b_name: "Canada", holder_side: "b", season_id: null, ended_on: null, notes: null },
     ],
     tournament_players: [],
     tournament_sessions: [],
@@ -105,6 +105,29 @@ describe("admin Tournament tab", () => {
     fireEvent.click(within(alRow).getByRole("button", { name: "USA" }));
 
     expect(await screen.findByText(/Couldn't save that side assignment/)).toBeTruthy();
+  });
+
+  it("Test/Live toggle flips is_published both ways (default Test)", async () => {
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("2026 Cup");
+
+    // Default Test (seeded is_published false).
+    expect(screen.getByTestId("publish-label")).toHaveTextContent("Test — not shown to players");
+    const toggle = screen.getByRole("switch", { name: /show tournament to players/i });
+
+    // Flip to Live → optimistic label + persisted to the DB row.
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(screen.getByTestId("publish-label")).toHaveTextContent("Live — shown on the homepage"),
+    );
+    await waitFor(() => expect(fakeRef.current.data.tournaments[0].is_published).toBe(true));
+
+    // Flip back to Test.
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(screen.getByTestId("publish-label")).toHaveTextContent("Test — not shown to players"),
+    );
+    await waitFor(() => expect(fakeRef.current.data.tournaments[0].is_published).toBe(false));
   });
 
   // §4 — a session whose round is missing must be visibly flagged.
