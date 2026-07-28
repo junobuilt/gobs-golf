@@ -191,4 +191,63 @@ describe("admin Tournament tab", () => {
     // The tab is still usable — the Sides section rendered.
     expect(screen.getByText(/Unassigned/)).toBeTruthy();
   });
+
+  // ── Phase 4 Commit B — admin overrides ────────────────────────────────────
+  it("adds and removes a country-point adjustment (Level 3)", async () => {
+    fakeRef.current = new FakeSupabase({ ...seed(), tournament_point_adjustments: [] });
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("2026 Cup");
+
+    fireEvent.change(screen.getByTestId("adj-points"), { target: { value: "0.5" } });
+    fireEvent.change(screen.getByTestId("adj-reason"), { target: { value: "envelope rule" } });
+    fireEvent.click(screen.getByTestId("adj-side-a")); // USA
+    fireEvent.click(screen.getByTestId("adj-add"));
+
+    await waitFor(() => {
+      const rows = fakeRef.current.data.tournament_point_adjustments as any[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ tournament_id: 10, side: "a", points: 0.5, reason: "envelope rule" });
+    });
+    expect(await screen.findByText("envelope rule")).toBeTruthy();
+
+    const adjId = (fakeRef.current.data.tournament_point_adjustments as any[])[0].id;
+    fireEvent.click(screen.getByTestId(`adjustment-delete-${adjId}`));
+    await waitFor(() => expect((fakeRef.current.data.tournament_point_adjustments as any[]).length).toBe(0));
+  });
+
+  it("Results panel forces a match result (Level 2) → result_source=admin", async () => {
+    const holes18 = Array.from({ length: 18 }, (_, i) => ({ id: 100 + i, tee_id: 1, hole_number: i + 1, par: 4, stroke_index: i + 1, yardage: 350 }));
+    fakeRef.current = new FakeSupabase({
+      ...seed(),
+      holes: holes18,
+      round_players: [
+        { id: 101, round_id: 50, player_id: 1, team_number: 1, tee_id: 1, course_handicap: 10, handicap_index_snapshot: 10 },
+        { id: 102, round_id: 50, player_id: 2, team_number: 2, tee_id: 1, course_handicap: 10, handicap_index_snapshot: 10 },
+      ],
+      tournament_sessions: [
+        { id: 21, tournament_id: 10, round_id: 50, day_number: 1, name: "Day 1 — Singles", format: "singles_match", played_on: "2026-08-01", is_locked: false },
+      ],
+      tournament_matches: [
+        { id: 500, tournament_id: 10, session_id: 21, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_hole: null, admin_note: null },
+      ],
+      tournament_point_adjustments: [],
+    } as FakeData);
+
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1 — Singles");
+
+    fireEvent.click(screen.getByTestId("results-21"));
+    await screen.findByTestId("override-match-500");
+
+    // Force USA (side_a) to win with a note.
+    fireEvent.change(screen.getByTestId("override-note-500"), { target: { value: "envelope" } });
+    fireEvent.click(screen.getByTestId("force-side_a-500"));
+
+    await waitFor(() => {
+      const m = (fakeRef.current.data.tournament_matches as any[]).find((x) => x.id === 500);
+      expect(m.result).toBe("side_a");
+      expect(m.result_source).toBe("admin");
+      expect(m.admin_note).toBe("envelope");
+    });
+  });
 });

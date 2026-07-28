@@ -3,18 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DangerModal from "../components/DangerModal";
 import PairingsPanel from "../components/PairingsPanel";
+import MatchOverridePanel from "../components/MatchOverridePanel";
 import type { Player } from "../page";
 import { formatDisplayDate, todayLocal } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
 import {
   getActiveTournament,
+  getPointAdjustments,
   getSessionRoundStatus,
   getTournamentWithSessions,
 } from "@/lib/tournament/queries";
 import {
+  addPointAdjustment,
   createSession,
   createStandardDays,
   createTournament,
+  deletePointAdjustment,
   deleteSession,
   editSession,
   endTournament,
@@ -25,6 +29,7 @@ import {
   TournamentDayDateTakenError,
 } from "@/lib/tournament/mutations";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import { formatPoints } from "@/lib/tournament/matchScorecard";
 import Toggle from "@/components/admin/Toggle";
 import type {
   LoadedMatch,
@@ -33,6 +38,7 @@ import type {
   Side,
   Tournament as TournamentRow,
   TournamentPlayerJoined,
+  TournamentPointAdjustment,
   TournamentSession,
 } from "@/lib/tournament/types";
 
@@ -172,6 +178,9 @@ export default function Tournament({ allPlayers }: Props) {
     { session: TournamentSession; status: SessionRoundStatus } | null
   >(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
+  // Phase 4 — per-day override panel target + tournament-level point adjustments.
+  const [overrideTarget, setOverrideTarget] = useState<TournamentSession | null>(null);
+  const [adjustments, setAdjustments] = useState<TournamentPointAdjustment[]>([]);
   // §1 — a mutation that fails must never leave the screen unchanged. Any action
   // handler that throws sets this; it renders as a dismissible red banner.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -199,6 +208,7 @@ export default function Tournament({ allPlayers }: Props) {
     const sm: Record<number, Side | undefined> = {};
     for (const tp of full?.players ?? []) sm[tp.player_id] = tp.side;
     setSideMap(sm);
+    setAdjustments(await getPointAdjustments(active.id));
     setLoading(false);
 
     // §3 — pairings summaries per day, batched + isolated per day (allSettled) so
@@ -553,24 +563,43 @@ export default function Tournament({ allPlayers }: Props) {
                   No round — cannot hold scores
                 </div>
               ) : (
-                <button
-                  onClick={() => setPairingTarget(s)}
-                  style={{
-                    marginTop: 6,
-                    minHeight: 40,
-                    padding: "0 14px",
-                    borderRadius: 8,
-                    border: `1.5px solid ${C.navy}`,
-                    background: "white",
-                    color: C.navy,
-                    fontWeight: 600,
-                    fontSize: "0.8rem",
-                    cursor: "pointer",
-                    fontFamily: FONT,
-                  }}
-                >
-                  Pairings →
-                </button>
+                <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setPairingTarget(s)}
+                    style={{
+                      minHeight: 40,
+                      padding: "0 14px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${C.navy}`,
+                      background: "white",
+                      color: C.navy,
+                      fontWeight: 600,
+                      fontSize: "0.8rem",
+                      cursor: "pointer",
+                      fontFamily: FONT,
+                    }}
+                  >
+                    Pairings →
+                  </button>
+                  <button
+                    data-testid={`results-${s.id}`}
+                    onClick={() => setOverrideTarget(s)}
+                    style={{
+                      minHeight: 40,
+                      padding: "0 14px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${C.navy}`,
+                      background: "white",
+                      color: C.navy,
+                      fontWeight: 600,
+                      fontSize: "0.8rem",
+                      cursor: "pointer",
+                      fontFamily: FONT,
+                    }}
+                  >
+                    Results →
+                  </button>
+                </div>
               )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -625,6 +654,43 @@ export default function Tournament({ allPlayers }: Props) {
           </div>
         ))}
       </div>
+
+      {/* D. Point adjustments (Level-3 override) */}
+      <PointAdjustmentsSection
+        tournament={tournament}
+        adjustments={adjustments}
+        onAdd={async (side, points, reason) => {
+          setActionError(null);
+          try {
+            await addPointAdjustment(tournament.id, side, points, reason);
+          } catch (e) {
+            setActionError(e instanceof Error ? e.message : "Couldn't add the adjustment.");
+          }
+          await load();
+        }}
+        onDelete={async (id) => {
+          setActionError(null);
+          try {
+            await deletePointAdjustment(id);
+          } catch {
+            setActionError("Couldn't remove the adjustment.");
+          }
+          await load();
+        }}
+      />
+
+      {/* E. Danger zone — self-serve teardown (Phase 4 Commit C wires this). */}
+
+      {overrideTarget && overrideTarget.round_id != null && (
+        <MatchOverridePanel
+          session={overrideTarget}
+          tournament={tournament}
+          onClose={() => {
+            setOverrideTarget(null);
+            load();
+          }}
+        />
+      )}
 
       {addDayOpen && (
         <AddDayModal
@@ -793,6 +859,106 @@ function DayPairings({
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+// §4 — Level-3 override: direct country-point adjustments. Lists existing
+// adjustments (removable) and an add form. Every value folds into the dashboard's
+// banked total via computeTournamentStandings — this surface only reads/writes
+// the `tournament_point_adjustments` rows.
+function PointAdjustmentsSection({
+  tournament,
+  adjustments,
+  onAdd,
+  onDelete,
+}: {
+  tournament: TournamentRow;
+  adjustments: TournamentPointAdjustment[];
+  onAdd: (side: Side, points: number, reason: string) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [side, setSide] = useState<Side>("a");
+  const [points, setPoints] = useState("0.5");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const sideName = (s: Side) => (s === "a" ? tournament.side_a_name : tournament.side_b_name);
+  const pn = Number(points);
+  const canAdd = reason.trim() !== "" && Number.isFinite(pn) && pn !== 0 && !saving;
+
+  return (
+    <div style={cardStyle} data-testid="point-adjustments">
+      <div style={sectionHeader}>Point adjustments</div>
+      <div style={{ fontSize: "0.78rem", color: C.muted, marginBottom: 10 }}>
+        Direct country points (e.g. the envelope-rule half). Added to the dashboard’s banked total.
+      </div>
+
+      {adjustments.length === 0 ? (
+        <div style={{ fontSize: "0.82rem", color: C.muted, marginBottom: 10 }}>No adjustments.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+          {adjustments.map((a) => (
+            <div key={a.id} data-testid={`adjustment-${a.id}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ fontWeight: 700, color: SIDE_COLOR[a.side].text, fontSize: "0.85rem", minWidth: 70 }}>{sideName(a.side)}</span>
+              <span style={{ fontWeight: 700, color: C.navy, fontSize: "0.85rem" }}>{a.points > 0 ? "+" : ""}{formatPoints(a.points)}</span>
+              <span style={{ flex: 1, minWidth: 0, color: C.muted, fontSize: "0.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.reason}</span>
+              <button
+                data-testid={`adjustment-delete-${a.id}`}
+                onClick={() => onDelete(a.id)}
+                aria-label="Remove adjustment"
+                style={{ minWidth: 40, minHeight: 40, borderRadius: 8, border: `1.5px solid ${C.red}`, background: "white", color: C.red, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        {(["a", "b"] as Side[]).map((s) => (
+          <button
+            key={s}
+            data-testid={`adj-side-${s}`}
+            onClick={() => setSide(s)}
+            style={{ flex: 1, minHeight: 42, borderRadius: 8, border: `1.5px solid ${side === s ? SIDE_COLOR[s].border : C.border}`, background: side === s ? SIDE_COLOR[s].bg : "white", color: side === s ? SIDE_COLOR[s].text : C.muted, fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", fontFamily: FONT }}
+          >
+            {sideName(s)}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          data-testid="adj-points"
+          type="number"
+          step="0.5"
+          value={points}
+          onChange={(e) => setPoints(e.target.value)}
+          placeholder="Points"
+          style={{ ...inputStyle, flex: "0 0 90px" }}
+        />
+        <input
+          data-testid="adj-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Reason (required)"
+          style={{ ...inputStyle, flex: 1 }}
+        />
+        <button
+          data-testid="adj-add"
+          disabled={!canAdd}
+          onClick={() => {
+            setSaving(true);
+            onAdd(side, pn, reason.trim());
+            setPoints("0.5");
+            setReason("");
+            setSaving(false);
+          }}
+          style={{ ...primaryBtn, padding: "0 16px", background: canAdd ? C.green : "#e5e7eb", color: canAdd ? "white" : "#9ca3af", cursor: canAdd ? "pointer" : "default" }}
+        >
+          Add adj.
+        </button>
+      </div>
     </div>
   );
 }

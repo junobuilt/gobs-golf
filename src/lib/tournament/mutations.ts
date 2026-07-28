@@ -11,7 +11,7 @@ import { addDaysISO, todayLocal } from "@/lib/date";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getSessionRoundStatus } from "./queries";
-import type { Side, SessionFormat, Tournament, TournamentMatch, TournamentSession } from "./types";
+import type { MatchResult, Side, SessionFormat, Tournament, TournamentMatch, TournamentSession } from "./types";
 
 // Mirrors TournamentOwnsDateError (ensureRoundShell.ts). A tournament day's
 // round cannot be created because a LEAGUE round already owns that date
@@ -841,4 +841,113 @@ export async function deleteGroup(input: { sessionId: number; groupNumber: numbe
       .in("team_number", teamNumbers);
     if (rpErr) throw new Error("deleteGroup (round_players): " + rpErr.message);
   }
+}
+
+// ── Phase 4 — Admin overrides (3 levels) ────────────────────────────────────
+// Ascending scope. Every write targets an EXISTING column/table; the canonical
+// loader already surfaces each as authoritative (resolveMatchResult reads
+// result_source/result; computeTournamentStandings folds point adjustments).
+// Nothing here touches matchplay.ts, the scorecard surface, or a new column.
+
+export class InvalidHoleScoreError extends Error {
+  readonly code = "invalid_hole_score";
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidHoleScoreError";
+  }
+}
+export class InvalidPointAdjustmentError extends Error {
+  readonly code = "invalid_point_adjustment";
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidPointAdjustmentError";
+  }
+}
+
+// LEVEL 1 — hole result: correct a player's strokes on one hole; the engine
+// recomputes the hole outcome, points, status and margin canonically (a wrong
+// hole outcome IS a wrong score, so fixing the score is the real fix). Scoped
+// by (round_player_id, hole_number) — this is a SEPARATE, additive write path
+// from the scorer surface's write queue; same `scores` table + conflict key.
+// Individual formats (four-ball / singles) only — greensomes score lives on
+// `team_scores`; a greensomes result is corrected with the Level-2 override.
+export async function setMatchHoleScore(
+  roundPlayerId: number,
+  holeNumber: number,
+  strokes: number,
+): Promise<void> {
+  if (!Number.isInteger(holeNumber) || holeNumber < 1 || holeNumber > 18) {
+    throw new InvalidHoleScoreError(`hole must be 1–18, got ${holeNumber}`);
+  }
+  if (!Number.isInteger(strokes) || strokes < 1) {
+    throw new InvalidHoleScoreError(`strokes must be a positive integer, got ${strokes}`);
+  }
+  const { error } = await supabase
+    .from("scores")
+    .upsert(
+      { round_player_id: roundPlayerId, hole_number: holeNumber, strokes },
+      { onConflict: "round_player_id,hole_number" },
+    );
+  if (error) throw new Error("setMatchHoleScore: " + error.message);
+}
+
+// LEVEL 2 — match result: force a winner/half, even with zero scores (the
+// envelope rule). `result_source = 'admin'` makes resolveMatchResult honor the
+// stored `result` UNCONDITIONALLY over the engine. Reversible via
+// revertMatchResult. admin_note is the audit trail (the schema supports it here).
+export async function overrideMatchResult(
+  matchId: number,
+  result: MatchResult,
+  note: string | null,
+): Promise<void> {
+  if (result !== "side_a" && result !== "side_b" && result !== "halved") {
+    throw new Error(`overrideMatchResult: invalid result ${result}`);
+  }
+  const trimmed = note != null && note.trim() !== "" ? note.trim() : null;
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ result, result_source: "admin", admin_note: trimmed })
+    .eq("id", matchId);
+  if (error) throw new Error("overrideMatchResult: " + error.message);
+}
+
+// Revert a match to the engine: clears the forced result + note so
+// resolveMatchResult falls back to the live engine outcome.
+export async function revertMatchResult(matchId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ result: null, result_source: "engine", admin_note: null })
+    .eq("id", matchId);
+  if (error) throw new Error("revertMatchResult: " + error.message);
+}
+
+// LEVEL 3 — country points: a direct adjustment on `tournament_point_adjustments`
+// (side 'a'/'b', points may be negative, reason required + non-blank).
+// computeTournamentStandings folds it into `banked`. Reversible via
+// deletePointAdjustment.
+export async function addPointAdjustment(
+  tournamentId: number,
+  side: Side,
+  points: number,
+  reason: string,
+): Promise<void> {
+  if (side !== "a" && side !== "b") {
+    throw new InvalidPointAdjustmentError(`side must be 'a' or 'b', got ${side}`);
+  }
+  if (!Number.isFinite(points) || points === 0) {
+    throw new InvalidPointAdjustmentError(`points must be a non-zero number, got ${points}`);
+  }
+  const trimmed = reason?.trim() ?? "";
+  if (trimmed === "") {
+    throw new InvalidPointAdjustmentError("a reason is required");
+  }
+  const { error } = await supabase
+    .from("tournament_point_adjustments")
+    .insert({ tournament_id: tournamentId, side, points, reason: trimmed });
+  if (error) throw new Error("addPointAdjustment: " + error.message);
+}
+
+export async function deletePointAdjustment(id: number): Promise<void> {
+  const { error } = await supabase.from("tournament_point_adjustments").delete().eq("id", id);
+  if (error) throw new Error("deletePointAdjustment: " + error.message);
 }
