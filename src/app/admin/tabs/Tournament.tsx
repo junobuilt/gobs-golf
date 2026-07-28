@@ -582,7 +582,13 @@ export default function Tournament({ allPlayers }: Props) {
               </button>
             </div>
             </div>
-            {s.round_id != null && <DayPairings summary={pairingsBySession[s.id]} />}
+            {s.round_id != null && (
+              <DayPairings
+                summary={pairingsBySession[s.id]}
+                sideAName={tournament.side_a_name}
+                sideBName={tournament.side_b_name}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -693,7 +699,15 @@ export default function Tournament({ allPlayers }: Props) {
 // §3 — compact pairings summary under a day card. Lines come straight from the
 // loader (one line per match, so singles shows both 1-v-1s); amber dot marks an
 // incomplete group. `summary` undefined = still loading.
-function DayPairings({ summary }: { summary: DaySummary | undefined }) {
+function DayPairings({
+  summary,
+  sideAName,
+  sideBName,
+}: {
+  summary: DaySummary | undefined;
+  sideAName: string;
+  sideBName: string;
+}) {
   if (!summary) return null;
   if (summary.error) {
     return (
@@ -710,6 +724,24 @@ function DayPairings({ summary }: { summary: DaySummary | undefined }) {
       <div style={{ fontWeight: 600, color: C.navy, marginBottom: 4 }}>
         {summary.groups.length} {summary.groups.length === 1 ? "group" : "groups"} · {summary.players} players
       </div>
+      {/* Side column headers (names from tournaments.side_a_name / side_b_name,
+          never hardcoded) so each coloured name reads as "which side". */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 3,
+          fontSize: "0.68rem",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.03em",
+        }}
+      >
+        <span style={{ color: SIDE_COLOR.a.text }}>{sideAName}</span>
+        <span style={{ color: "#9ca3af" }}>v</span>
+        <span style={{ color: SIDE_COLOR.b.text }}>{sideBName}</span>
+      </div>
       {summary.groups.map((g, gi) => (
         <div key={g.groupNumber ?? gi} style={{ marginBottom: 3 }}>
           {g.lines.map((ln, li) => (
@@ -719,9 +751,11 @@ function DayPairings({ summary }: { summary: DaySummary | undefined }) {
                   ●
                 </span>
               )}
-              <span>{ln.a}</span>
+              {/* Colour each name by side (same blue/red palette the pairings
+                  panel uses) so you can see who's on which side at a glance. */}
+              <span style={{ color: SIDE_COLOR.a.text, fontWeight: 600 }}>{ln.a}</span>
               <span style={{ color: "#9ca3af", fontWeight: 700 }}>v</span>
-              <span>{ln.b}</span>
+              <span style={{ color: SIDE_COLOR.b.text, fontWeight: 600 }}>{ln.b}</span>
             </div>
           ))}
         </div>

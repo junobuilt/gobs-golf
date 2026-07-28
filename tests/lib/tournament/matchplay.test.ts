@@ -427,6 +427,78 @@ describe("tournament standings (§2.8)", () => {
   });
 });
 
+// ── §10 — four-ball counting ball (additive; existing 27 goldens untouched) ──
+// The engine exposes WHICH unit's ball produced each side's net so the scorecard
+// can mark it (←) instead of re-deciding it. Four-ball only.
+describe("four-ball counting ball (§10)", () => {
+  it("the handicap stroke changes which ball counts (flip vs gross)", () => {
+    // Hole 1 (SI 1). A: P1 CH0 gross4, P2 CH20 gross5. B: P3 CH0 gross6, P4 gross7.
+    // minPH 0 → A0 ms0, A1 ms20 (2 strokes on SI 1). A0 net 4, A1 net 5−2=3.
+    // By GROSS the counting ball is A0 (4<5); by NET it flips to A1 (3<4).
+    const input: MatchInput = {
+      format: "four_ball_match",
+      holes: holes(),
+      sideA: { side: "a", players: [player(1, 0, { 1: 4 }), player(2, 20, { 1: 5 })] },
+      sideB: { side: "b", players: [player(3, 0, { 1: 6 }), player(4, 0, { 1: 7 })] },
+    };
+    const st = computeMatchState(input);
+    expect(st.countingUnitA?.[0]).toBe(1); // the stroke made P2's ball count
+    expect(st.countingUnitB?.[0]).toBe(0); // B: 6 < 7 → P3
+    expect(st.holeOutcomes[0]).toBe("side_a"); // A net 3 < B net 6
+  });
+
+  it("a tie between the two balls marks neither (null) but the side is still resolved", () => {
+    // A both net 4 (tie) → null counting unit, yet the side value (4) is real and
+    // wins the hole (B best 5). null here means 'either ball', NOT 'not entered'.
+    const input: MatchInput = {
+      format: "four_ball_match",
+      holes: holes(),
+      sideA: { side: "a", players: [player(1, 0, { 1: 4 }), player(2, 0, { 1: 4 })] },
+      sideB: { side: "b", players: [player(3, 0, { 1: 5 }), player(4, 0, { 1: 6 })] },
+    };
+    const st = computeMatchState(input);
+    expect(st.countingUnitA?.[0]).toBeNull();
+    expect(st.countingUnitB?.[0]).toBe(0); // B: 5 < 6
+    expect(st.holeOutcomes[0]).toBe("side_a");
+  });
+
+  it("a lone present ball is the counting ball (pickup: one ball blank still resolves)", () => {
+    // A: P1 gross 4, P2 blank on hole 1. The single present ball counts (index 0,
+    // non-null) and the one-ball side wins the hole over B's best (5).
+    const input: MatchInput = {
+      format: "four_ball_match",
+      holes: holes(),
+      sideA: { side: "a", players: [player(1, 0, { 1: 4 }), player(2, 0, {})] },
+      sideB: { side: "b", players: [player(3, 0, { 1: 5 }), player(4, 0, { 1: 5 })] },
+    };
+    const st = computeMatchState(input);
+    expect(st.countingUnitA?.[0]).toBe(0);
+    expect(st.holeOutcomes[0]).toBe("side_a");
+  });
+
+  it("non-four-ball formats expose no counting unit (undefined)", () => {
+    const singles: MatchInput = {
+      format: "singles_match",
+      holes: holes(),
+      sideA: { side: "a", players: [player(1, 0, { 1: 4 })] },
+      sideB: { side: "b", players: [player(2, 0, { 1: 5 })] },
+    };
+    const stS = computeMatchState(singles);
+    expect(stS.countingUnitA).toBeUndefined();
+    expect(stS.countingUnitB).toBeUndefined();
+
+    const greensomes: MatchInput = {
+      format: "greensomes",
+      holes: holes(),
+      sideA: { side: "a", players: [player(1, 5, {}), player(2, 15, {})], teamGross: gross({ 1: 4 }) },
+      sideB: { side: "b", players: [player(3, 10, {}), player(4, 20, {})], teamGross: gross({ 1: 5 }) },
+    };
+    const stG = computeMatchState(greensomes);
+    expect(stG.countingUnitA).toBeUndefined();
+    expect(stG.countingUnitB).toBeUndefined();
+  });
+});
+
 // A tiny guard that `flat()` helper is exercised somewhere (used for all-square
 // gross fills in ad-hoc checks) — keeps the import meaningful without a lint nudge.
 describe("sanity", () => {

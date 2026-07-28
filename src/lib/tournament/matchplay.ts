@@ -80,10 +80,14 @@ function lineMatchNets(
 }
 
 // Each side's per-hole value, by format. null on a hole = that side has no
-// score present there.
+// score present there. `countingA`/`countingB` are set for four_ball_match ONLY
+// (the 0|1 index of the player whose ball produced the side's net; null on an
+// unresolved hole or a tie) and left undefined otherwise.
 function sideHoleNets(input: MatchInput): {
   a: (number | null)[];
   b: (number | null)[];
+  countingA?: (number | null)[];
+  countingB?: (number | null)[];
 } {
   const { format, sideA, sideB, holes } = input;
 
@@ -135,13 +139,41 @@ function sideHoleNets(input: MatchInput): {
       return vals.length ? Math.min(...vals) : null;
     });
 
-  return { a: bestPerHole(aPerPlayer), b: bestPerHole(bPerPlayer) };
+  // §10: which UNIT's ball produced the winning net, per hole. Four-ball only —
+  // singles has one unit (nothing to mark). argmin over PRESENT balls; null when
+  // no ball is present (unresolved) OR two balls tie the min (either counts).
+  const countingPerHole = (perPlayer: (number | null)[][]): (number | null)[] =>
+    holes.map((_, i) => {
+      let bestIdx: number | null = null;
+      let bestVal = Infinity;
+      let tie = false;
+      perPlayer.forEach((arr, idx) => {
+        const v = arr[i];
+        if (v == null) return;
+        if (v < bestVal) {
+          bestVal = v;
+          bestIdx = idx;
+          tie = false;
+        } else if (v === bestVal) {
+          tie = true;
+        }
+      });
+      return bestIdx == null || tie ? null : bestIdx;
+    });
+
+  const isFourBall = format === "four_ball_match";
+  return {
+    a: bestPerHole(aPerPlayer),
+    b: bestPerHole(bPerPlayer),
+    countingA: isFourBall ? countingPerHole(aPerPlayer) : undefined,
+    countingB: isFourBall ? countingPerHole(bPerPlayer) : undefined,
+  };
 }
 
 // ── Match state (§2.4/§2.5) ─────────────────────────────────────────────────
 export function computeMatchState(input: MatchInput): MatchState {
   const total = input.holes.length; // 18
-  const { a, b } = sideHoleNets(input);
+  const { a, b, countingA, countingB } = sideHoleNets(input);
 
   const holeOutcomes: HoleOutcome[] = input.holes.map((_, i) => {
     const na = a[i];
@@ -242,6 +274,8 @@ export function computeMatchState(input: MatchInput): MatchState {
     closedOutHole,
     margin,
     scoredBeyondCloseout,
+    countingUnitA: countingA,
+    countingUnitB: countingB,
   };
 }
 

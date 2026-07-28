@@ -164,6 +164,15 @@ export interface MatchState {
   // past the closeout hole — those holes are ignored for state, but an admin
   // surface can warn that extra scores were entered on an already-decided match.
   scoredBeyondCloseout: boolean;
+  // FOUR-BALL ONLY (§3.1/§10): per hole, the 0|1 index of the side's player
+  // whose net was the COUNTING ball — the one the engine's best-net selection
+  // picked. `null` when the hole is unresolved (side has no usable ball) OR when
+  // the two balls tie (either could count — the surface marks both). `undefined`
+  // for greensomes/singles (there is no "which of two balls" to mark). Purely
+  // additive: no existing field changes meaning; the scorecard reads this to
+  // draw the ← mark rather than re-deciding the counting ball itself.
+  countingUnitA?: (number | null)[]; // length 18 when present
+  countingUnitB?: (number | null)[];
 }
 
 // A persisted match row's result fields (from `tournament_matches`).
@@ -224,10 +233,19 @@ export interface Standings {
 
 export interface LoadedMatchPlayer {
   playerId: number;
+  // round_players.id — the FK the individual `scores` write path needs. Surfaced
+  // (§3.1) so the score-entry surface can enqueue a durable per-player upsert.
+  roundPlayerId: number;
   displayName: string;
   handicapIndexSnapshot: number | null; // round_players.handicap_index_snapshot
   courseHandicap: number | null; // round_players.course_handicap (raw; PH = CH at 100%)
   matchStrokes: number; // computeMatchStrokes — strokes this unit gives/gets in the match
+  // §3.1: the per-hole gross the loader assembled for this player from `scores`
+  // (length 18; null = no score). Surfaced so the score-entry surface can seed
+  // an optimistic score map and re-run computeMatchState LOCALLY over live edits
+  // (single source of truth: same pure engine, newer inputs). Individual formats
+  // (four-ball / singles) only; greensomes score lives on the side's teamGross.
+  gross: (number | null)[];
 }
 
 export interface LoadedMatchSide {
@@ -239,6 +257,11 @@ export interface LoadedMatchSide {
   // null for singles/four-ball (their strokes are per-player above).
   collapsedHandicap: number | null;
   sideMatchStrokes: number | null;
+  // §3.1: greensomes ONLY — the side's per-hole collapsed team gross from
+  // `team_scores` (ball_index = 1; length 18, null = no score), surfaced so the
+  // alternate-shot surface can seed its optimistic map and recompute locally.
+  // null for singles/four-ball (their score lives per-player on `gross` above).
+  teamGross: (number | null)[] | null;
 }
 
 export interface LoadedMatch {

@@ -162,10 +162,14 @@ function assembleMatch(
 
   const toLoadedPlayer = (rp: RoundPlayerRow, strokes: number): LoadedMatchPlayer => ({
     playerId: rp.player_id,
+    roundPlayerId: rp.id,
     displayName: playerName(rp),
     handicapIndexSnapshot: rp.handicap_index_snapshot,
     courseHandicap: rp.course_handicap,
     matchStrokes: strokes,
+    // Same array the engine consumed above (scoresByRpId) — surfaced verbatim so
+    // the surface recomputes from identical inputs, never a parallel fetch.
+    gross: scoresByRpId.get(rp.id) ?? new Array(18).fill(null),
   });
 
   const sideA: LoadedMatchSide = {
@@ -175,6 +179,10 @@ function assembleMatch(
     players: aRps.map((rp, i) => toLoadedPlayer(rp, aStrokes[i] ?? 0)),
     collapsedHandicap: aCollapsed,
     sideMatchStrokes: aSideStrokes,
+    teamGross:
+      format === "greensomes"
+        ? teamScoresByTeam.get(match.side_a_team_number) ?? new Array(18).fill(null)
+        : null,
   };
   const sideB: LoadedMatchSide = {
     side: "b",
@@ -183,6 +191,10 @@ function assembleMatch(
     players: bRps.map((rp, i) => toLoadedPlayer(rp, bStrokes[i] ?? 0)),
     collapsedHandicap: bCollapsed,
     sideMatchStrokes: bSideStrokes,
+    teamGross:
+      format === "greensomes"
+        ? teamScoresByTeam.get(match.side_b_team_number) ?? new Array(18).fill(null)
+        : null,
   };
 
   // §5 completeness: full side = 2 (greensomes/four-ball) or 1 (singles per match).

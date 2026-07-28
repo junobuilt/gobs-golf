@@ -1,0 +1,354 @@
+// Pure tests for the match-play scorecard SEAM (src/lib/tournament/matchScorecard).
+// The surface performs no score arithmetic: it re-runs the same pure engine the
+// loader calls over an optimistic score map. These tests anchor that contract —
+// recompute over the loader's own grosses reproduces loaded.state exactly — and
+// exercise the label derivations (counting marks, missing-hole, finish banner)
+// against the engine's own values, per the cross-surface agreement rule.
+
+import { describe, it, expect } from "vitest";
+import {
+  computeMatchState,
+  computeMatchStrokes,
+  greensomesTeamHandicap,
+} from "@/lib/tournament/matchplay";
+import type {
+  HoleMeta,
+  LoadedMatch,
+  LoadedMatchPlayer,
+  LoadedMatchSide,
+  MatchInput,
+  SessionFormat,
+} from "@/lib/tournament/types";
+import {
+  initOptimisticScores,
+  buildMatchInput,
+  recomputeState,
+  countingMarks,
+  missingHoleGap,
+  finishBanner,
+  marginWithSide,
+  thruDisplay,
+  inputsHidden,
+  unitNet,
+} from "@/lib/tournament/matchScorecard";
+
+function holes(): HoleMeta[] {
+  return Array.from({ length: 18 }, (_, i) => ({ holeNumber: i + 1, par: 4, strokeIndex: i + 1 }));
+}
+function grossArr(scored: Record<number, number>): (number | null)[] {
+  return Array.from({ length: 18 }, (_, i) => scored[i + 1] ?? null);
+}
+
+interface UnitSpec {
+  playerId: number;
+  ch: number | null;
+  scored: Record<number, number>;
+}
+
+// Build a LoadedMatch whose `state` is a genuine computeMatchState over the same
+// inputs — mirroring what the loader assembles — so parity tests are meaningful.
+function makeLoaded(opts: {
+  id?: number;
+  format: SessionFormat;
+  a: UnitSpec[];
+  b: UnitSpec[];
+  teamA?: Record<number, number>;
+  teamB?: Record<number, number>;
+  groupNumber?: number | null;
+}): LoadedMatch {
+  const H = holes();
+  const { format } = opts;
+
+  let aStrokes: number[] = [];
+  let bStrokes: number[] = [];
+  let aCollapsed: number | null = null;
+  let bCollapsed: number | null = null;
+  let aSide: number | null = null;
+  let bSide: number | null = null;
+
+  if (format === "greensomes") {
+    aCollapsed = greensomesTeamHandicap(opts.a[0]?.ch ?? null, opts.a[1]?.ch ?? null);
+    bCollapsed = greensomesTeamHandicap(opts.b[0]?.ch ?? null, opts.b[1]?.ch ?? null);
+    const [msA, msB] = computeMatchStrokes([aCollapsed, bCollapsed]);
+    aSide = msA;
+    bSide = msB;
+  } else {
+    const ms = computeMatchStrokes([...opts.a, ...opts.b].map((u) => u.ch ?? 0));
+    aStrokes = ms.slice(0, opts.a.length);
+    bStrokes = ms.slice(opts.a.length);
+  }
+
+  const mkPlayer = (u: UnitSpec, strokes: number): LoadedMatchPlayer => ({
+    playerId: u.playerId,
+    roundPlayerId: 1000 + u.playerId,
+    displayName: `P${u.playerId}`,
+    handicapIndexSnapshot: u.ch,
+    courseHandicap: u.ch,
+    matchStrokes: strokes,
+    gross: grossArr(u.scored),
+  });
+
+  const sideA: LoadedMatchSide = {
+    side: "a",
+    displayName: "USA",
+    teamNumber: 1,
+    players: opts.a.map((u, i) => mkPlayer(u, aStrokes[i] ?? 0)),
+    collapsedHandicap: aCollapsed,
+    sideMatchStrokes: aSide,
+    teamGross: format === "greensomes" ? grossArr(opts.teamA ?? {}) : null,
+  };
+  const sideB: LoadedMatchSide = {
+    side: "b",
+    displayName: "CANADA",
+    teamNumber: 2,
+    players: opts.b.map((u, i) => mkPlayer(u, bStrokes[i] ?? 0)),
+    collapsedHandicap: bCollapsed,
+    sideMatchStrokes: bSide,
+    teamGross: format === "greensomes" ? grossArr(opts.teamB ?? {}) : null,
+  };
+
+  const input: MatchInput = {
+    format,
+    holes: H,
+    sideA: {
+      side: "a",
+      players: sideA.players.map((p) => ({ playerId: p.playerId, courseHandicap: p.courseHandicap, gross: p.gross })),
+      teamGross: sideA.teamGross ?? undefined,
+    },
+    sideB: {
+      side: "b",
+      players: sideB.players.map((p) => ({ playerId: p.playerId, courseHandicap: p.courseHandicap, gross: p.gross })),
+      teamGross: sideB.teamGross ?? undefined,
+    },
+  };
+  const state = computeMatchState(input);
+
+  return {
+    match: {
+      id: opts.id ?? 500,
+      tournament_id: 1,
+      session_id: 9,
+      match_number: 1,
+      group_number: opts.groupNumber ?? null,
+      side_a_team_number: 1,
+      side_b_team_number: 2,
+      status: "pending",
+      result: null,
+      result_source: "engine",
+      closed_out_hole: null,
+      scorer_label: null,
+      admin_note: null,
+    },
+    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },
+    tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },
+    sideA,
+    sideB,
+    teeId: 1,
+    holes: H,
+    state,
+    resolved: { source: "engine", result: state.result, engineResult: state.result, pointsA: 0, pointsB: 0 },
+    isIncomplete: false,
+  };
+}
+
+// ── Cross-surface parity: recompute over the loader's own grosses == loaded.state
+describe("matchScorecard — recompute reproduces the loader's state (single source)", () => {
+  const cases: { name: string; loaded: LoadedMatch }[] = [
+    {
+      name: "singles",
+      loaded: makeLoaded({
+        format: "singles_match",
+        a: [{ playerId: 1, ch: 4, scored: { 1: 4, 2: 5, 3: 4 } }],
+        b: [{ playerId: 2, ch: 0, scored: { 1: 5, 2: 4, 3: 5 } }],
+      }),
+    },
+    {
+      name: "four-ball",
+      loaded: makeLoaded({
+        format: "four_ball_match",
+        a: [
+          { playerId: 1, ch: 10, scored: { 1: 4, 2: 5 } },
+          { playerId: 2, ch: 0, scored: { 1: 6, 2: 4 } },
+        ],
+        b: [
+          { playerId: 3, ch: 0, scored: { 1: 4, 2: 5 } },
+          { playerId: 4, ch: 0, scored: { 1: 5, 2: 5 } },
+        ],
+      }),
+    },
+    {
+      name: "greensomes",
+      loaded: makeLoaded({
+        format: "greensomes",
+        a: [{ playerId: 1, ch: 5, scored: {} }, { playerId: 2, ch: 15, scored: {} }],
+        b: [{ playerId: 3, ch: 10, scored: {} }, { playerId: 4, ch: 20, scored: {} }],
+        teamA: { 1: 4, 2: 5 },
+        teamB: { 1: 5, 2: 4 },
+      }),
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: seed recompute deep-equals loaded.state`, () => {
+      const seed = initOptimisticScores(c.loaded);
+      expect(recomputeState(c.loaded, seed)).toEqual(c.loaded.state);
+    });
+
+    it(`${c.name}: buildMatchInput round-trips to an independent engine call`, () => {
+      const seed = initOptimisticScores(c.loaded);
+      const viaSurface = recomputeState(c.loaded, seed);
+      const viaEngine = computeMatchState(buildMatchInput(c.loaded, seed));
+      expect(viaSurface).toEqual(viaEngine);
+    });
+  }
+});
+
+// ── Offline recompute: entering a score updates status locally, no reload ─────
+describe("matchScorecard — optimistic edit updates status locally", () => {
+  it("adding a winning hole moves the margin without any network", () => {
+    const loaded = makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+    });
+    const s0 = initOptimisticScores(loaded);
+    expect(recomputeState(loaded, s0).thru).toBe(0);
+
+    // Enter hole 1: A 4, B 5 → A wins, 1 UP thru 1 — computed locally.
+    const s1: typeof s0 = {
+      byPlayer: { 1: { 1: 4 }, 2: { 1: 5 } },
+      teamGross: { a: {}, b: {} },
+    };
+    const st = recomputeState(loaded, s1);
+    expect(st.thru).toBe(1);
+    expect(st.holeOutcomes[0]).toBe("side_a");
+    expect(marginWithSide(st, loaded)).toBe("USA 1 UP");
+    expect(thruDisplay(st)).toBe(1);
+  });
+});
+
+// ── Counting-ball marks (Decision C) against engine values ────────────────────
+describe("matchScorecard — counting marks", () => {
+  it("marks the winning ball; a tie marks both present; a lone ball marks itself", () => {
+    // Stroke-flip: A1 (index 1) wins via its stroke.
+    const flip = makeLoaded({
+      format: "four_ball_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }, { playerId: 2, ch: 20, scored: { 1: 5 } }],
+      b: [{ playerId: 3, ch: 0, scored: { 1: 6 } }, { playerId: 4, ch: 0, scored: { 1: 7 } }],
+    });
+    const st = flip.state;
+    expect(countingMarks(st.countingUnitA, 1, [true, true])).toEqual([false, true]);
+
+    // Tie: both A net equal → both present marked.
+    const tie = makeLoaded({
+      format: "four_ball_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }, { playerId: 2, ch: 0, scored: { 1: 4 } }],
+      b: [{ playerId: 3, ch: 0, scored: { 1: 5 } }, { playerId: 4, ch: 0, scored: { 1: 6 } }],
+    });
+    expect(countingMarks(tie.state.countingUnitA, 1, [true, true])).toEqual([true, true]);
+
+    // Lone ball (pickup): only P1 present → its ball marked, and A still wins.
+    const lone = makeLoaded({
+      format: "four_ball_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }, { playerId: 2, ch: 0, scored: {} }],
+      b: [{ playerId: 3, ch: 0, scored: { 1: 5 } }, { playerId: 4, ch: 0, scored: { 1: 5 } }],
+    });
+    expect(countingMarks(lone.state.countingUnitA, 1, [true, false])).toEqual([true, false]);
+    expect(lone.state.holeOutcomes[0]).toBe("side_a"); // one-ball side wins the hole
+  });
+
+  it("non-four-ball marks nothing (undefined counting unit)", () => {
+    const singles = makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }],
+      b: [{ playerId: 2, ch: 0, scored: { 1: 5 } }],
+    });
+    expect(countingMarks(singles.state.countingUnitA, 1, [true])).toEqual([false]);
+  });
+});
+
+// ── Missing-hole gap (§6): only a genuine out-of-order gap; releasing it ───────
+describe("matchScorecard — missing-hole gap", () => {
+  const base = makeLoaded({
+    format: "singles_match",
+    a: [{ playerId: 1, ch: 0, scored: {} }],
+    b: [{ playerId: 2, ch: 0, scored: {} }],
+  });
+
+  it("no gap while scoring in order (nothing past the current hole)", () => {
+    const s = { byPlayer: { 1: { 1: 4, 2: 4 }, 2: { 1: 5, 2: 5 } }, teamGross: { a: {}, b: {} } };
+    const st = recomputeState(base, s);
+    expect(missingHoleGap(st)).toBeNull(); // firstUnresolved is 3, nothing beyond
+  });
+
+  it("gap appears when a later hole is resolved past an unscored one, and releases when filled", () => {
+    // Holes 1,2 scored; 3 blank; 4 scored → gap at 3.
+    const withGap = {
+      byPlayer: { 1: { 1: 4, 2: 4, 4: 4 }, 2: { 1: 5, 2: 5, 4: 5 } },
+      teamGross: { a: {}, b: {} },
+    };
+    const stGap = recomputeState(base, withGap);
+    expect(stGap.firstUnresolvedHole).toBe(3);
+    expect(missingHoleGap(stGap)).toBe(3);
+    expect(stGap.thru).toBe(2); // frozen at the gap
+
+    // Fill hole 3 → gap released, thru advances.
+    const filled = {
+      byPlayer: { 1: { 1: 4, 2: 4, 3: 4, 4: 4 }, 2: { 1: 5, 2: 5, 3: 5, 4: 5 } },
+      teamGross: { a: {}, b: {} },
+    };
+    const stFilled = recomputeState(base, filled);
+    expect(missingHoleGap(stFilled)).toBeNull();
+    expect(stFilled.thru).toBe(4);
+  });
+});
+
+// ── Finish banner (Decision F): three shapes off MatchState ────────────────────
+describe("matchScorecard — finish banner", () => {
+  function singlesFrom(aWins: number[], bWins: number[], halves: number[]): LoadedMatch {
+    const aScored: Record<number, number> = {};
+    const bScored: Record<number, number> = {};
+    for (const h of aWins) { aScored[h] = 4; bScored[h] = 5; }
+    for (const h of bWins) { aScored[h] = 5; bScored[h] = 4; }
+    for (const h of halves) { aScored[h] = 4; bScored[h] = 4; }
+    return makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: aScored }],
+      b: [{ playerId: 2, ch: 0, scored: bScored }],
+    });
+  }
+  const range = (lo: number, hi: number) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+
+  it("early closeout → won with N&M", () => {
+    const m = singlesFrom([1, 2, 3, 4, 5], [], range(6, 14)); // 5 up with 4 to play → 5&4 at 14
+    const b = finishBanner(m.state, m);
+    expect(m.state.status).toBe("complete");
+    expect(b).toEqual({ kind: "won", sideName: "USA", marginText: "5&4" });
+    expect(inputsHidden(m.state)).toBe(true);
+  });
+
+  it("decided on 18 → won with 'n up', closedOutHole null (thru falls back to 18)", () => {
+    // A wins hole 1, holes 2..18 halved → 1 up, decided on the last hole.
+    const m = singlesFrom([1], [], range(2, 18));
+    expect(m.state.status).toBe("complete");
+    expect(m.state.closedOutHole).toBeNull(); // 18th-hole finish → null, NOT 18
+    expect(thruDisplay(m.state)).toBe(18); // closedOutHole ?? thru
+    expect(finishBanner(m.state, m)).toEqual({ kind: "won", sideName: "USA", marginText: "1 up" });
+  });
+
+  it("all square after 18 → halved", () => {
+    const m = singlesFrom([], [], range(1, 18));
+    const b = finishBanner(m.state, m);
+    expect(m.state.status).toBe("complete");
+    expect(b).toEqual({ kind: "halved" });
+  });
+});
+
+// ── net label uses the engine's allocator ─────────────────────────────────────
+describe("matchScorecard — unitNet display", () => {
+  it("net = gross − strokes-on-hole via getHandicapStrokes; null when no gross", () => {
+    expect(unitNet(20, 1, 5)).toBe(3); // 20 strokes → 2 on SI 1 → 5−2
+    expect(unitNet(0, 1, 4)).toBe(4);
+    expect(unitNet(18, 1, null)).toBeNull();
+  });
+});
