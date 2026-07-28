@@ -33,9 +33,9 @@ export function matchStatusLine(m: LoadedMatch): MatchStatusLine {
     return { decided: true, adminForced, text: `${sideName} wins${margin}` };
   }
 
-  // In play. marginWithSide → "AS" / "USA 1 UP" / ""; thruDisplay → closedOutHole
-  // ?? thru (null closeout while live, so just thru).
+  // In play. marginWithSide → "Tied" / "USA 1 UP" / ""; thruDisplay →
+  // closedOutHole ?? thru (null closeout while live, so just thru).
   const margin = marginWithSide(m.state, m);
   if (m.state.thru === 0 && !margin) return { decided: false, adminForced, text: "Not started" };
-  return { decided: false, adminForced, text: `${margin || "AS"} · thru ${thruDisplay(m.state)}` };
+  return { decided: false, adminForced, text: `${margin || "Tied"} · thru ${thruDisplay(m.state)}` };
 }

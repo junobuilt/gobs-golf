@@ -226,6 +226,24 @@ describe("matchScorecard — optimistic edit updates status locally", () => {
     expect(marginWithSide(st, loaded)).toBe("USA 1 UP");
     expect(thruDisplay(st)).toBe(1);
   });
+
+  // A4 — the engine still produces the canonical "AS" margin, but the display
+  // helper renders the plainer "Tied" for the 60–80 audience.
+  it("renders an all-square margin as 'Tied' (display), engine still 'AS'", () => {
+    const loaded = makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+    });
+    // Hole 1 halved → all square thru 1.
+    const s1 = {
+      byPlayer: { 1: { 1: 4 }, 2: { 1: 4 } },
+      teamGross: { a: {}, b: {} },
+    };
+    const st = recomputeState(loaded, s1);
+    expect(st.margin).toBe("AS"); // engine output unchanged (goldens hold)
+    expect(marginWithSide(st, loaded)).toBe("Tied"); // display
+  });
 });
 
 // ── Counting-ball marks (Decision C) against engine values ────────────────────

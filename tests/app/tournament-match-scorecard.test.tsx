@@ -346,6 +346,41 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
   });
 });
 
+// ── A1: a post-decision edit that FLIPS the winner surfaces a "result changed"
+//    note instead of swapping the banner silently ─────────────────────────────
+describe("match scorecard — result-changed note on a flipped winner", () => {
+  it("flipping the winner after the match was decided shows the changed-result note", async () => {
+    // A wins hole 1 (4 v 5), halves 2-18 → USA 1 UP, decided on 18 (no early closeout).
+    const { a, b } = winMap([1], [], range(2, 18));
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({ format: "singles_match", a: [{ playerId: 1, ch: 0, scored: a }], b: [{ playerId: 2, ch: 0, scored: b }] }),
+    );
+    await renderPage();
+
+    // Decided for USA; committed == live so there is no changed-note yet.
+    expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — USA wins 1 up.");
+    expect(screen.queryByTestId("result-changed-note")).not.toBeInTheDocument();
+
+    // Still on hole 1 (default). Bump USA's Adam 4 → 6 so CANADA now wins hole 1
+    // (6 vs 5) → CANADA 1 UP. loaded.state (committed) is still USA → the winner
+    // flipped relative to the committed result.
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus"));
+        await flush();
+      });
+    }
+
+    // The swap is annotated, not silent; the banner shows the new winner.
+    expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — CANADA wins 1 up.");
+    expect(screen.getByTestId("result-changed-note")).toHaveTextContent(
+      "Result changed after later edits — now CANADA wins 1 up.",
+    );
+    // The plain "extra scores" note is suppressed while a result-change is shown.
+    expect(screen.queryByTestId("scored-beyond-note")).not.toBeInTheDocument();
+  });
+});
+
 describe("match scorecard — missing hole", () => {
   it("shows a persistent amber prompt with the real hole numbers and keeps it across holes", async () => {
     // Holes 1,2 scored; 3 blank; 4 scored → gap at 3.

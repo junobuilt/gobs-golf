@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   loadMatch,
@@ -395,6 +396,22 @@ export default function MatchScorecardPage() {
         <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
           {header.session.name} · {FORMAT_LABEL[header.session.format]}
         </div>
+        {/* A3 — a second door to the scoreboard, always visible during play (not
+            only at finish). Reading-only; scoring stays here. */}
+        <Link
+          href="/tournament/dashboard"
+          data-testid="scorecard-view-scoreboard"
+          style={{
+            display: "inline-block",
+            marginTop: "6px",
+            fontSize: "0.8rem",
+            fontWeight: 700,
+            color: "#1a5a8c",
+            textDecoration: "none",
+          }}
+        >
+          View scoreboard →
+        </Link>
       </div>
 
       {syncFailed && (
@@ -498,6 +515,15 @@ function MatchCard({
   const holeMeta = loaded.holes[hole - 1];
   const gap = missingHoleGap(state);
   const banner = finishBanner(state, loaded);
+  // A1 — did a post-decision edit re-decide the match? Compare the server-
+  // committed result (loaded.state, from the last load/refresh) against the live
+  // recompute over the optimistic scores. Both must already be COMPLETE — a normal
+  // first completion is not a "change". Derived from the two MatchStates the card
+  // already holds; no engine change, no stored history.
+  const resultChanged =
+    loaded.state.status === "complete" &&
+    state.status === "complete" &&
+    loaded.state.result !== state.result;
   const outcome = state.holeOutcomes[hole - 1];
 
   const pad = compact ? "10px 12px" : "14px 16px";
@@ -698,6 +724,7 @@ function MatchCard({
           <MatchClosedBanner
             banner={banner}
             scoredBeyond={state.scoredBeyondCloseout}
+            resultChanged={resultChanged}
             onRequestReopen={undefined /* Phase 4 wires admin override to this hook */}
           />
         </div>

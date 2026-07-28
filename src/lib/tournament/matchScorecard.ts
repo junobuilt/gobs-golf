@@ -162,11 +162,13 @@ export function thruDisplay(state: MatchState): number {
   return state.closedOutHole ?? state.thru;
 }
 
-// Header right-side margin WITH the leading side's name ("USA 1 UP", "5&4", "AS").
-// Leader read from holesUp (engine); "AS"/empty carry no side. No math.
+// Header right-side margin WITH the leading side's name ("USA 1 UP", "5&4",
+// "Tied"). Leader read from holesUp (engine); all-square/empty carry no side. No
+// math. DISPLAY ONLY: the engine still produces the canonical "AS" margin (golden
+// tests assert it) — we render the plainer "Tied" for the 60–80 audience here.
 export function marginWithSide(state: MatchState, loaded: LoadedMatch): string {
   if (!state.margin) return "";
-  if (state.margin === "AS") return "AS";
+  if (state.margin === "AS") return "Tied";
   const leader = state.holesUp > 0 ? loaded.sideA.displayName : loaded.sideB.displayName;
   return `${leader} ${state.margin}`;
 }
