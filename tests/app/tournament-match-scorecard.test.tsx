@@ -733,6 +733,11 @@ describe("match scorecard — 18-hole review grid (C)", () => {
     expect(within(grid).getByTestId("review-outcome-2")).toHaveTextContent("B");
     expect(within(grid).getByTestId("review-outcome-3")).toHaveTextContent(""); // unresolved
 
+    // D11 — legend keys the compact A/B marks to the real side names.
+    expect(grid).toHaveTextContent("A = USA");
+    expect(grid).toHaveTextContent("B = CANADA");
+    expect(grid).toHaveTextContent("½ = Halved");
+
     // Read-only: no steppers anywhere in the grid.
     expect(within(grid).queryAllByTestId("ball-1-plus")).toHaveLength(0);
     // 18 holes rendered (PlayerHoleGrid + strip both carry hole 18).

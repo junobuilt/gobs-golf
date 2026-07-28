@@ -894,11 +894,33 @@ function DayPairings({
         <span style={{ color: "#9ca3af" }}>v</span>
         <span style={{ color: SIDE_COLOR.b.text }}>{sideBName}</span>
       </div>
+      {/* D10 — each group (foursome) is its own bordered card with a label and
+          breathing room, instead of every line running together at 3px gaps.
+          Styling only — same names, same side colours, same incomplete marker. */}
       {summary.groups.map((g, gi) => (
-        <div key={g.groupNumber ?? gi} style={{ marginBottom: 3 }}>
+        <div
+          key={g.groupNumber ?? gi}
+          style={{
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            background: "#fff",
+            padding: "8px 10px",
+            marginBottom: 8,
+          }}
+        >
+          {g.groupNumber != null && (
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, fontSize: "0.66rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: C.muted }}>
+              {g.incomplete && (
+                <span aria-label="incomplete" style={{ color: C.amber, fontWeight: 700 }}>
+                  ●
+                </span>
+              )}
+              Group {g.groupNumber}
+            </div>
+          )}
           {g.lines.map((ln, li) => (
-            <div key={li} style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, lineHeight: 1.5 }}>
-              {g.incomplete && li === 0 && (
+            <div key={li} style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, lineHeight: 1.6, padding: "2px 0" }}>
+              {g.groupNumber == null && g.incomplete && li === 0 && (
                 <span aria-label="incomplete" style={{ color: C.amber, fontWeight: 700 }}>
                   ●
                 </span>

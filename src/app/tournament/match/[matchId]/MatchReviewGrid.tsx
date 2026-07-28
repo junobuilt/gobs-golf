@@ -142,12 +142,29 @@ function OutcomeStrip({
   return (
     <div>
       <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "#64748b", marginBottom: "4px" }}>
-        Hole results — {loaded.sideA.displayName} (A) v {loaded.sideB.displayName} (B)
+        Hole results
+      </div>
+      {/* D11 — legend keying the compact A/B cell marks to the real side names
+          (tournaments.side_a_name / side_b_name) so the strip is readable
+          without prior knowledge of which letter is which side. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "6px", fontSize: "0.68rem", fontWeight: 700, color: "#475569" }}>
+        <LegendKey bg={SIDE_COLOR.a.bg} border={SIDE_COLOR.a.border} label={`A = ${loaded.sideA.displayName}`} />
+        <LegendKey bg={SIDE_COLOR.b.bg} border={SIDE_COLOR.b.border} label={`B = ${loaded.sideB.displayName}`} />
+        <LegendKey bg="#eef0f2" border="#cbd5e1" label="½ = Halved" />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
         {nine(0)}
         {nine(9)}
       </div>
     </div>
+  );
+}
+
+function LegendKey({ bg, border, label }: { bg: string; border: string; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+      <span style={{ width: "12px", height: "12px", borderRadius: "3px", background: bg, border: `1px solid ${border}` }} />
+      {label}
+    </span>
   );
 }
