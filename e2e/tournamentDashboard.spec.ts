@@ -84,6 +84,16 @@ test("published: /tournament/dashboard shows the country score + decided status"
 
   // Cross-link back to the landing.
   await expect(page.getByTestId("to-landing")).toBeVisible();
+
+  // C7 — expanding a pairing reveals a link to the READ-ONLY review, not the
+  // editable scorecard.
+  await page.getByTestId("dash-match-500").getByRole("button").click();
+  const review = page.getByTestId("dash-review-500");
+  await expect(review).toBeVisible();
+  await expect(review).toHaveAttribute("href", "/tournament/match/500/review");
+  await review.click();
+  await expect(page).toHaveURL(/\/tournament\/match\/500\/review$/);
+  await expect(page.getByTestId("review-grid-500")).toBeVisible();
 });
 
 test("Test (unpublished): /tournament/dashboard shows the empty state", async ({ page, db }) => {

@@ -233,16 +233,23 @@ function MatchRow({ m, sideAName, sideBName }: { m: LoadedMatch; sideAName: stri
           <span style={{ color: "#9ca3af", fontWeight: 700, margin: "0 6px" }}>v</span>
           <span style={{ color: SIDE_COLOR.b, fontWeight: 600 }}>{bNames}</span>
         </span>
-        <span
-          data-testid={`dash-status-${m.match.id}`}
-          style={{ fontSize: "0.78rem", fontWeight: status.decided ? 700 : 600, color: status.decided ? "#0c3057" : "#6b7280", whiteSpace: "nowrap" }}
-        >
-          {status.text}
-          {status.adminForced && (
-            <span title="Set by admin" style={{ marginLeft: 5, fontSize: "0.62rem", fontWeight: 800, color: "#92400e", background: "#fef3c7", borderRadius: 4, padding: "1px 4px", textTransform: "uppercase" }}>
-              admin
-            </span>
-          )}
+        {/* C6 — the row EXPANDS in place (it doesn't navigate); a rotating
+            chevron makes that affordance obvious. */}
+        <span style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+          <span
+            data-testid={`dash-status-${m.match.id}`}
+            style={{ fontSize: "0.78rem", fontWeight: status.decided ? 700 : 600, color: status.decided ? "#0c3057" : "#6b7280" }}
+          >
+            {status.text}
+            {status.adminForced && (
+              <span title="Set by admin" style={{ marginLeft: 5, fontSize: "0.62rem", fontWeight: 800, color: "#92400e", background: "#fef3c7", borderRadius: 4, padding: "1px 4px", textTransform: "uppercase" }}>
+                admin
+              </span>
+            )}
+          </span>
+          <span aria-hidden style={{ fontSize: "0.7rem", color: "#9ca3af", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+            ▾
+          </span>
         </span>
       </button>
 
@@ -252,8 +259,10 @@ function MatchRow({ m, sideAName, sideBName }: { m: LoadedMatch; sideAName: stri
         <div data-testid={`dash-group-${m.match.id}`} style={{ padding: "0 4px 10px", fontSize: "0.8rem", color: "#4b5563" }}>
           <GroupSide name={sideAName} color={SIDE_COLOR.a} players={m.sideA.players.map((p) => p.displayName)} points={m.state.pointsA} />
           <GroupSide name={sideBName} color={SIDE_COLOR.b} players={m.sideB.players.map((p) => p.displayName)} points={m.state.pointsB} />
-          <Link href={`/tournament/match/${m.match.id}`} style={{ display: "inline-block", marginTop: 6, color: "#1a5a8c", fontWeight: 600, textDecoration: "none", fontSize: "0.78rem" }}>
-            Open match card →
+          {/* C7 — open the READ-ONLY review grid, not the editable scorecard
+              (a spectator following along shouldn't risk editing a card). */}
+          <Link href={`/tournament/match/${m.match.id}/review`} data-testid={`dash-review-${m.match.id}`} style={{ display: "inline-block", marginTop: 6, color: "#1a5a8c", fontWeight: 600, textDecoration: "none", fontSize: "0.78rem" }}>
+            Review scorecard →
           </Link>
         </div>
       )}
@@ -279,6 +288,12 @@ function Shell({ children }: { children: React.ReactNode }) {
         maxWidth: "560px",
         margin: "0 auto",
         padding: "16px",
+        // C8 — clear the app's position:fixed bottom nav. Without this the last
+        // day card sits under the nav at desktop widths (where the document
+        // barely overflows 100vh, so there's no scroll distance to reveal it);
+        // the extra bottom padding gives that scroll room. Matches the global
+        // `.page-content { padding-bottom: 80px }` convention.
+        paddingBottom: "96px",
         fontFamily: "Inter, -apple-system, system-ui, sans-serif",
         background: "#f2f1ed",
         minHeight: "100vh",

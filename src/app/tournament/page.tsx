@@ -121,15 +121,23 @@ export default function TournamentLandingPage() {
           <span style={{ color: "#9ca3af", margin: "0 6px" }}>vs</span>
           <span style={{ color: SIDE_COLOR.b }}>{state.tournament.side_b_name}</span>
         </div>
+        {/* C9 — the entry into the scoreboard was a small text link and easy to
+            miss; promote it to a prominent button with a comfortable (≥44px)
+            touch target for the 60–80 audience. */}
         <Link
           href="/tournament/dashboard"
           data-testid="to-dashboard"
           style={{
-            display: "inline-block",
-            marginTop: "8px",
-            fontSize: "0.82rem",
+            display: "inline-flex",
+            alignItems: "center",
+            marginTop: "10px",
+            minHeight: "44px",
+            padding: "10px 18px",
+            fontSize: "0.95rem",
             fontWeight: 700,
-            color: "#1a5a8c",
+            color: "#ffffff",
+            background: "#0e4270",
+            borderRadius: "10px",
             textDecoration: "none",
           }}
         >
