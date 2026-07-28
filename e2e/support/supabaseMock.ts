@@ -51,6 +51,8 @@ export interface SeedData {
   tournament_players?: Row[];
   tournament_sessions?: Row[];
   tournament_matches?: Row[];
+  // Phase 4 — Level-3 country-point adjustments (the dashboard reads these).
+  tournament_point_adjustments?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -78,6 +80,8 @@ const KNOWN_TABLES = [
   "tournament_players",
   "tournament_sessions",
   "tournament_matches",
+  // Phase 4 — Level-3 country-point adjustments.
+  "tournament_point_adjustments",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */

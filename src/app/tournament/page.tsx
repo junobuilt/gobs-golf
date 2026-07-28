@@ -121,6 +121,20 @@ export default function TournamentLandingPage() {
           <span style={{ color: "#9ca3af", margin: "0 6px" }}>vs</span>
           <span style={{ color: SIDE_COLOR.b }}>{state.tournament.side_b_name}</span>
         </div>
+        <Link
+          href="/tournament/dashboard"
+          data-testid="to-dashboard"
+          style={{
+            display: "inline-block",
+            marginTop: "8px",
+            fontSize: "0.82rem",
+            fontWeight: 700,
+            color: "#1a5a8c",
+            textDecoration: "none",
+          }}
+        >
+          View full scoreboard →
+        </Link>
       </div>
 
       <DeviceMemoryPanel

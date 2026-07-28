@@ -17,6 +17,7 @@ import type {
   SessionRoundStatus,
   Tournament,
   TournamentPlayerJoined,
+  TournamentPointAdjustment,
   TournamentSession,
   TournamentWithSessions,
 } from "./types";
@@ -80,6 +81,20 @@ export async function getTournamentWithSessions(
   ]);
   if (!tournament) return null;
   return { tournament, players, sessions };
+}
+
+// Level-3 admin override read (Phase 4): all direct country-points adjustments
+// for a tournament, oldest first. Feeds computeTournamentStandings (which reads
+// only `side` + `points`) AND the admin list (which needs id/reason to remove).
+export async function getPointAdjustments(
+  tournamentId: number,
+): Promise<TournamentPointAdjustment[]> {
+  const { data } = await supabase
+    .from("tournament_point_adjustments")
+    .select("*")
+    .eq("tournament_id", tournamentId)
+    .order("created_at", { ascending: true });
+  return (data as TournamentPointAdjustment[] | null) ?? [];
 }
 
 // Whether a session's backing round has real scores (blocks delete) and/or

@@ -40,6 +40,10 @@ export interface FakeData {
   tournament_players?: any[];
   tournament_sessions?: any[];
   tournament_matches?: any[];
+  // Phase 4 — Level-3 override (direct country-points). Seed [] to exercise the
+  // adjustments reader/writer; absent → a select returns [] and an insert is a
+  // no-op (execute short-circuits on an unknown table).
+  tournament_point_adjustments?: any[];
 }
 
 export type WriteOp =

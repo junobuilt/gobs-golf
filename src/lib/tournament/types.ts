@@ -122,6 +122,19 @@ export interface SessionRoundStatus {
   hasPairings: boolean; // round_players present
 }
 
+// A persisted `tournament_point_adjustments` row (migration 031) — the Level-3
+// admin override (Phase 4): a direct country-points adjustment, e.g. the
+// envelope-rule half point. The engine reads only `side` + `points` (the
+// `PointAdjustment` shape below), so a row is assignable to it directly.
+export interface TournamentPointAdjustment {
+  id: number;
+  tournament_id: number;
+  side: Side;
+  points: number; // numeric(4,1) — may be negative
+  reason: string; // NOT NULL, non-blank
+  created_at?: string;
+}
+
 // A hole's outcome. `null` = UNRESOLVED: at least one side has no score present
 // on that hole. A missing score is NEVER a loss and NEVER par.
 export type HoleOutcome = "side_a" | "side_b" | "halved" | null;
