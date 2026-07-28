@@ -22,7 +22,6 @@ import {
   thruDisplay,
   marginWithSide,
   finishBanner,
-  inputsHidden,
   missingHoleGap,
   countingMarks,
   unitNet,
@@ -362,7 +361,6 @@ function MatchCard({
   const holeMeta = loaded.holes[hole - 1];
   const gap = missingHoleGap(state);
   const banner = finishBanner(state, loaded);
-  const hidden = inputsHidden(state);
   const outcome = state.holeOutcomes[hole - 1];
 
   const pad = compact ? "10px 12px" : "14px 16px";
@@ -426,53 +424,56 @@ function MatchCard({
         </button>
       )}
 
-      {hidden ? (
-        banner && (
+      {/* SOFT closeout: when the match is decided the banner shows ABOVE the
+          inputs, but the inputs stay live so a stray tap that closed the match
+          early is correctable in-round. The banner is derived from
+          computeMatchState over the optimistic scores, so a correction that
+          un-decides the match clears it automatically — no reopen path. */}
+      {banner && (
+        <div style={{ marginBottom: "10px" }}>
           <MatchClosedBanner
             banner={banner}
             scoredBeyond={state.scoredBeyondCloseout}
             onRequestReopen={undefined /* Phase 4 wires admin override to this hook */}
           />
-        )
-      ) : (
-        <>
-          {/* F1 — per-hole context, once per card, identical across all three
-              formats. #/par/yardage/SI straight from the loader's HoleMeta. */}
-          {holeMeta && (
-            <div
-              data-testid={`hole-context-${loaded.match.id}`}
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "8px",
-                alignItems: "baseline",
-                marginBottom: "8px",
-                fontSize: "0.8rem",
-                color: "#374151",
-              }}
-            >
-              <span style={{ fontWeight: 800, color: "#0c3057" }}>Hole {holeMeta.holeNumber}</span>
-              <span>Par {holeMeta.par}</span>
-              {holeMeta.yardage != null && <span>{holeMeta.yardage} yds</span>}
-              <span>SI {holeMeta.strokeIndex}</span>
-            </div>
-          )}
-          {loaded.session.format === "greensomes"
-            ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam)
-            : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer)}
-          {/* Hole outcome line (§4.4): nothing when a side has no score. */}
-          {outcome != null && (
-            <div
-              data-testid={`hole-outcome-${loaded.match.id}`}
-              style={{ marginTop: "10px", fontWeight: 700, color: "#0c3057", fontSize: "0.9rem" }}
-            >
-              →{" "}
-              {outcome === "halved"
-                ? "Halved"
-                : `${outcome === "side_a" ? loaded.sideA.displayName : loaded.sideB.displayName} wins the hole`}
-            </div>
-          )}
-        </>
+        </div>
+      )}
+
+      {/* F1 — per-hole context, once per card, identical across all three
+          formats. #/par/yardage/SI straight from the loader's HoleMeta. */}
+      {holeMeta && (
+        <div
+          data-testid={`hole-context-${loaded.match.id}`}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "8px",
+            alignItems: "baseline",
+            marginBottom: "8px",
+            fontSize: "0.8rem",
+            color: "#374151",
+          }}
+        >
+          <span style={{ fontWeight: 800, color: "#0c3057" }}>Hole {holeMeta.holeNumber}</span>
+          <span>Par {holeMeta.par}</span>
+          {holeMeta.yardage != null && <span>{holeMeta.yardage} yds</span>}
+          <span>SI {holeMeta.strokeIndex}</span>
+        </div>
+      )}
+      {loaded.session.format === "greensomes"
+        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam)
+        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer)}
+      {/* Hole outcome line (§4.4): nothing when a side has no score. */}
+      {outcome != null && (
+        <div
+          data-testid={`hole-outcome-${loaded.match.id}`}
+          style={{ marginTop: "10px", fontWeight: 700, color: "#0c3057", fontSize: "0.9rem" }}
+        >
+          →{" "}
+          {outcome === "halved"
+            ? "Halved"
+            : `${outcome === "side_a" ? loaded.sideA.displayName : loaded.sideB.displayName} wins the hole`}
+        </div>
       )}
     </div>
   );

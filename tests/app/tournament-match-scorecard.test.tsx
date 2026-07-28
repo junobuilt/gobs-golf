@@ -182,10 +182,10 @@ describe("match scorecard — singles: two independent matches on one card", () 
     mocks.loadSessionMatches.mockResolvedValue([matchA, matchB]);
     await renderPage();
 
-    // Match A closed out (5&4) → banner, no inputs.
+    // Match A closed out (5&4) → banner AND still-live inputs (soft closeout).
     const cardA = screen.getByTestId("match-card-500");
     expect(within(cardA).getByTestId("finish-banner")).toHaveTextContent("USA wins 5&4");
-    expect(within(cardA).queryByTestId("player-1")).not.toBeInTheDocument();
+    expect(within(cardA).getByTestId("player-1")).toBeInTheDocument();
 
     // Match B still live → shows player boxes, no banner.
     const cardB = screen.getByTestId("match-card-501");
@@ -194,8 +194,8 @@ describe("match scorecard — singles: two independent matches on one card", () 
   });
 });
 
-describe("match scorecard — closeout", () => {
-  it("hides inputs, shows the margin, and notes scores beyond the closeout", async () => {
+describe("match scorecard — soft closeout", () => {
+  it("shows the banner + note but KEEPS inputs live (correctable) on a decided match", async () => {
     // A wins 1-5, halves 6-14 → 5&4 at 14; hole 15 also scored → scoredBeyondCloseout.
     const { a, b } = winMap([1, 2, 3, 4, 5], [], range(6, 14));
     a[15] = 4;
@@ -211,7 +211,117 @@ describe("match scorecard — closeout", () => {
 
     expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — USA wins 5&4.");
     expect(screen.getByTestId("scored-beyond-note")).toBeInTheDocument();
-    expect(screen.queryByTestId("player-1")).not.toBeInTheDocument(); // inputs hidden
+    // Soft closeout: inputs stay editable so a premature stray tap is correctable.
+    expect(screen.getByTestId("player-1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+});
+
+// ── Soft closeout: a decided match keeps live, correctable inputs ─────────────
+describe("match scorecard — soft closeout keeps inputs correctable", () => {
+  it("singles: decided match renders banner AND editable inputs", async () => {
+    const { a, b } = winMap([1, 2, 3, 4, 5], [], range(6, 14)); // 5&4
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({ format: "singles_match", a: [{ playerId: 1, ch: 0, scored: a }], b: [{ playerId: 2, ch: 0, scored: b }] }),
+    );
+    await renderPage();
+    expect(screen.getByTestId("finish-banner")).toBeInTheDocument();
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+
+  it("four-ball: decided match renders banner AND editable inputs", async () => {
+    // A wins holes 1-10 (net 3 vs 5), one ball each side → closeout at 10.
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "four_ball_match",
+        a: [{ playerId: 1, ch: 0, scored: fill(10, 3) }, { playerId: 2, ch: 0, scored: {} }],
+        b: [{ playerId: 3, ch: 0, scored: fill(10, 5) }, { playerId: 4, ch: 0, scored: {} }],
+      }),
+    );
+    await renderPage();
+    expect(screen.getByTestId("finish-banner")).toBeInTheDocument();
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+
+  it("greensomes: decided match renders banner AND editable inputs", async () => {
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "greensomes",
+        a: [{ playerId: 1, ch: 0, scored: {} }, { playerId: 2, ch: 0, scored: {} }],
+        b: [{ playerId: 3, ch: 0, scored: {} }, { playerId: 4, ch: 0, scored: {} }],
+        teamA: fill(10, 3),
+        teamB: fill(10, 5),
+      }),
+    );
+    await renderPage();
+    expect(screen.getByTestId("finish-banner")).toBeInTheDocument();
+    expect(within(screen.getByTestId("greensomes-a")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+
+  it("correcting a stroke that un-decides a match clears the banner; inputs stay editable", async () => {
+    const { a, b } = winMap([1, 2, 3, 4, 5], [], range(6, 14)); // A 5&4; A wins hole 5 (4 vs 5)
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({ format: "singles_match", a: [{ playerId: 1, ch: 0, scored: a }], b: [{ playerId: 2, ch: 0, scored: b }] }),
+    );
+    await renderPage();
+    expect(screen.getByTestId("finish-banner")).toBeInTheDocument();
+
+    // Go to hole 5 and bump Adam 4 → 5 (a halve) — match is no longer 5&4.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hole-dot-5"));
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus"));
+      await flush();
+    });
+
+    // Banner auto-cleared (derived from the recompute); inputs still editable.
+    expect(screen.queryByTestId("finish-banner")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+
+  it("singles: correcting the decided match clears only its banner; the other is untouched", async () => {
+    const win = winMap([1, 2, 3, 4, 5], [], range(6, 14));
+    const matchA = makeLoaded({
+      id: 500,
+      matchNumber: 1,
+      format: "singles_match",
+      groupNumber: 7,
+      a: [{ playerId: 1, ch: 0, scored: win.a }],
+      b: [{ playerId: 2, ch: 0, scored: win.b }],
+    });
+    const matchB = makeLoaded({
+      id: 501,
+      matchNumber: 2,
+      format: "singles_match",
+      groupNumber: 7,
+      teamA_number: 3,
+      teamB_number: 4,
+      a: [{ playerId: 3, ch: 0, scored: { 1: 4 } }],
+      b: [{ playerId: 4, ch: 0, scored: { 1: 5 } }],
+    });
+    mocks.loadMatch.mockResolvedValue(matchA);
+    mocks.loadSessionMatches.mockResolvedValue([matchA, matchB]);
+    await renderPage();
+
+    expect(within(screen.getByTestId("match-card-500")).getByTestId("finish-banner")).toBeInTheDocument();
+    expect(within(screen.getByTestId("match-card-501")).queryByTestId("finish-banner")).not.toBeInTheDocument();
+
+    // Shared nav → hole 5; correct match A's Adam (player-1 lives only in card 500).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hole-dot-5"));
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus"));
+      await flush();
+    });
+
+    // Match A's banner cleared; match B unchanged (never had one, inputs live).
+    expect(within(screen.getByTestId("match-card-500")).queryByTestId("finish-banner")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("match-card-501")).queryByTestId("finish-banner")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("match-card-501")).getByTestId("player-3")).toBeInTheDocument();
   });
 });
 
@@ -376,6 +486,9 @@ describe("match scorecard — hole context (F1)", () => {
 // ── helpers ──────────────────────────────────────────────────────────────────
 function range(lo: number, hi: number): number[] {
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+}
+function fill(n: number, v: number): Record<number, number> {
+  return Object.fromEntries(range(1, n).map((h) => [h, v]));
 }
 function winMap(aWins: number[], bWins: number[], halves: number[]): { a: Record<number, number>; b: Record<number, number> } {
   const a: Record<number, number> = {};

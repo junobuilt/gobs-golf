@@ -186,12 +186,6 @@ export function finishBanner(state: MatchState, loaded: LoadedMatch): FinishBann
   return { kind: "won", sideName, marginText: (state.margin ?? "").toLowerCase() };
 }
 
-// Inputs hide whenever the match is complete (early OR on-18/halved). A frozen
-// gap (in_progress) does NOT hide inputs — that's the only distinction. (Decision E)
-export function inputsHidden(state: MatchState): boolean {
-  return state.status === "complete";
-}
-
 // The gap hole to nag about, or null. Only a GENUINE out-of-order gap qualifies:
 // firstUnresolvedHole is non-null AND some later hole is already resolved — so a
 // card simply being scored in order (nothing past the current hole) never nags.

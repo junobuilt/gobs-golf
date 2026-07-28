@@ -29,7 +29,6 @@ import {
   finishBanner,
   marginWithSide,
   thruDisplay,
-  inputsHidden,
   unitNet,
 } from "@/lib/tournament/matchScorecard";
 
@@ -325,7 +324,6 @@ describe("matchScorecard — finish banner", () => {
     const b = finishBanner(m.state, m);
     expect(m.state.status).toBe("complete");
     expect(b).toEqual({ kind: "won", sideName: "USA", marginText: "5&4" });
-    expect(inputsHidden(m.state)).toBe(true);
   });
 
   it("decided on 18 → won with 'n up', closedOutHole null (thru falls back to 18)", () => {
