@@ -2,10 +2,59 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-07-27 (Tournament Phase 2.2c — pairings fixes + day-card visibility; branch `tournament`)
-**Session purpose:** Fixes from 2.2b browser verification + day-card pairings visibility. **§1 (bug):** selecting a player in Edit/Add blanked the field — a slot excluded its own new pick and `PlayerCombobox` resolves its label from the filtered list. Fixed with a shared **`slotOptions`** helper that always keeps the current value in the list (label from the full roster); documented the invariant on `PlayerCombobox`. **§2:** `updateGroup` now **fills an empty seat** (INSERT on the team_number, group tee + CH) and **clears an occupied one** (DELETE; team_number/match/`group_number` intact) in place — no more delete-and-rebuild; clearing the group's last player → `EmptyGroupError`; both gated by has-scores; a filled seat is validated like create. The Edit modal renders every seat (occupied + empty); on a partial-failure Save it **reloads the real DB state** before showing the error so the modal never shows what Dad only *thought* he saved. **§3:** each day card now shows a compact pairings summary (count + `A / B  v  C / D` per group, singles = two lines, amber dot on incomplete, "No pairings yet." empty state) read via `loadSessionMatches`, batched with **`Promise.allSettled`** so one misconfigured day renders an inline "Couldn't load pairings" note while every other day stays intact. **§4:** day-name / format vocabulary → "Alternate Shot" (greensomes) and "Best Ball" (four_ball_match); `SessionFormat` tokens + engine unchanged. **1122/1122 vitest (+11), tsc clean, 52/52 Playwright.** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+**Last updated:** 2026-07-27 (Tournament Phase 3.1 — match-play scorecard; branch `tournament`)
+**Session purpose:** The first genuinely new player-facing surface: the public `/tournament/match/[matchId]` score-entry card for all three formats (alternate shot / best ball / singles). Single source of truth throughout — every stroke, net, hole outcome, status, margin, point, and counting-ball mark comes from `loadMatch` / the pure `matchplay` engine; the surface does **no** score arithmetic. It seeds an optimistic score map from the loader's grosses and re-runs `computeMatchState` **locally** on every entry, so status updates immediately offline. **Commit 1 (standalone):** made `WriteQueue` generic (`WriteQueue<P>`) + added `getTeamWriteQueue()` so greensomes `team_scores` writes get the same durable retry/offline tolerance as individual scores (chose two generic singletons over a discriminated union so the off-limits league scorecard's un-narrowed `payload.round_player_id` reads stay valid). **Commit 2:** the scorecard + the authorised additive engine field `countingUnit{A,B}` (four-ball counting ball) + loader surfacing `gross`/`teamGross`/`roundPlayerId` + the §0 day-card side-colour piggyback. **1156/1156 vitest (+34 net over 1122), tsc clean, 53/53 Playwright (+1); all 27 match goldens unchanged.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
 
-*Prior session (2026-07-27):* Tournament Phase 2.2b — pairings builder UI + per-match tee — see the section below.
+*Prior session (2026-07-27):* Tournament Phase 2.2c — pairings fixes + day-card visibility — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 — match-play scorecard; branch `tournament`)
+
+### Where we left off
+
+Phase 3.1 shipped: the public match-play scorecard for all three formats, plus the WriteQueue team-scores extension and the §0 day-card piggyback. Route is **not** gated (middleware matcher is `/admin` only). Next is 3.2 (scorer claim/takeover, read-only opposing view, 18-hole review grid, "who are you?" device memory) — none built this session.
+
+- **Commit 1 — WriteQueue extended for `team_scores` (`7eec596`).** `WriteQueue<P = ScorePayload>` generic; `getTeamWriteQueue()` singleton writes `team_scores` (onConflict `round_id,team_number,hole_number,ball_index`) with its own localStorage namespace. Structural `keyOf` (score key unchanged). **Why two singletons, not a discriminated union:** the off-limits league scorecard (`src/app/round/[id]/scorecard/page.tsx`) reads `getWriteQueue().getItems()[].payload.round_player_id` un-narrowed — widening that queue's item type would break those reads and force an edit to a forbidden file. Keeping `getWriteQueue()` typed `WriteQueue<ScorePayload>` leaves every score-queue consumer untouched.
+- **Commit 2 — the scorecard + engine/loader (`e488332`).**
+  - **Engine (§10, authorised additive only):** `MatchState.countingUnitA/B` — four-ball only, the 0|1 index of the counting ball; `null` on unresolved holes AND ties; `undefined` for greensomes/singles. All 27 goldens byte-identical; +1 new golden (stroke flips which ball counts).
+  - **Loader (additive):** `LoadedMatch` surfaces per-player `gross[18]`, per-side `teamGross`, and `roundPlayerId` (the individual-score write FK). Same arrays the engine consumed — no parallel fetch. No new `rounds` reads.
+  - **Surface** (`src/app/tournament/match/[matchId]/`): header `points — margin · thru` with `thru = closedOutHole ?? thru`; singles renders TWO headers sharing ONE hole pointer/nav; finish banner three shapes off `result`+`closedOutHole` (early `N&M` / on-18 `n up` / halved); missing-hole amber only for a genuine out-of-order gap, inputs stay live past it (only closeout hides inputs); best-ball `←` from the engine (tie → both present balls, lone ball → itself, presence check); greensomes dots from the side's collapsed match strokes. Reopen hook **`onRequestReopen`** left unwired for Phase 4. Reuses `TeamHoleEntry` + the league dot-rail/prev-next pattern.
+  - **Pure seam** `src/lib/tournament/matchScorecard.ts` (no React/Supabase): assembles engine inputs from optimistic scores + derives all labels from `MatchState`.
+  - **§0 piggyback:** admin day-card pairings summary now colours names by side + adds `USA`/`CANADA` headers from `tournaments.side_a_name/side_b_name`.
+
+### §8 refresh decision
+
+Refetch on `focus`/`visibilitychange` + a 30s poll that runs **only while the tab is visible** (paused when hidden). No Supabase realtime (the league app has none; ~50 concurrent connections over a 4-hr round is the worst battery profile). The scorer's own device updates optimistically and needs no poll; a non-scorer viewer sees others' entries at up to ~30s — acceptable; Phase 4's dashboard can add realtime if it ever needs sub-30s.
+
+### DB changes
+
+- **None.** Code-only over the 031/032/033 substrate. No new migration.
+
+### Tests / verification
+
+- **1156/1156 vitest (+34 over 1122), tsc clean, 53/53 Playwright (+1); all 27 match goldens unchanged.**
+- `matchplay.test.ts` +4 (§10 four-ball counting ball: stroke-flip, tie→null, lone-ball→index, non-four-ball→undefined). `matchScorecard.test.ts` +15 (cross-surface parity: recompute over the loader's own grosses deep-equals `loaded.state` for all 3 formats; buildMatchInput round-trip; offline edit updates status; counting marks; missing-hole gap/release; 3 banner shapes; unitNet). `WriteQueue.test.ts` +4 + `instance.test.ts` +2 (team queue enqueue/collapse/persist/isolation + table routing). `tournament-match-scorecard.test.tsx` +8 DOM (render/outcome + counting ←; one `team_scores` row at `ball_index 1` never 2; offline header update, no reload; singles two independent matches; closeout hides inputs + scored-beyond note; missing-hole persistence; friendly `MixedTeesInMatchError` state; write-failure banner). `e2e/matchScorecard.spec.ts` +1 (seed singles match → open → enter through a closeout → finish banner).
+- **`roundsQueryGuard` untouched** — the surface loads via `loadMatch`; zero new `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **Did NOT touch** `src/app/round/[id]/scorecard/page.tsx` or the league scoring engine (import only) — the WriteQueue design was chosen specifically to avoid needing to.
+- **Did NOT extract** the league card's inline stepper/nav into shared components — ported the pattern locally (reused `TeamHoleEntry`) to avoid destabilising the highest-risk file.
+- **`matchplay.ts`**: only the authorised counting-ball addition; no other change.
+- **Per-player "net N" label** IS shown (spec §4 requires it) via a pure helper reusing the engine's own `getHandicapStrokes` allocator + loader-provided match strokes — not a reimplementation of net selection or status (those still come only from `MatchState`).
+- **Pre-existing lint:** `react-hooks/set-state-in-effect` errors already exist on `master`/`tournament` (e.g. `Tournament.tsx:216`) and the app deploys — left untouched (out of scope). New surface code is lint-clean.
+- **`onRequestReopen` reopen hook** left unwired (Phase 4 wires the admin override).
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 — Match-play scorecard (DONE 2026-07-27, branch `tournament`).** Public `/tournament/match/[id]` card for all three formats; every value from `loadMatch`/`matchplay`, optimistic local recompute offline. Additive engine field `countingUnit{A,B}` (four-ball counting ball) + loader surfaces `gross`/`teamGross`/`roundPlayerId`. `WriteQueue` made generic + `getTeamWriteQueue()` so alternate shot has offline durability. Day-card pairings now side-coloured with USA/CANADA headers. Reopen hook `onRequestReopen` left unwired for Phase 4.
+
+### Tomorrow's priority
+
+- **Phase 3.2** on top of this surface: scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid (check against the paper card); "who are you?" one-time device memory (localStorage, no accounts) so a player lands on their own match in one tap.
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37 (folds 031 + 032 + 033).
 
 ---
 
