@@ -21,6 +21,7 @@ import type {
 } from "@/lib/tournament/types";
 import {
   initOptimisticScores,
+  overlayPending,
   buildMatchInput,
   recomputeState,
   countingMarks,
@@ -341,6 +342,55 @@ describe("matchScorecard — finish banner", () => {
     const b = finishBanner(m.state, m);
     expect(m.state.status).toBe("complete");
     expect(b).toEqual({ kind: "halved" });
+  });
+});
+
+// ── overlayPending reconcile (server truth base + pending queue items) ────────
+describe("matchScorecard — overlayPending", () => {
+  it("overlays a pending score onto server truth, keyed round_player_id → playerId", () => {
+    const loaded = makeLoaded({
+      format: "four_ball_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }, { playerId: 2, ch: 0, scored: {} }],
+      b: [{ playerId: 3, ch: 0, scored: { 1: 5 } }, { playerId: 4, ch: 0, scored: {} }],
+    });
+    const base = initOptimisticScores(loaded); // server: P1 hole1 = 4
+    // roundId 50 (fixture), roundPlayerId = 1000 + playerId. Pending = P2 hole1 = 6.
+    const out = overlayPending(loaded, base, [{ round_id: 50, round_player_id: 1002, hole_number: 1, strokes: 6 }], []);
+    expect(out.byPlayer[1][1]).toBe(4); // server truth kept
+    expect(out.byPlayer[2][1]).toBe(6); // pending applied (un-synced local edit survives)
+  });
+
+  it("ignores pending items for another round or an unknown player", () => {
+    const loaded = makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+    });
+    const base = initOptimisticScores(loaded);
+    const out = overlayPending(
+      loaded,
+      base,
+      [
+        { round_id: 999, round_player_id: 1001, hole_number: 1, strokes: 3 }, // wrong round
+        { round_id: 50, round_player_id: 8888, hole_number: 1, strokes: 3 }, // unknown player
+      ],
+      [],
+    );
+    expect(out.byPlayer[1][1]).toBeUndefined();
+  });
+
+  it("greensomes: overlays team gross by team_number → side", () => {
+    const loaded = makeLoaded({
+      format: "greensomes",
+      a: [{ playerId: 1, ch: 5, scored: {} }, { playerId: 2, ch: 15, scored: {} }],
+      b: [{ playerId: 3, ch: 10, scored: {} }, { playerId: 4, ch: 20, scored: {} }],
+      teamA: { 1: 4 },
+      teamB: {},
+    });
+    const base = initOptimisticScores(loaded); // server: side a hole1 = 4
+    const out = overlayPending(loaded, base, [], [{ round_id: 50, team_number: 2, hole_number: 1, strokes: 5 }]);
+    expect(out.teamGross.a[1]).toBe(4); // server kept
+    expect(out.teamGross.b[1]).toBe(5); // pending team applied (team 2 → side b)
   });
 });
 

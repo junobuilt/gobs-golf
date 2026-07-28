@@ -8,6 +8,7 @@ import {
   MixedTeesInMatchError,
   MatchHolesMissingError,
   MatchNotFoundError,
+  MatchLoadError,
 } from "@/lib/tournament/loadMatch";
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
@@ -15,6 +16,7 @@ import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
 import {
   initOptimisticScores,
+  overlayPending,
   recomputeState,
   formatPoints,
   thruDisplay,
@@ -26,6 +28,8 @@ import {
   unitNet,
   strokeDots,
   type OptimisticScores,
+  type PendingScore,
+  type PendingTeamScore,
 } from "@/lib/tournament/matchScorecard";
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
@@ -41,6 +45,7 @@ type LoadState =
   | { kind: "ready"; group: LoadedMatch[] }
   | { kind: "setup_error" }
   | { kind: "not_found" }
+  | { kind: "offline" } // transient network/read failure — retryable, NOT "not found"
   | { kind: "error" };
 
 // Load the target match and — for singles — its foursome sibling (same
@@ -62,6 +67,9 @@ async function loadGroup(matchId: number): Promise<LoadState> {
       return { kind: "setup_error" };
     }
     if (e instanceof MatchNotFoundError) return { kind: "not_found" };
+    // A dead network is NOT a missing match — a read failed (transient). Never
+    // route to the "not found" copy for it.
+    if (e instanceof MatchLoadError) return { kind: "offline" };
     return { kind: "error" };
   }
 }
@@ -75,54 +83,81 @@ export default function MatchScorecardPage() {
   const [currentHole, setCurrentHole] = useState(1);
   const [syncFailed, setSyncFailed] = useState(false);
 
-  // Load (and reconcile on refresh — §8 cadence handles re-fetch triggers below).
-  const doLoad = useCallback(async () => {
+  // Reconcile = load-then-overlay: server truth (initOptimisticScores) as the
+  // base, overlaid with each match's still-pending/in-flight queue items — so a
+  // refresh picks up OTHER scorers' server writes without clobbering the local
+  // scorer's un-synced entries. Same shape as the league card's mount rehydrate.
+  const reconcileScores = useCallback((group: LoadedMatch[]): Record<number, OptimisticScores> => {
+    const pendingScores = getWriteQueue()
+      .getItems()
+      .filter((i) => i.state !== "terminal_failure")
+      .map((i) => i.payload as PendingScore);
+    const pendingTeam = getTeamWriteQueue()
+      .getItems()
+      .filter((i) => i.state !== "terminal_failure")
+      .map((i) => i.payload as PendingTeamScore);
+    const out: Record<number, OptimisticScores> = {};
+    for (const m of group) {
+      out[m.match.id] = overlayPending(m, initOptimisticScores(m), pendingScores, pendingTeam);
+    }
+    return out;
+  }, []);
+
+  // INITIAL mount load — the ONLY path that owns the error UI.
+  const initialLoad = useCallback(async () => {
     if (!Number.isFinite(matchId)) {
       setState({ kind: "not_found" });
       return;
     }
     const next = await loadGroup(matchId);
     setState(next);
-    if (next.kind === "ready") {
-      setScoresByMatch((prev) => {
-        const seeded: Record<number, OptimisticScores> = {};
-        for (const m of next.group) {
-          // Preserve any local edits already in memory; otherwise seed from loader.
-          seeded[m.match.id] = prev[m.match.id] ?? initOptimisticScores(m);
-        }
-        return seeded;
-      });
-    }
-  }, [matchId]);
+    if (next.kind === "ready") setScoresByMatch(reconcileScores(next.group));
+  }, [matchId, reconcileScores]);
+
+  // BEST-EFFORT background refresh — never routes to the error UI, never clears a
+  // live card. On a failed (non-ready) load it swallows and leaves the current
+  // card + local optimistic scores untouched. On success it reconciles; it may
+  // promote a transient `offline` mount back to `ready` (routes AWAY from the
+  // transient UI) but NEVER demotes a live card or sets an error/not-found state.
+  const backgroundRefresh = useCallback(async () => {
+    if (!Number.isFinite(matchId)) return;
+    const next = await loadGroup(matchId);
+    if (next.kind !== "ready") return; // failure → keep whatever is shown
+    setState((prev) => (prev.kind === "ready" || prev.kind === "offline" ? next : prev));
+    setScoresByMatch(reconcileScores(next.group));
+  }, [matchId, reconcileScores]);
 
   useEffect(() => {
-    // Async IIFE: the state updates happen after the await inside doLoad, not
+    // Async IIFE: state updates happen after the await inside initialLoad, not
     // synchronously in the effect body.
     void (async () => {
-      await doLoad();
+      await initialLoad();
     })();
-  }, [doLoad]);
+  }, [initialLoad]);
 
-  // §8: refetch on focus / visibility so a non-scorer viewer sees others' scores;
-  // a slow poll runs ONLY while the tab is visible (paused when hidden) to spare
-  // battery over a 4-hour round. The scorer's own device updates optimistically
-  // and needs neither — but the reconcile is harmless (in-memory edits kept).
+  // §8 refresh + self-recovery. focus/visibility so a viewer sees others' scores;
+  // a 30s poll that fires while the tab is visible REGARDLESS of load state (so a
+  // stuck-offline foreground card self-recovers within ~30s without a tab switch);
+  // and an `online` event for near-instant recovery the moment signal returns
+  // (same signal the WriteQueue drains on). All go through backgroundRefresh, so
+  // a failed refresh can never destroy the live card.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void doLoad();
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void backgroundRefresh();
     };
-    window.addEventListener("focus", onVisible);
-    document.addEventListener("visibilitychange", onVisible);
-    const poll = setInterval(() => {
-      if (document.visibilityState === "visible") void doLoad();
-    }, 30_000);
+    const onOnline = () => void backgroundRefresh();
+    window.addEventListener("focus", refreshIfVisible);
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    const poll = setInterval(refreshIfVisible, 30_000);
     return () => {
-      window.removeEventListener("focus", onVisible);
-      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
       clearInterval(poll);
     };
-  }, [doLoad]);
+  }, [backgroundRefresh]);
 
   // Surface a visible banner if any queued write went terminal (2.1a pattern).
   useEffect(() => {
@@ -209,6 +244,18 @@ export default function MatchScorecardPage() {
     return (
       <Shell>
         <FriendlyError>This match couldn’t be found. Check the link or ask the admin.</FriendlyError>
+      </Shell>
+    );
+  }
+  if (state.kind === "offline") {
+    // A read failed (network/offline) — NOT a missing match. Retryable: the card
+    // recovers on its own when signal returns (online event / 30s poll).
+    return (
+      <Shell>
+        <FriendlyError>
+          Couldn’t reach the server — you may be offline. This will retry on its own when your
+          connection returns.
+        </FriendlyError>
       </Shell>
     );
   }
@@ -389,6 +436,27 @@ function MatchCard({
         )
       ) : (
         <>
+          {/* F1 — per-hole context, once per card, identical across all three
+              formats. #/par/yardage/SI straight from the loader's HoleMeta. */}
+          {holeMeta && (
+            <div
+              data-testid={`hole-context-${loaded.match.id}`}
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px",
+                alignItems: "baseline",
+                marginBottom: "8px",
+                fontSize: "0.8rem",
+                color: "#374151",
+              }}
+            >
+              <span style={{ fontWeight: 800, color: "#0c3057" }}>Hole {holeMeta.holeNumber}</span>
+              <span>Par {holeMeta.par}</span>
+              {holeMeta.yardage != null && <span>{holeMeta.yardage} yds</span>}
+              <span>SI {holeMeta.strokeIndex}</span>
+            </div>
+          )}
           {loaded.session.format === "greensomes"
             ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam)
             : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer)}

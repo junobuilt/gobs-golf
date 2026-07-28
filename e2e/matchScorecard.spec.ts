@@ -75,6 +75,12 @@ test("public match scorecard: enter scores through a closeout → finish banner"
   await expect(header).toContainText("USA 9");
   await expect(header).toContainText("Canada 0");
 
+  // F1: per-hole context (from the real loader → holes.yardage) on hole 1.
+  const ctx = page.getByTestId("hole-context-500");
+  await expect(ctx).toContainText("Hole 1");
+  await expect(ctx).toContainText("Par 4");
+  await expect(ctx).toContainText("350 yds");
+
   // Go to hole 10 and enter Adam 3 (net win) / Betty 4 → closeout.
   await page.getByTestId("hole-dot-10").click();
   const adam = page.getByTestId("player-1");

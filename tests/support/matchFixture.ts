@@ -18,7 +18,12 @@ import type {
 } from "@/lib/tournament/types";
 
 export function holes(): HoleMeta[] {
-  return Array.from({ length: 18 }, (_, i) => ({ holeNumber: i + 1, par: 4, strokeIndex: i + 1 }));
+  return Array.from({ length: 18 }, (_, i) => ({
+    holeNumber: i + 1,
+    par: 4,
+    strokeIndex: i + 1,
+    yardage: 300 + i * 10,
+  }));
 }
 export function grossArr(scored: Record<number, number>): (number | null)[] {
   return Array.from({ length: 18 }, (_, i) => scored[i + 1] ?? null);

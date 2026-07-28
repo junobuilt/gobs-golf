@@ -53,6 +53,71 @@ function grossArray(byHole: Record<number, number> | undefined): (number | null)
   return Array.from({ length: 18 }, (_, i) => byHole?.[i + 1] ?? null);
 }
 
+// Minimal shapes of the pending write-queue payloads (kept structural so this
+// pure module doesn't depend on the writeQueue types).
+export interface PendingScore {
+  round_id: number;
+  round_player_id: number;
+  hole_number: number;
+  strokes: number;
+}
+export interface PendingTeamScore {
+  round_id: number;
+  team_number: number;
+  hole_number: number;
+  strokes: number;
+}
+
+// Reconcile = load-then-overlay (the league card's pattern): server truth as the
+// base, then overlay this match's still-pending (un-synced) queue entries on top
+// so a refresh picks up OTHER scorers' server writes without clobbering the local
+// scorer's optimistic entries. Only items for THIS match's round + its own
+// players/teams are applied. Pure; caller passes non-terminal queue items.
+export function overlayPending(
+  loaded: LoadedMatch,
+  base: OptimisticScores,
+  pendingScores: ReadonlyArray<PendingScore>,
+  pendingTeam: ReadonlyArray<PendingTeamScore>,
+): OptimisticScores {
+  const roundId = loaded.session.roundId;
+  // round_player_id -> playerId for this match's players.
+  const rpToPlayer = new Map<number, number>();
+  for (const p of [...loaded.sideA.players, ...loaded.sideB.players]) {
+    rpToPlayer.set(p.roundPlayerId, p.playerId);
+  }
+
+  const byPlayer: Record<number, Record<number, number>> = {};
+  for (const pid of Object.keys(base.byPlayer)) {
+    byPlayer[Number(pid)] = { ...base.byPlayer[Number(pid)] };
+  }
+  const teamGross: Record<Side, Record<number, number>> = {
+    a: { ...base.teamGross.a },
+    b: { ...base.teamGross.b },
+  };
+
+  for (const it of pendingScores) {
+    if (roundId == null || it.round_id !== roundId) continue;
+    const playerId = rpToPlayer.get(it.round_player_id);
+    if (playerId == null) continue;
+    if (it.hole_number < 1 || it.hole_number > 18) continue;
+    (byPlayer[playerId] ??= {})[it.hole_number] = it.strokes;
+  }
+  for (const it of pendingTeam) {
+    if (roundId == null || it.round_id !== roundId) continue;
+    const side: Side | null =
+      it.team_number === loaded.sideA.teamNumber
+        ? "a"
+        : it.team_number === loaded.sideB.teamNumber
+          ? "b"
+          : null;
+    if (side == null) continue;
+    if (it.hole_number < 1 || it.hole_number > 18) continue;
+    teamGross[side][it.hole_number] = it.strokes;
+  }
+
+  return { byPlayer, teamGross };
+}
+
 // Rebuild the engine input from the loader's fixed metadata (holes, handicaps,
 // format) + the live optimistic scores. Player order is preserved from the
 // loaded match, so the engine sees the same units in the same order.

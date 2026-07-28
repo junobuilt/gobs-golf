@@ -125,6 +125,10 @@ export interface HoleMeta {
   holeNumber: number; // 1..18
   par: number;
   strokeIndex: number; // 1..18 — the allocation the match is played off
+  // §3.1 fix: distance for the scorecard's hole-context row. Optional — the
+  // engine never reads it (goldens unaffected); the loader surfaces it from
+  // holes.yardage, null when the column is empty.
+  yardage?: number | null;
 }
 
 export interface MatchPlayerInput {

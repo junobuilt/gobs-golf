@@ -15,8 +15,8 @@ const mocks = vi.hoisted(() => ({
   loadSessionMatches: vi.fn(),
   scoreEnqueue: vi.fn(),
   teamEnqueue: vi.fn(),
-  scoreItems: [] as Array<{ state: string }>,
-  teamItems: [] as Array<{ state: string }>,
+  scoreItems: [] as Array<{ state: string; payload?: Record<string, number> }>,
+  teamItems: [] as Array<{ state: string; payload?: Record<string, number> }>,
 }));
 
 // loadMatch.ts imports the supabase client at module load; stub it (we never
@@ -44,7 +44,7 @@ vi.mock("@/lib/writeQueue", () => ({
 vi.mock("next/navigation", () => ({ useParams: () => ({ matchId: "500" }) }));
 
 import MatchScorecardPage from "@/app/tournament/match/[matchId]/page";
-import { MixedTeesInMatchError } from "@/lib/tournament/loadMatch";
+import { MixedTeesInMatchError, MatchLoadError, MatchNotFoundError } from "@/lib/tournament/loadMatch";
 
 async function flush() {
   for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -260,6 +260,116 @@ describe("match scorecard — visible write failure", () => {
     );
     await renderPage();
     expect(screen.getByTestId("sync-failed-banner")).toBeInTheDocument();
+  });
+});
+
+// ── F2: offline background refetch must not crash the live card ───────────────
+describe("match scorecard — offline background refresh (F2)", () => {
+  function singlesFixture() {
+    return makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }],
+      b: [{ playerId: 2, ch: 0, scored: { 1: 5 } }],
+    });
+  }
+
+  it("a failed background refetch does NOT clear the card or render not-found", async () => {
+    mocks.loadMatch.mockResolvedValueOnce(singlesFixture()); // mount succeeds → USA 1
+    await renderPage();
+    expect(screen.getByTestId("match-card-500")).toBeInTheDocument();
+    expect(screen.getByTestId("match-header-500")).toHaveTextContent("USA 1");
+
+    // Background refetch now fails (offline).
+    mocks.loadMatch.mockRejectedValue(new MatchLoadError("Failed to fetch"));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await flush();
+    });
+
+    // Card survives; the score is preserved; NO not-found copy.
+    expect(screen.getByTestId("match-card-500")).toBeInTheDocument();
+    expect(screen.getByTestId("match-header-500")).toHaveTextContent("USA 1");
+    expect(screen.queryByText(/couldn’t be found/i)).not.toBeInTheDocument();
+  });
+
+  it("a network error on INITIAL load classifies as offline (retry), not not-found", async () => {
+    mocks.loadMatch.mockRejectedValue(new MatchLoadError("Failed to fetch"));
+    await renderPage();
+    expect(screen.getByText(/you may be offline/i)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn’t be found/i)).not.toBeInTheDocument();
+  });
+
+  it("a genuine missing match (bad ID) still renders the not-found state on initial load", async () => {
+    mocks.loadMatch.mockRejectedValue(new MatchNotFoundError(500));
+    await renderPage();
+    expect(screen.getByText(/couldn’t be found/i)).toBeInTheDocument();
+  });
+
+  it("self-recovers from offline when a later refresh succeeds (online event, no tab switch)", async () => {
+    mocks.loadMatch.mockRejectedValueOnce(new MatchLoadError("Failed to fetch")); // mount offline
+    await renderPage();
+    expect(screen.getByText(/you may be offline/i)).toBeInTheDocument();
+
+    // Signal returns → `online` fires → backgroundRefresh promotes offline → ready.
+    mocks.loadMatch.mockResolvedValue(singlesFixture());
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flush();
+    });
+    expect(screen.getByTestId("match-card-500")).toBeInTheDocument();
+    expect(screen.queryByText(/you may be offline/i)).not.toBeInTheDocument();
+  });
+
+  it("reconcile: a background success overlays server truth AND keeps a pending un-synced entry", async () => {
+    // Mount with no server scores, but a pending local edit for P1 hole 1 = 3.
+    mocks.scoreItems = [
+      { state: "pending", payload: { round_id: 50, round_player_id: 1001, hole_number: 1, strokes: 3 } },
+    ];
+    mocks.loadMatch.mockResolvedValueOnce(
+      makeLoaded({
+        format: "singles_match",
+        a: [{ playerId: 1, ch: 0, scored: {} }],
+        b: [{ playerId: 2, ch: 0, scored: {} }],
+      }),
+    );
+    await renderPage();
+    // Pending overlay applied at mount.
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-value")).toHaveTextContent("3");
+
+    // A background success now brings a server entry for P2 (another scorer).
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "singles_match",
+        a: [{ playerId: 1, ch: 0, scored: {} }],
+        b: [{ playerId: 2, ch: 0, scored: { 1: 5 } }],
+      }),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await flush();
+    });
+    // Server truth picked up (P2 = 5) AND the pending local P1 = 3 survived.
+    expect(within(screen.getByTestId("player-2")).getByTestId("ball-1-value")).toHaveTextContent("5");
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-value")).toHaveTextContent("3");
+  });
+});
+
+// ── F1: per-hole context ──────────────────────────────────────────────────────
+describe("match scorecard — hole context (F1)", () => {
+  it("renders hole #, par, yardage, and stroke index once per card", async () => {
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({
+        format: "four_ball_match",
+        a: [{ playerId: 1, ch: 0, scored: {} }, { playerId: 2, ch: 0, scored: {} }],
+        b: [{ playerId: 3, ch: 0, scored: {} }, { playerId: 4, ch: 0, scored: {} }],
+      }),
+    );
+    await renderPage();
+    const ctx = screen.getByTestId("hole-context-500");
+    expect(ctx).toHaveTextContent("Hole 1");
+    expect(ctx).toHaveTextContent("Par 4");
+    expect(ctx).toHaveTextContent("300 yds"); // fixture yardage = 300 + (hole-1)*10
+    expect(ctx).toHaveTextContent("SI 1");
   });
 });
 

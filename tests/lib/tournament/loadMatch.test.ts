@@ -30,6 +30,7 @@ function holes(teeId = 1) {
     hole_number: i + 1,
     par: 4,
     stroke_index: i + 1,
+    yardage: 300 + i * 10,
   }));
 }
 
@@ -95,6 +96,10 @@ describe("loadMatch — singles golden", () => {
     expect(m.sideA.displayName).toBe("USA");
     expect(m.sideB.displayName).toBe("Canada");
     expect(m.sideA.collapsedHandicap).toBeNull();
+
+    // F1: yardage surfaced on HoleMeta for the hole-context row.
+    expect(m.holes[0].yardage).toBe(300);
+    expect(m.holes[17].yardage).toBe(470);
 
     expect(m.state.result).toBe("side_b");
     expect(m.state.margin).toBe("1 UP");

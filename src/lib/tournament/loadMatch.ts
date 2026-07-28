@@ -72,6 +72,26 @@ export class MatchNotFoundError extends Error {
   }
 }
 
+// A read FAILED (network/offline/transient) — the Supabase call returned an
+// `error`, distinct from a successful query that returned zero rows (that stays
+// MatchNotFoundError). A dead network is NOT a missing match: the surface must
+// classify this as retryable/offline, never as "match not found".
+export class MatchLoadError extends Error {
+  readonly code = "match_load_error";
+  constructor(public readonly context: string, public readonly cause?: unknown) {
+    super(`loadMatch: read failed (${context})`);
+    this.name = "MatchLoadError";
+  }
+}
+
+// Unwrap a Supabase `{ data, error }` result: a populated `error` is transient
+// (throw MatchLoadError); otherwise return `data`. Keeps the null-rows vs
+// network-failure distinction in ONE place so every read classifies the same.
+function unwrap<T>(res: { data: T; error: unknown }, context: string): T {
+  if (res.error) throw new MatchLoadError(context, res.error);
+  return res.data;
+}
+
 // ── Row shapes (internal) ───────────────────────────────────────────────────
 interface RoundPlayerRow {
   id: number;
@@ -259,17 +279,19 @@ function teamGrossByTeam(rows: Array<{ team_number: number; hole_number: number;
 async function loadHolesByTee(teeIds: number[]): Promise<Map<number, HoleMeta[]>> {
   const byTee = new Map<number, HoleMeta[]>();
   for (const teeId of teeIds) {
-    const { data } = await supabase
+    const res = await supabase
       .from("holes")
-      .select("hole_number, par, stroke_index")
+      .select("hole_number, par, stroke_index, yardage")
       .eq("tee_id", teeId)
       .order("hole_number");
+    const data = unwrap(res, "holes");
     byTee.set(
       teeId,
-      (data ?? []).map((h: { hole_number: number; par: number; stroke_index: number }) => ({
+      (data ?? []).map((h: { hole_number: number; par: number; stroke_index: number; yardage: number | null }) => ({
         holeNumber: h.hole_number,
         par: h.par,
         strokeIndex: h.stroke_index,
+        yardage: h.yardage ?? null,
       })),
     );
   }
@@ -280,40 +302,40 @@ async function loadHolesByTee(teeIds: number[]): Promise<Map<number, HoleMeta[]>
 // per-round scope keeps it under the cap) and assert it isn't truncated.
 async function loadScores(roundId: number | null, rpIds: number[]): Promise<Map<number, (number | null)[]>> {
   if (rpIds.length === 0) return new Map();
-  const { data } = await supabase
+  const res = await supabase
     .from("scores")
     .select("round_player_id, hole_number, strokes")
     .in("round_player_id", rpIds);
-  const rows = (data ?? []) as Array<{ round_player_id: number; hole_number: number; strokes: number }>;
+  const rows = (unwrap(res, "scores") ?? []) as Array<{ round_player_id: number; hole_number: number; strokes: number }>;
   if (rows.length >= SCORES_ROW_CAP) throw new ScoresTruncatedError(roundId, rows.length);
   return grossByHole(rows);
 }
 
 async function loadTeamScores(roundId: number | null): Promise<Map<number, (number | null)[]>> {
   if (roundId == null) return new Map();
-  const { data } = await supabase
+  const res = await supabase
     .from("team_scores")
     .select("team_number, hole_number, ball_index, strokes")
     .eq("round_id", roundId);
-  return teamGrossByTeam((data ?? []) as Array<{ team_number: number; hole_number: number; ball_index: number; strokes: number }>);
+  return teamGrossByTeam((unwrap(res, "team_scores") ?? []) as Array<{ team_number: number; hole_number: number; ball_index: number; strokes: number }>);
 }
 
 async function loadSessionRow(sessionId: number): Promise<SessionRow | null> {
-  const { data } = await supabase
+  const res = await supabase
     .from("tournament_sessions")
     .select("id, tournament_id, round_id, day_number, name, format, played_on")
     .eq("id", sessionId)
     .maybeSingle();
-  return (data as SessionRow | null) ?? null;
+  return (unwrap(res, "tournament_sessions") as SessionRow | null) ?? null;
 }
 
 async function loadTournamentName(tournamentId: number): Promise<TournamentNameRow | null> {
-  const { data } = await supabase
+  const res = await supabase
     .from("tournaments")
     .select("id, side_a_name, side_b_name")
     .eq("id", tournamentId)
     .maybeSingle();
-  return (data as TournamentNameRow | null) ?? null;
+  return (unwrap(res, "tournaments") as TournamentNameRow | null) ?? null;
 }
 
 async function loadRoundPlayers(roundId: number | null, teamNumbers?: number[]): Promise<RoundPlayerRow[]> {
@@ -324,18 +346,18 @@ async function loadRoundPlayers(roundId: number | null, teamNumbers?: number[]):
     .eq("round_id", roundId)
     .gt("team_number", 0);
   if (teamNumbers) q = q.in("team_number", teamNumbers);
-  const { data } = await q;
-  return (data as unknown as RoundPlayerRow[] | null) ?? [];
+  const res = await q;
+  return (unwrap(res, "round_players") as unknown as RoundPlayerRow[] | null) ?? [];
 }
 
 // ── Entry points ────────────────────────────────────────────────────────────
 export async function loadMatch(matchId: number): Promise<LoadedMatch> {
-  const { data: matchData } = await supabase
+  const matchRes = await supabase
     .from("tournament_matches")
     .select("*")
     .eq("id", matchId)
     .maybeSingle();
-  const match = (matchData as TournamentMatch | null) ?? null;
+  const match = (unwrap(matchRes, "tournament_matches") as TournamentMatch | null) ?? null;
   if (!match) throw new MatchNotFoundError(matchId);
 
   const session = await loadSessionRow(match.session_id);
@@ -360,12 +382,12 @@ export async function loadSessionMatches(sessionId: number): Promise<LoadedMatch
   const session = await loadSessionRow(sessionId);
   if (!session) return [];
 
-  const { data: matchData } = await supabase
+  const matchesRes = await supabase
     .from("tournament_matches")
     .select("*")
     .eq("session_id", sessionId)
     .order("match_number");
-  const matches = (matchData as TournamentMatch[] | null) ?? [];
+  const matches = (unwrap(matchesRes, "tournament_matches") as TournamentMatch[] | null) ?? [];
   if (matches.length === 0) return [];
 
   const tournament = await loadTournamentName(session.tournament_id);
