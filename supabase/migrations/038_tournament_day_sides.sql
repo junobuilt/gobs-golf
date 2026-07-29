@@ -1,9 +1,12 @@
 -- 038_tournament_day_sides.sql
 -- Per-day team assignment for tournament "alternates". ADDITIVE + REVERSIBLE.
 --
--- STATUS: NOT YET APPLIED TO PROD. A BEGIN…ROLLBACK dry-run was posted for
--- review; this file is applied only on Jonathan's explicit go-ahead. When it is
--- applied, update this header (mirror the 031 "APPLIED TO PROD <date>" note).
+-- APPLIED TO PROD 2026-07-28 via the Supabase MCP (apply_migration, name
+-- `038_tournament_day_sides`) after a BEGIN…ROLLBACK dry-run passed. This file is
+-- the EXACT deployed body, committed after the fact. DO NOT RE-APPLY. Post-apply
+-- verify confirmed: table present; 6 NOT NULL columns; pkey + 3 FKs + UNIQUE
+-- (session_id,player_id) + side CHECK; idx_tds_session/idx_tds_tournament; RLS on
+-- with the "Allow all" policy; 0 rows.
 --
 -- WHY: each tournament_players row carries ONE global "home" side (USA/Canada)
 -- for the whole tournament (UNIQUE (tournament_id, player_id)). An "alternate"
