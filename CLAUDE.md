@@ -41,7 +41,20 @@ Consult these at the start of any session:
 **Ask ALL clarifying questions through the chat reply path. Do NOT use
 `AskUserQuestion` or any interactive desktop prompt.** Those open a blocking
 modal on the desktop that freezes a mobile session. Use a plain text reply
-with the question instead.
+with the question instead. This is a standing rule: Claude Code never uses
+interactive desktop prompts while Jonathan may be on mobile — route every
+question to chat.
+
+### Deletion gate (iron-clad)
+
+**No deletion of any data — rounds, round_players, scores, tournament
+matches, DB rows, or files — may be executed via MCP, SQL, or any tool
+without Jonathan's explicit prior review and written go-ahead.** Always
+surface exactly what will be deleted (IDs, counts, scope) and wait for
+approval before proceeding. This applies to cleanup/test-data sweeps and to
+any drop/delete migration. When in doubt, treat it as a deletion and ask.
+(Added 2026-07-28, after the 2026-07-27 round-loss incident; see
+[DATA_PROTECTION.md](./DATA_PROTECTION.md).)
 
 ### Plan-first protocol
 For any code change beyond a one-line typo fix:
