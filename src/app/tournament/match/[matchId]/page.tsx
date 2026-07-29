@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   loadMatch,
-  loadSessionMatches,
   MixedTeesInMatchError,
   MatchHolesMissingError,
   MatchNotFoundError,
@@ -26,7 +25,6 @@ import {
   thruDisplay,
   marginWithSide,
   finishBanner,
-  missingHoleGap,
   countingMarks,
   unitNet,
   strokeDots,
@@ -52,19 +50,16 @@ type LoadState =
   | { kind: "offline" } // transient network/read failure — retryable, NOT "not found"
   | { kind: "error" };
 
-// Load the target match and — for singles — its foursome sibling (same
-// group_number). Known loader throws map to friendly states, never a crash.
+// Load the target match ALONE. Every format — including singles — shows exactly
+// its own card: a singles foursome is TWO separate, unlinked 1-v-1 matches (each
+// its own 2-player card), reachable individually from the landing/dashboard row
+// and each player's own nearest-match resolution. (Was: singles co-rendered its
+// foursome sibling under one shared rail — Decision D, reversed for the 1-on-1
+// split.) Known loader throws map to friendly states, never a crash.
 async function loadGroup(matchId: number): Promise<LoadState> {
   try {
     const target = await loadMatch(matchId);
-    let group: LoadedMatch[] = [target];
-    if (target.session.format === "singles_match" && target.match.group_number != null) {
-      const all = await loadSessionMatches(target.session.id);
-      const g = all
-        .filter((m) => m.match.group_number === target.match.group_number)
-        .sort((a, b) => a.match.match_number - b.match.match_number);
-      if (g.length > 0) group = g;
-    }
+    const group: LoadedMatch[] = [target];
     return { kind: "ready", group };
   } catch (e) {
     if (e instanceof MixedTeesInMatchError || e instanceof MatchHolesMissingError) {
@@ -162,6 +157,10 @@ export default function MatchScorecardPage() {
       setScoresByMatch(reconcileScores(next.group));
       setScorerByMatch(seedScorers(next.group));
       setFlagByMatch(seedFlags(next.group));
+      // Shotgun (039): open on the group's tee-off hole. INITIAL load only — a
+      // background refresh must never yank the scorer off their current hole.
+      const startHole = next.group[0]?.match.start_hole ?? 1;
+      setCurrentHole(startHole);
     }
   }, [matchId, reconcileScores]);
 
@@ -405,6 +404,7 @@ export default function MatchScorecardPage() {
     });
 
   const header = group[0];
+  const startHole = header?.match.start_hole ?? 1; // shotgun (039): nav play order
   return (
     <Shell>
       <div style={{ marginBottom: "12px" }}>
@@ -450,7 +450,7 @@ export default function MatchScorecardPage() {
         </div>
       )}
 
-      <HoleDotRail currentHole={currentHole} onSelect={setCurrentHole} hasScore={anyScoreAtHole} />
+      <HoleDotRail currentHole={currentHole} onSelect={setCurrentHole} hasScore={anyScoreAtHole} startHole={startHole} />
 
       {group.map((m) => {
         const claimant = scorerByMatch[m.match.id] ?? null;
@@ -479,7 +479,7 @@ export default function MatchScorecardPage() {
         );
       })}
 
-      <HolePrevNext currentHole={currentHole} onSelect={setCurrentHole} />
+      <HolePrevNext currentHole={currentHole} onSelect={setCurrentHole} startHole={startHole} />
     </Shell>
   );
 }
@@ -531,7 +531,6 @@ function MatchCard({
   const [reviewOpen, setReviewOpen] = useState(false);
 
   const holeMeta = loaded.holes[hole - 1];
-  const gap = missingHoleGap(state);
   const banner = finishBanner(state, loaded);
   // A1 — did a post-decision edit re-decide the match? Compare the server-
   // committed result (loaded.state, from the last load/refresh) against the live
@@ -714,30 +713,9 @@ function MatchCard({
         </div>
       )}
 
-      {/* Missing-hole amber (§6 + Decision E): carried on every hole; inputs stay live. */}
-      {gap != null && (
-        <button
-          data-testid={`missing-hole-${loaded.match.id}`}
-          onClick={() => onJumpToHole(gap)}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            background: "#fef3c7",
-            border: "1px solid #92400e",
-            color: "#92400e",
-            borderRadius: "8px",
-            padding: "8px 10px",
-            marginBottom: "10px",
-            fontSize: "0.8rem",
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          {gap <= 1
-            ? "Hole 1 has no score — enter it to score the match."
-            : `Hole ${gap} has no score — the match can’t be scored past hole ${gap - 1}.`}
-        </button>
-      )}
+      {/* Missing-hole amber removed (039): completion is order-agnostic, so a
+          hole entered out of order is normal, not a "skipped hole" to nag about.
+          The dot rail still shows which holes lack a score. */}
 
       {/* SOFT closeout: when the match is decided the banner shows ABOVE the
           inputs, but the inputs stay live so a stray tap that closed the match

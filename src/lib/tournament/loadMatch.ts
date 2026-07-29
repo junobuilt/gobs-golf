@@ -168,7 +168,14 @@ function assembleMatch(
     teamGross: format === "greensomes" ? teamScoresByTeam.get(match.side_b_team_number) : undefined,
   };
 
-  const matchInput: MatchInput = { format, holes, sideA: sideAInput, sideB: sideBInput };
+  const matchInput: MatchInput = {
+    format,
+    holes,
+    sideA: sideAInput,
+    sideB: sideBInput,
+    // Shotgun (039): walk the group's play order. null/absent → hole-1 start.
+    startHole: match.start_hole ?? 1,
+  };
   const state = computeMatchState(matchInput);
   const resolved = resolveMatchResult(state, { result_source: match.result_source, result: match.result });
 

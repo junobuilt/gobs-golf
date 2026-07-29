@@ -179,8 +179,8 @@ describe("match scorecard — offline recompute", () => {
   });
 });
 
-describe("match scorecard — singles: two independent matches on one card", () => {
-  it("one match closes out and shows its banner while the other stays live", async () => {
+describe("match scorecard — singles 1-on-1 split (039)", () => {
+  it("opening a singles match renders ONLY its own 2-player card; the foursome sibling is not co-rendered", async () => {
     const matchA = makeLoaded({
       id: 500,
       matchNumber: 1,
@@ -200,18 +200,20 @@ describe("match scorecard — singles: two independent matches on one card", () 
       b: [{ playerId: 4, ch: 0, scored: { 1: 5 } }],
     });
     mocks.loadMatch.mockResolvedValue(matchA);
+    // A sibling exists in the session, but the unlinked page must NOT pull it in.
     mocks.loadSessionMatches.mockResolvedValue([matchA, matchB]);
     await renderPage();
 
-    // Match A closed out (5&4) → banner AND still-live inputs (soft closeout).
+    // Only match 500's card + its two players (1 & 2).
     const cardA = screen.getByTestId("match-card-500");
     expect(within(cardA).getByTestId("finish-banner")).toHaveTextContent("USA wins 5&4");
     expect(within(cardA).getByTestId("player-1")).toBeInTheDocument();
 
-    // Match B still live → shows player boxes, no banner.
-    const cardB = screen.getByTestId("match-card-501");
-    expect(within(cardB).queryByTestId("finish-banner")).not.toBeInTheDocument();
-    expect(within(cardB).getByTestId("player-3")).toBeInTheDocument();
+    // The sibling 1-v-1 (match 501 / players 3-4) is NOT on this screen.
+    expect(screen.queryByTestId("match-card-501")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("player-3")).not.toBeInTheDocument();
+    // …and the page never fans out to the session to find it.
+    expect(mocks.loadSessionMatches).not.toHaveBeenCalled();
   });
 });
 
@@ -302,7 +304,7 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
     expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
   });
 
-  it("singles: correcting the decided match clears only its banner; the other is untouched", async () => {
+  it("singles (unlinked): correcting the opened 1-v-1 clears its banner; no sibling on screen", async () => {
     const win = winMap([1, 2, 3, 4, 5], [], range(6, 14));
     const matchA = makeLoaded({
       id: 500,
@@ -312,24 +314,14 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
       a: [{ playerId: 1, ch: 0, scored: win.a }],
       b: [{ playerId: 2, ch: 0, scored: win.b }],
     });
-    const matchB = makeLoaded({
-      id: 501,
-      matchNumber: 2,
-      format: "singles_match",
-      groupNumber: 7,
-      teamA_number: 3,
-      teamB_number: 4,
-      a: [{ playerId: 3, ch: 0, scored: { 1: 4 } }],
-      b: [{ playerId: 4, ch: 0, scored: { 1: 5 } }],
-    });
     mocks.loadMatch.mockResolvedValue(matchA);
-    mocks.loadSessionMatches.mockResolvedValue([matchA, matchB]);
     await renderPage();
 
     expect(within(screen.getByTestId("match-card-500")).getByTestId("finish-banner")).toBeInTheDocument();
-    expect(within(screen.getByTestId("match-card-501")).queryByTestId("finish-banner")).not.toBeInTheDocument();
+    // No foursome sibling co-rendered.
+    expect(screen.queryByTestId("match-card-501")).not.toBeInTheDocument();
 
-    // Shared nav → hole 5; correct match A's Adam (player-1 lives only in card 500).
+    // Hole 5 → correct Adam so the match is no longer 5&4.
     await act(async () => {
       fireEvent.click(screen.getByTestId("hole-dot-5"));
       await flush();
@@ -339,10 +331,9 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
       await flush();
     });
 
-    // Match A's banner cleared; match B unchanged (never had one, inputs live).
+    // Its banner cleared; inputs stay editable.
     expect(within(screen.getByTestId("match-card-500")).queryByTestId("finish-banner")).not.toBeInTheDocument();
-    expect(within(screen.getByTestId("match-card-501")).queryByTestId("finish-banner")).not.toBeInTheDocument();
-    expect(within(screen.getByTestId("match-card-501")).getByTestId("player-3")).toBeInTheDocument();
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
   });
 });
 
@@ -381,9 +372,10 @@ describe("match scorecard — result-changed note on a flipped winner", () => {
   });
 });
 
-describe("match scorecard — missing hole", () => {
-  it("shows a persistent amber prompt with the real hole numbers and keeps it across holes", async () => {
-    // Holes 1,2 scored; 3 blank; 4 scored → gap at 3.
+describe("match scorecard — missing-hole amber retired (039)", () => {
+  it("a hole entered out of order shows NO amber nag (order-agnostic completion)", async () => {
+    // Holes 1,2 scored; 3 blank; 4 scored → an out-of-order gap at 3, but the
+    // amber prompt has been removed (a hole entered out of order is normal now).
     mocks.loadMatch.mockResolvedValue(
       makeLoaded({
         format: "singles_match",
@@ -393,16 +385,9 @@ describe("match scorecard — missing hole", () => {
     );
     await renderPage();
 
-    const amber = screen.getByTestId("missing-hole-500");
-    expect(amber).toHaveTextContent("Hole 3 has no score");
-    expect(amber).toHaveTextContent("past hole 2");
-
-    // Navigate forward — the amber is carried onto later holes.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Next Hole/ }));
-      await flush();
-    });
-    expect(screen.getByTestId("missing-hole-500")).toBeInTheDocument();
+    expect(screen.queryByTestId("missing-hole-500")).not.toBeInTheDocument();
+    // The card still renders normally with live inputs.
+    expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
   });
 });
 

@@ -65,7 +65,8 @@ test("pairings: create a group → strokes render → change tee → remove", as
   // Edit → change the tee to White. (The day cards behind the overlay also have
   // "Edit"; the panel renders last in the DOM, so its button is the last one.)
   await page.getByRole("button", { name: "Edit" }).last().click();
-  await page.getByRole("combobox").selectOption({ label: "White" });
+  // The Edit form now has two selects (tee + shotgun start hole); target the tee.
+  await page.getByTestId("edit-tee").selectOption({ label: "White" });
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText(/White tees/)).toBeVisible();
 

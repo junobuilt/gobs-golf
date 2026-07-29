@@ -1,20 +1,26 @@
 "use client";
 
 import React from "react";
+import { holePlayOrder } from "@/lib/tournament/matchplay";
 
 // Ported from the league scorecard's hole navigation (round/[id]/scorecard):
 // a 44px WCAG-min dot rail + a Back / Next stepper. Same touchAction hints that
-// fix iOS Safari's scroll-into-tap. Singles shares ONE rail + stepper across its
-// two matches (Decision D) — the group walks one hole at a time.
+// fix iOS Safari's scroll-into-tap.
+//
+// Shotgun (039): the rail renders in PLAY ORDER — rotated from `startHole` and
+// wrapping 18→1 — and Back/Next walk that sequence (endpoints at the first and
+// last played hole). startHole defaults to 1 → the ordinary 1..18 order.
 
 export function HoleDotRail({
   currentHole,
   onSelect,
   hasScore,
+  startHole = 1,
 }: {
   currentHole: number;
   onSelect: (hole: number) => void;
   hasScore: (hole: number) => boolean;
+  startHole?: number;
 }) {
   return (
     <div
@@ -27,7 +33,7 @@ export function HoleDotRail({
         touchAction: "pan-x",
       }}
     >
-      {Array.from({ length: 18 }, (_, i) => i + 1).map((h) => {
+      {holePlayOrder(startHole).map((h) => {
         const scored = hasScore(h);
         return (
           <button
@@ -58,41 +64,52 @@ export function HoleDotRail({
 export function HolePrevNext({
   currentHole,
   onSelect,
+  startHole = 1,
 }: {
   currentHole: number;
   onSelect: (hole: number) => void;
+  startHole?: number;
 }) {
+  // Walk the play sequence: Back/Next move to the previous/next PLAYED hole,
+  // wrapping 18→1. Endpoints are the first (startHole) and last (the hole before
+  // startHole in the rotation) played holes.
+  const order = holePlayOrder(startHole);
+  const pos = Math.max(0, order.indexOf(currentHole));
+  const atFirst = pos === 0;
+  const atLast = pos === order.length - 1;
+  const prevHole = order[Math.max(0, pos - 1)];
+  const nextHole = order[Math.min(order.length - 1, pos + 1)];
   return (
     <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
       <button
-        onClick={() => onSelect(Math.max(1, currentHole - 1))}
-        disabled={currentHole === 1}
+        onClick={() => onSelect(prevHole)}
+        disabled={atFirst}
         style={{
           flex: 1,
           padding: "18px",
           borderRadius: "12px",
           border: "1px solid #e2e8f0",
           background: "white",
-          cursor: currentHole === 1 ? "default" : "pointer",
-          opacity: currentHole === 1 ? 0.4 : 1,
+          cursor: atFirst ? "default" : "pointer",
+          opacity: atFirst ? 0.4 : 1,
           fontFamily: "sans-serif",
         }}
       >
         ← Back
       </button>
       <button
-        onClick={() => onSelect(Math.min(18, currentHole + 1))}
-        disabled={currentHole === 18}
+        onClick={() => onSelect(nextHole)}
+        disabled={atLast}
         style={{
           flex: 2,
           padding: "18px",
           borderRadius: "12px",
-          background: currentHole === 18 ? "#94a3b8" : "#0c3057",
+          background: atLast ? "#94a3b8" : "#0c3057",
           color: "white",
           border: "none",
           fontWeight: 900,
-          cursor: currentHole === 18 ? "default" : "pointer",
-          opacity: currentHole === 18 ? 0.6 : 1,
+          cursor: atLast ? "default" : "pointer",
+          opacity: atLast ? 0.6 : 1,
           fontFamily: "sans-serif",
         }}
       >

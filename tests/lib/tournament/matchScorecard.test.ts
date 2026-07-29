@@ -286,39 +286,37 @@ describe("matchScorecard — counting marks", () => {
   });
 });
 
-// ── Missing-hole gap (§6): only a genuine out-of-order gap; releasing it ───────
-describe("matchScorecard — missing-hole gap", () => {
+// ── Missing-hole gap RETIRED (migration 039) ──────────────────────────────────
+// Order-agnostic completion means a hole entered out of 1→18 order is normal,
+// not a "skipped hole" to nag about — so missingHoleGap() is now a no-op that
+// always returns null (the amber prompt it drove was removed from the card).
+// firstUnresolvedHole / thru remain as nav hints; the resolved holes still count.
+describe("matchScorecard — missing-hole gap retired (039)", () => {
   const base = makeLoaded({
     format: "singles_match",
     a: [{ playerId: 1, ch: 0, scored: {} }],
     b: [{ playerId: 2, ch: 0, scored: {} }],
   });
 
-  it("no gap while scoring in order (nothing past the current hole)", () => {
-    const s = { byPlayer: { 1: { 1: 4, 2: 4 }, 2: { 1: 5, 2: 5 } }, teamGross: { a: {}, b: {} } };
-    const st = recomputeState(base, s);
-    expect(missingHoleGap(st)).toBeNull(); // firstUnresolved is 3, nothing beyond
-  });
-
-  it("gap appears when a later hole is resolved past an unscored one, and releases when filled", () => {
-    // Holes 1,2 scored; 3 blank; 4 scored → gap at 3.
+  it("missingHoleGap is always null now, even with a genuine out-of-order gap", () => {
+    // Holes 1,2 scored; 3 blank; 4 scored → a gap at 3, but NO nag anymore.
     const withGap = {
       byPlayer: { 1: { 1: 4, 2: 4, 4: 4 }, 2: { 1: 5, 2: 5, 4: 5 } },
       teamGross: { a: {}, b: {} },
     };
     const stGap = recomputeState(base, withGap);
+    expect(missingHoleGap(stGap)).toBeNull();
+    // Nav hints still populated: firstUnresolvedHole = the gap, thru = consecutive.
     expect(stGap.firstUnresolvedHole).toBe(3);
-    expect(missingHoleGap(stGap)).toBe(3);
-    expect(stGap.thru).toBe(2); // frozen at the gap
+    expect(stGap.thru).toBe(2);
+    // Order-agnostic: hole 4 STILL counts (it's a halve → holesUp unchanged here),
+    // resolved wherever it sits. The match is not decided (plenty remaining).
+    expect(stGap.status).toBe("in_progress");
+  });
 
-    // Fill hole 3 → gap released, thru advances.
-    const filled = {
-      byPlayer: { 1: { 1: 4, 2: 4, 3: 4, 4: 4 }, 2: { 1: 5, 2: 5, 3: 5, 4: 5 } },
-      teamGross: { a: {}, b: {} },
-    };
-    const stFilled = recomputeState(base, filled);
-    expect(missingHoleGap(stFilled)).toBeNull();
-    expect(stFilled.thru).toBe(4);
+  it("scoring in order also yields no gap nag", () => {
+    const s = { byPlayer: { 1: { 1: 4, 2: 4 }, 2: { 1: 5, 2: 5 } }, teamGross: { a: {}, b: {} } };
+    expect(missingHoleGap(recomputeState(base, s))).toBeNull();
   });
 });
 

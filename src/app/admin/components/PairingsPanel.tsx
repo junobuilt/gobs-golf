@@ -17,8 +17,9 @@ import { supabase } from "@/lib/supabase";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { computeSideStrokes } from "@/lib/tournament/matchStrokes";
 import { loadMatch, loadSessionMatches } from "@/lib/tournament/loadMatch";
-import { createGroup, deleteGroup, setPlayerDaySide, updateGroup } from "@/lib/tournament/mutations";
+import { createGroup, deleteGroup, setGroupShotgun, setPlayerDaySide, updateGroup } from "@/lib/tournament/mutations";
 import { getDaySideAssignments, getTournamentPlayers } from "@/lib/tournament/queries";
+import { deriveGroupLabel, groupLabelFor } from "@/lib/tournament/matchScorecard";
 import { loaderMessage, mutationMessage } from "./pairingsCopy";
 import type {
   LoadedMatch,
@@ -226,6 +227,8 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
   const groupedCount = groupedIds.size;
   const unassigned = assignedCount - groupedCount;
   const groupCount = groups.length;
+  // Next foursome number → its auto-derived label placeholder in the builder.
+  const nextGroupNumber = groups.reduce((m, g) => Math.max(m, g.groupNumber ?? 0), 0) + 1;
 
   const teeLabel = (teeId: number | null) => tees.find((t) => t.id === teeId)?.color ?? "Tee";
 
@@ -374,6 +377,7 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
           tees={tees}
           sideAName={tournament.side_a_name}
           sideBName={tournament.side_b_name}
+          nextGroupLabel={deriveGroupLabel(nextGroupNumber)}
           onCancel={() => setAddOpen(false)}
           onSubmit={async (draft) => {
             try {
@@ -383,6 +387,8 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
                 sideAPlayerIds: draft.aIds,
                 sideBPlayerIds: draft.bIds,
                 teeId: draft.teeId,
+                startHole: draft.startHole,
+                groupLabel: draft.groupLabel,
               });
               setAddOpen(false);
               await load();
@@ -613,8 +619,29 @@ function GroupCard({
     );
   }
 
+  // Shotgun (039): the foursome tag + tee-off hole, read off any match in the
+  // group (all share them). No start_hole → an ordinary hole-1 start (no chip).
+  const first = group.matches[0]?.match;
+  const label = groupLabelFor(group.groupNumber, first?.group_label);
+  const startHole = first?.start_hole ?? null;
+
   return (
     <div style={card}>
+      {(label || startHole != null) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          {label && (
+            <span style={{ fontWeight: 800, fontSize: "0.8rem", color: C.navy }}>Group {label}</span>
+          )}
+          {startHole != null && (
+            <span
+              data-testid={`group-start-chip-${group.groupNumber ?? 0}`}
+              style={{ fontSize: "0.72rem", fontWeight: 700, color: C.amber, background: C.amberBg, borderRadius: 6, padding: "2px 8px" }}
+            >
+              Starts hole {startHole}
+            </span>
+          )}
+        </div>
+      )}
       {group.matches.map((m, idx) => (
         <div key={m.match.id} style={{ marginTop: idx === 0 ? 0 : 14, paddingTop: idx === 0 ? 0 : 14, borderTop: idx === 0 ? "none" : `1px solid ${C.border}` }}>
           {format === "singles_match" && (
@@ -712,6 +739,8 @@ interface Draft {
   aIds: Array<number | null>;
   bIds: Array<number | null>;
   teeId: number;
+  startHole: number | null; // shotgun (039); null = ordinary hole-1 start
+  groupLabel: string | null; // null = auto-derive from group_number
 }
 
 function GroupBuilder({
@@ -721,6 +750,7 @@ function GroupBuilder({
   tees,
   sideAName,
   sideBName,
+  nextGroupLabel,
   onCancel,
   onSubmit,
 }: {
@@ -731,6 +761,7 @@ function GroupBuilder({
   tees: TeeRow[];
   sideAName: string;
   sideBName: string;
+  nextGroupLabel: string; // derived letter placeholder for this new group
   onCancel: () => void;
   onSubmit: (draft: Draft) => void;
 }) {
@@ -738,6 +769,8 @@ function GroupBuilder({
   const [aIds, setAIds] = useState<Array<number | null>>(Array(slots).fill(null));
   const [bIds, setBIds] = useState<Array<number | null>>(Array(slots).fill(null));
   const [teeId, setTeeId] = useState<number>(DEFAULT_TEE_ID);
+  const [startHole, setStartHole] = useState<number | null>(null); // null = hole 1
+  const [groupLabel, setGroupLabel] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   const tee = tees.find((t) => t.id === teeId) ?? null;
@@ -844,6 +877,41 @@ function GroupBuilder({
         ))}
       </select>
 
+      {/* Shotgun (039): per-group start hole + label. Default = ordinary hole-1
+          start; label auto-derives from the group letter unless overridden. */}
+      <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Start hole</div>
+          <select
+            data-testid="group-start-hole"
+            value={startHole ?? 0}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setStartHole(v === 0 ? null : v);
+            }}
+            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44 }}
+          >
+            <option value={0}>Hole 1 (standard)</option>
+            {Array.from({ length: 18 }, (_, i) => i + 1).map((h) => (
+              <option key={h} value={h}>
+                Hole {h}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group label</div>
+          <input
+            data-testid="group-label"
+            value={groupLabel}
+            onChange={(e) => setGroupLabel(e.target.value)}
+            placeholder={nextGroupLabel}
+            maxLength={12}
+            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44, boxSizing: "border-box" }}
+          />
+        </div>
+      </div>
+
       <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
         <button style={{ ...primaryBtn, flex: 1, background: "white", color: C.navy, border: `1.5px solid ${C.border}` }} onClick={onCancel}>
           Cancel
@@ -853,7 +921,7 @@ function GroupBuilder({
           disabled={totalPicked === 0 || saving}
           onClick={() => {
             setSaving(true);
-            onSubmit({ aIds, bIds, teeId });
+            onSubmit({ aIds, bIds, teeId, startHole, groupLabel: groupLabel.trim() || null });
             setSaving(false);
           }}
         >
@@ -903,6 +971,8 @@ function EditGroup({
   const [liveGroup, setLiveGroup] = useState(group);
   const [desired, setDesired] = useState<Record<string, number | null>>({});
   const [teeId, setTeeId] = useState<number>(group.matches[0]?.teeId ?? DEFAULT_TEE_ID);
+  const [startHole, setStartHole] = useState<number | null>(group.matches[0]?.match.start_hole ?? null);
+  const [groupLabel, setGroupLabel] = useState<string>(group.matches[0]?.match.group_label ?? "");
   const [saving, setSaving] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
@@ -922,12 +992,17 @@ function EditGroup({
 
   const currentTee = liveGroup.matches[0]?.teeId ?? DEFAULT_TEE_ID;
 
+  const currentStartHole = liveGroup.matches[0]?.match.start_hole ?? null;
+  const currentLabel = liveGroup.matches[0]?.match.group_label ?? "";
+
   // Reset the working copy whenever the live group changes (mount + reload).
   useEffect(() => {
     const init: Record<string, number | null> = {};
     for (const s of seats) init[s.key] = s.original;
     setDesired(init);
     setTeeId(currentTee);
+    setStartHole(currentStartHole);
+    setGroupLabel(currentLabel);
   }, [liveGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const picked = new Set<number>(Object.values(desired).filter((x): x is number => x != null));
@@ -953,6 +1028,11 @@ function EditGroup({
     setInlineError(null);
     try {
       if (teeId !== currentTee) await updateGroup({ sessionId, groupNumber, teeId });
+      // Shotgun (039): persist start-hole / label changes across the group.
+      const labelNorm = groupLabel.trim() || null;
+      if (startHole !== currentStartHole || labelNorm !== (currentLabel.trim() || null)) {
+        await setGroupShotgun(sessionId, groupNumber, { startHole, groupLabel: labelNorm });
+      }
       // clear → fill → swap (approved ordering).
       for (const s of seats) {
         if (s.original != null && desired[s.key] == null) {
@@ -1018,6 +1098,7 @@ function EditGroup({
 
       <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "8px 0 4px" }}>Tee</div>
       <select
+        data-testid="edit-tee"
         value={teeId}
         onChange={(e) => setTeeId(parseInt(e.target.value, 10))}
         style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44 }}
@@ -1028,6 +1109,40 @@ function EditGroup({
           </option>
         ))}
       </select>
+
+      {/* Shotgun (039): start hole + label for the whole group. */}
+      <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Start hole</div>
+          <select
+            data-testid="edit-start-hole"
+            value={startHole ?? 0}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setStartHole(v === 0 ? null : v);
+            }}
+            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44 }}
+          >
+            <option value={0}>Hole 1 (standard)</option>
+            {Array.from({ length: 18 }, (_, i) => i + 1).map((h) => (
+              <option key={h} value={h}>
+                Hole {h}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group label</div>
+          <input
+            data-testid="edit-group-label"
+            value={groupLabel}
+            onChange={(e) => setGroupLabel(e.target.value)}
+            placeholder={deriveGroupLabel(groupNumber)}
+            maxLength={12}
+            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44, boxSizing: "border-box" }}
+          />
+        </div>
+      </div>
 
       <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
         <button style={{ ...primaryBtn, flex: 1, background: "white", color: C.navy, border: `1.5px solid ${C.border}` }} onClick={onClose}>

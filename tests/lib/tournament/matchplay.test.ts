@@ -9,6 +9,7 @@ import {
   countryPointsForResult,
   resolveMatchResult,
   computeTournamentStandings,
+  holePlayOrder,
 } from "@/lib/tournament/matchplay";
 import type {
   HoleMeta,
@@ -145,6 +146,7 @@ function scratchSingles(opts: {
   aWins?: number[];
   bWins?: number[];
   halves?: number[];
+  startHole?: number;
 }): MatchInput {
   const A: Record<number, number> = {};
   const B: Record<number, number> = {};
@@ -156,6 +158,7 @@ function scratchSingles(opts: {
     holes: holes(),
     sideA: { side: "a", players: [player(1, 0, A)] },
     sideB: { side: "b", players: [player(2, 0, B)] },
+    startHole: opts.startHole,
   };
 }
 
@@ -240,19 +243,30 @@ describe("all square through 18 (§3.5)", () => {
   });
 });
 
-// ── §3.6 — gap handling (the load-bearing one) ──────────────────────────────
-describe("gap handling — a missing hole stops the count (§2.4)", () => {
+// ── §3.6 — gap handling under the ORDER-AGNOSTIC engine (migration 039) ──────
+// REWRITTEN 039: the old consecutive-from-1 rule IGNORED everything past a gap
+// (so hole 7 missing → only holes 1-6 counted, holesUp 2). The order-agnostic
+// engine counts every resolved hole wherever it sits — completion is decided by
+// walk-off (lead over resolved holes vs holes still unplayed) or all-18-scored.
+// A forgotten hole can no longer freeze the tally; it simply counts as
+// "remaining", so a walk-off can only fire when the result is genuinely locked.
+describe("gap handling — order-agnostic count, walk-off still safe (039)", () => {
   // Holes 1-6 and 8-14 scored; hole 7 MISSING; 15-18 unscored.
-  // Through 6: A wins 1,2 → 2 up. Through 14 (once 7 is a halve): A wins
-  // 1,2,8,9,10 → 5 up, thru 14, remaining 4 → would close 5&4.
+  // A wins 1,2,8,9,10 = 5 up; halves 3,4,5,6,11,12,13,14. 13 holes resolved.
   const baseAWins = [1, 2, 8, 9, 10];
   const baseHalves = [3, 4, 5, 6, 11, 12, 13, 14];
 
-  it("hole 7 missing → thru 6, firstUnresolvedHole 7, NOT closed (8-14 ignored)", () => {
+  it("hole 7 missing: 8-14 STILL count (holesUp 5, was 2); not decided — gap+15-18 remain", () => {
     const st = computeMatchState(scratchSingles({ aWins: baseAWins, halves: baseHalves }));
+    // thru = consecutive-from-start PROGRESS (display) — stops at the gap;
+    // firstUnresolvedHole is the nav hint (no longer an amber "skipped" nag).
     expect(st.thru).toBe(6);
     expect(st.firstUnresolvedHole).toBe(7);
-    expect(st.holesUp).toBe(2); // only holes 1-6 count
+    // Order-agnostic (039): every resolved hole counts — A is 5 up (was 2 when
+    // the old rule ignored 8-14). Still NOT decided: a 5-hole lead vs 5 unplayed
+    // (hole 7 + 15-18), and lead == remaining is dormie, not closed — so the
+    // forgotten hole cannot cause a premature walk-off.
+    expect(st.holesUp).toBe(5);
     expect(st.status).toBe("in_progress");
     expect(st.closedOutHole).toBe(null);
   });
@@ -506,5 +520,65 @@ describe("four-ball counting ball (§10)", () => {
 describe("sanity", () => {
   it("flat() fills all 18 holes", () => {
     expect(Object.keys(flat(4))).toHaveLength(18);
+  });
+});
+
+// ── Shotgun start + order-agnostic completion (migration 039) ───────────────
+describe("holePlayOrder — rotation + wrap (039)", () => {
+  it("startHole 1 = identity [1..18]", () => {
+    expect(holePlayOrder(1)).toEqual(Array.from({ length: 18 }, (_, i) => i + 1));
+  });
+  it("startHole 7 wraps 18→1: 7,8,…,18,1,…,6", () => {
+    expect(holePlayOrder(7)).toEqual([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6]);
+  });
+  it("startHole 18 → 18,1,2,…,17", () => {
+    expect(holePlayOrder(18)).toEqual([18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+  });
+});
+
+describe("shotgun match state (039)", () => {
+  it("start 7, played in sequence, closes 5&4 on the 14th played hole (hole 2)", () => {
+    // Play order 7,8,…,18,1,2,(3,4,5,6). A wins the first 5 played (7-11), the
+    // rest halved. Lead 5 first exceeds remaining when 14 played (4 left = holes
+    // 3,4,5,6) → closeout at the 14th played hole, which is HOLE 2.
+    const st = computeMatchState(scratchSingles({
+      startHole: 7,
+      aWins: [7, 8, 9, 10, 11],
+      halves: [12, 13, 14, 15, 16, 17, 18, 1, 2],
+    }));
+    expect(st.result).toBe("side_a");
+    expect(st.margin).toBe("5&4");
+    expect(st.closedOutHole).toBe(2); // the clinch hole NUMBER in the rotation
+    expect(st.holesUp).toBe(5);
+    expect(st.thru).toBe(14); // consecutive from hole 7 through hole 2
+  });
+
+  it("start 7, only the first two played holes scored → thru 2, gap is the NEXT played hole (9)", () => {
+    const st = computeMatchState(scratchSingles({ startHole: 7, aWins: [7], halves: [8] }));
+    expect(st.thru).toBe(2);
+    expect(st.firstUnresolvedHole).toBe(9); // play order: 7,8,[9]…
+    expect(st.status).toBe("in_progress");
+    expect(st.holesUp).toBe(1);
+  });
+
+  it("ORDER-AGNOSTIC: all 18 scored in any order (start 1) completes; result is correct", () => {
+    // Enter holes in a scrambled set — every hole resolved → complete regardless
+    // of entry order. A wins 10, B wins 8 → A 2 UP on 18 (not an early closeout).
+    const st = computeMatchState(scratchSingles({
+      aWins: [18, 1, 5, 9, 13, 3, 7, 11, 15, 17],
+      bWins: [2, 4, 6, 8, 10, 12, 14, 16],
+    }));
+    expect(st.status).toBe("complete");
+    expect(st.result).toBe("side_a");
+    expect(st.holesUp).toBe(2);
+    expect(st.margin).toBe("2 UP");
+    expect(st.closedOutHole).toBeNull(); // decided on the 18th, not early
+  });
+
+  it("REGRESSION: startHole 1 is byte-identical to omitting startHole", () => {
+    const args = { aWins: [1, 2, 3, 4, 5], halves: range(6, 18) };
+    const withOne = computeMatchState(scratchSingles({ ...args, startHole: 1 }));
+    const without = computeMatchState(scratchSingles(args));
+    expect(withOne).toEqual(without);
   });
 });

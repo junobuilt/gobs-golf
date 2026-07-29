@@ -48,6 +48,8 @@ export function makeLoaded(opts: {
   teamB_number?: number;
   scorerLabel?: string | null;
   flaggedHoles?: number[];
+  startHole?: number; // shotgun (039): the play order rotates from here
+  groupLabel?: string | null;
 }): LoadedMatch {
   const H = holes();
   const { format } = opts;
@@ -115,6 +117,7 @@ export function makeLoaded(opts: {
       players: sideB.players.map((p) => ({ playerId: p.playerId, courseHandicap: p.courseHandicap, gross: p.gross })),
       teamGross: sideB.teamGross ?? undefined,
     },
+    startHole: opts.startHole ?? 1,
   };
   const state = computeMatchState(input);
 
@@ -134,6 +137,8 @@ export function makeLoaded(opts: {
       scorer_label: opts.scorerLabel ?? null,
       flagged_holes: opts.flaggedHoles ?? [],
       admin_note: null,
+      start_hole: opts.startHole ?? null,
+      group_label: opts.groupLabel ?? null,
     },
     session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },

@@ -358,7 +358,7 @@ describe("PairingsPanel — Edit partial failure reload", () => {
     render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "2" } }); // tee → Blue (id 2)
+    fireEvent.change(screen.getByTestId("edit-tee"), { target: { value: "2" } }); // tee → Blue (id 2)
     fireEvent.focus(await screen.findByLabelText("USA slot 1"));
     fireEvent.click(screen.getByRole("option", { name: "Abe" })); // swap Al → Abe (will fail to write)
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -372,6 +372,6 @@ describe("PairingsPanel — Edit partial failure reload", () => {
     });
     // The reloaded modal reflects the DB: slot 1 is still Al, the tee is Blue.
     await waitFor(() => expect((screen.getByLabelText("USA slot 1") as HTMLInputElement).value).toBe("Al"));
-    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("2");
+    expect((screen.getByTestId("edit-tee") as HTMLSelectElement).value).toBe("2");
   });
 });

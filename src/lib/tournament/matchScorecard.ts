@@ -140,6 +140,9 @@ export function buildMatchInput(loaded: LoadedMatch, s: OptimisticScores): Match
     holes: loaded.holes,
     sideA: toSide("a"),
     sideB: toSide("b"),
+    // Shotgun (039): the live recompute must walk the same play order the loader
+    // used, so thru / walk-off / margin match loaded.state for a rotated start.
+    startHole: loaded.match.start_hole ?? 1,
   };
 }
 
@@ -188,14 +191,16 @@ export function finishBanner(state: MatchState, loaded: LoadedMatch): FinishBann
   return { kind: "won", sideName, marginText: (state.margin ?? "").toLowerCase() };
 }
 
-// The gap hole to nag about, or null. Only a GENUINE out-of-order gap qualifies:
-// firstUnresolvedHole is non-null AND some later hole is already resolved — so a
-// card simply being scored in order (nothing past the current hole) never nags.
-// Reads holeOutcomes only. (§6)
-export function missingHoleGap(state: MatchState): number | null {
-  const gap = state.firstUnresolvedHole;
-  if (gap == null) return null;
-  return state.holeOutcomes.slice(gap).some((o) => o != null) ? gap : null;
+// Retired by the order-agnostic engine (migration 039). Completion no longer
+// depends on 1→18 order — a match counts when all its holes are scored (in any
+// order) OR it is mathematically decided (walk-off, which already accounts for
+// unplayed holes as "remaining"). A hole entered out of order is therefore
+// normal, not a "skipped hole" to nag about, so this always returns null now.
+// Kept as a no-op so callers/tests referencing it stay valid; the amber prompt
+// it drove has been removed from the scorecard. `firstUnresolvedHole` remains on
+// MatchState purely as a nav hint.
+export function missingHoleGap(_state: MatchState): number | null {
+  return null;
 }
 
 // DISPLAY labels for the per-box "net N" and stroke dots. These reuse the
@@ -234,4 +239,27 @@ export function countingMarks(
   const idx = countingUnit[hole - 1];
   if (idx == null) return presentByUnit.map((p) => p); // tie → both present balls
   return presentByUnit.map((_, i) => i === idx);
+}
+
+// ── Shotgun group label (migration 039) ─────────────────────────────────────
+// The foursome tag auto-derived from group_number: 1→"A", 2→"B", … 26→"Z",
+// 27→"AA". An admin's explicit group_label OVERRIDES this (null column = derive).
+// SSOT for the derivation; the admin panel + any future match-header read it.
+export function deriveGroupLabel(groupNumber: number | null | undefined): string {
+  if (groupNumber == null || groupNumber < 1) return "";
+  let n = Math.trunc(groupNumber);
+  let s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+// The label to SHOW for a group: the admin override if set, else the derived
+// letter. `group_label` holds only overrides (null = auto).
+export function groupLabelFor(groupNumber: number | null | undefined, override: string | null | undefined): string {
+  const trimmed = override?.trim();
+  return trimmed ? trimmed : deriveGroupLabel(groupNumber);
 }

@@ -65,6 +65,18 @@ export function computeMatchStrokes(
   return playingHandicaps.map((ph) => Math.max(0, ph - min));
 }
 
+// ── Shotgun play order (migration 039) ──────────────────────────────────────
+// The order holes are PLAYED for a match teeing off on `startHole`, wrapping
+// 18→1 (e.g. start 7 → 7,8,…,18,1,…,6). Returns 1-indexed hole numbers.
+// startHole=1 → the identity [1..total], so every ordinary round is unchanged.
+// SINGLE SOURCE OF TRUTH for the rotation — the engine walks it for thru /
+// walk-off / margin, the scorecard nav rail renders it, and the scorecard's
+// initial hole reads it. An out-of-range startHole is normalised into 1..total.
+export function holePlayOrder(startHole: number, total = 18): number[] {
+  const s = (((Math.trunc(startHole) - 1) % total) + total) % total;
+  return Array.from({ length: total }, (_, k) => ((s + k) % total) + 1);
+}
+
 // Per-hole matchNet for one scoring line: gross − strokes-on-hole, where the
 // stroke allocation reuses getHandicapStrokes with the MATCH stroke count.
 function lineMatchNets(
@@ -184,61 +196,82 @@ export function computeMatchState(input: MatchInput): MatchState {
     return "halved";
   });
 
-  // thru = holes resolved from hole 1 CONSECUTIVELY. A gap stops the count, and
-  // everything past the gap is ignored for lead / closeout / result — this is
-  // what stops a forgotten hole from silently deciding a match.
+  // ── Play order (shotgun) + order-agnostic completion (migration 039) ──────
+  // seq0 = 0-BASED indices into holeOutcomes/a/b, in the order the group PLAYS
+  // them (rotated from startHole, wrapping 18→1). startHole=1 → [0..total-1], so
+  // everything below is byte-identical to the old consecutive-from-1 engine when
+  // there are no gaps.
+  const startHole = input.startHole ?? 1;
+  const seq0 = holePlayOrder(startHole, total).map((h) => h - 1);
+
+  // resolvedCount is order-INDEPENDENT — a hole counts wherever it sits.
+  const resolvedCount = holeOutcomes.reduce((n, o) => (o != null ? n + 1 : n), 0);
+
+  // thru (DISPLAY) = holes resolved CONSECUTIVELY along the play order from the
+  // start hole (a gap stops the count). firstUnresolvedHole = the first gap's
+  // hole number in play order (a nav hint; NO LONGER an amber "skipped" nag —
+  // completion is order-agnostic), null when there is no gap.
   let thru = 0;
-  for (let i = 0; i < holeOutcomes.length; i++) {
-    if (holeOutcomes[i] == null) break;
+  for (const idx of seq0) {
+    if (holeOutcomes[idx] == null) break;
     thru++;
   }
-  const firstUnresolvedHole = thru >= total ? null : thru + 1;
+  const firstGapPos = seq0.findIndex((idx) => holeOutcomes[idx] == null);
+  const firstUnresolvedHole = firstGapPos === -1 ? null : seq0[firstGapPos] + 1;
 
-  // Scan holes 1..thru for the EARLIEST hole at which the closeout condition
-  // holds (lead strictly EXCEEDS holes remaining — a lead equal to remaining is
-  // dormie, NOT closed), then FREEZE all state at that hole. Every later hole is
-  // ignored for lead / points / margin, even if a score was entered — so a match
-  // decided 5&4 at 14 with 15-18 also filled in still records 5&4, not "1 UP".
-  // The gap rule already bounded `thru` to consecutively-resolved holes, so the
-  // scan never crosses a gap.
+  // Walk the play order, SKIPPING unresolved holes (a data-entry gap no longer
+  // blocks the count — completion is ORDER-AGNOSTIC). Tally resolved holes; the
+  // EARLIEST play-order hole whose running lead strictly EXCEEDS the holes still
+  // unplayed closes the match (a lead == remaining is dormie, NOT closed), then
+  // FREEZE state there. Because an unplayed hole counts toward "remaining", a
+  // walk-off can only fire when the result is genuinely locked — a forgotten
+  // hole that could still swing it keeps the match open. Strictly safer than —
+  // and, for startHole=1 with no gaps, byte-identical to — the old rule.
   let cumA = 0;
   let cumB = 0;
   let cumHalved = 0;
-  let closeoutHole: number | null = null; // 1-indexed
-  for (let h = 1; h <= thru; h++) {
-    const o = holeOutcomes[h - 1];
+  let played = 0; // resolved holes processed along seq0 so far
+  let closeoutHole: number | null = null; // 1-indexed HOLE NUMBER
+  let closeoutPlayed = 0; // `played` at the closeout (for `remaining`)
+  let closeoutPos = -1; // seq0 position of the closeout (for scoredBeyondCloseout)
+  for (let p = 0; p < seq0.length; p++) {
+    const idx = seq0[p];
+    const o = holeOutcomes[idx];
+    if (o == null) continue; // gap — skip, do not block
+    played++;
     if (o === "side_a") cumA++;
     else if (o === "side_b") cumB++;
     else cumHalved++;
-    if (Math.abs(cumA - cumB) > total - h) {
-      closeoutHole = h;
-      break; // freeze — cumA/cumB/cumHalved are now as of the closeout hole
+    if (Math.abs(cumA - cumB) > total - played) {
+      closeoutHole = idx + 1;
+      closeoutPlayed = played;
+      closeoutPos = p;
+      break; // freeze — cum*/played are as of the closeout hole
     }
   }
-  // With no closeout the loop ran the full `thru`, so the cumulatives already
-  // reflect the current standing through `thru`.
-  const effectiveThru = closeoutHole ?? thru;
+  // No closeout → cum*/played already reflect ALL resolved holes (gaps skipped).
+  const effectivePlayed = closeoutHole != null ? closeoutPlayed : played;
 
   const pointsA = cumA + cumHalved * 0.5;
   const pointsB = cumB + cumHalved * 0.5;
   const holesUp = cumA - cumB;
   const lead = Math.abs(holesUp);
-  const remaining = total - effectiveThru;
+  const remaining = total - effectivePlayed;
 
-  // "Extra scores" = any score present on a hole AFTER an early closeout.
+  // "Extra scores" = any score present on a hole played AFTER an early closeout.
   let scoredBeyondCloseout = false;
-  if (closeoutHole !== null && closeoutHole < total) {
-    for (let i = closeoutHole; i < total; i++) {
-      // hole (i+1) > closeoutHole; a[]/b[] are the per-hole side nets
-      if (a[i] != null || b[i] != null) {
+  if (closeoutHole != null && closeoutPos >= 0 && remaining > 0) {
+    for (let p = closeoutPos + 1; p < seq0.length; p++) {
+      const idx = seq0[p];
+      if (a[idx] != null || b[idx] != null) {
         scoredBeyondCloseout = true;
         break;
       }
     }
   }
 
-  const closedEarly = closeoutHole !== null && closeoutHole < total;
-  const complete = closeoutHole !== null || thru === total;
+  const closedEarly = closeoutHole != null && remaining > 0;
+  const complete = closeoutHole != null || resolvedCount === total;
 
   let status: MatchStatus;
   let result: MatchResult;
@@ -246,10 +279,10 @@ export function computeMatchState(input: MatchInput): MatchState {
   let margin: string | null;
 
   if (!complete) {
-    status = thru === 0 ? "pending" : "in_progress";
+    status = resolvedCount === 0 ? "pending" : "in_progress";
     result = null;
     closedOutHole = null;
-    margin = thru === 0 ? null : holesUp === 0 ? "AS" : `${lead} UP`;
+    margin = resolvedCount === 0 ? null : holesUp === 0 ? "AS" : `${lead} UP`;
   } else {
     status = "complete";
     result = holesUp > 0 ? "side_a" : holesUp < 0 ? "side_b" : "halved";

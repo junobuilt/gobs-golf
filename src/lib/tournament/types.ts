@@ -124,6 +124,13 @@ export interface TournamentMatch {
   // are signals; neither changes a score / status / outcome.
   flagged_holes: number[];
   admin_note: string | null;
+  // Shotgun start (migration 039). start_hole = the group's tee-off hole (1..18);
+  // null/undefined = an ordinary hole-1 start. group_label = the foursome tag
+  // ("A"/"B"/…), auto-derived from group_number with an editable override; null →
+  // the derived letter at the display layer. Optional: pre-039 rows and fixtures
+  // omit them, and the engine/display default (start_hole ?? 1, group_label ?? derived).
+  start_hole?: number | null;
+  group_label?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -187,6 +194,11 @@ export interface MatchInput {
   holes: ReadonlyArray<HoleMeta>;
   sideA: MatchSideInput;
   sideB: MatchSideInput;
+  // Shotgun start (migration 039): the hole the group tees off on. The engine
+  // walks the play sequence rotated from here (…18→1…) for thru / walk-off /
+  // margin. Omitted or 1 = an ordinary hole-1 start (identity order) — every
+  // pre-shotgun path stays byte-identical.
+  startHole?: number;
 }
 
 export interface MatchState {

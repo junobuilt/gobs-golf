@@ -618,6 +618,11 @@ export async function createGroup(input: {
   sideAPlayerIds: Array<number | null>;
   sideBPlayerIds: Array<number | null>;
   teeId: number;
+  // Shotgun (039): the group's tee-off hole (1..18; null = ordinary hole-1 start)
+  // and an optional label override (null = auto-derive from group_number). Both
+  // stamped identically on every match in the group (singles: both 1-v-1s).
+  startHole?: number | null;
+  groupLabel?: string | null;
 }): Promise<{ matches: TournamentMatch[]; teamNumbers: number[]; groupNumber: number }> {
   const session = await loadSessionCore(input.sessionId);
   const format = session.format; // session is the format authority
@@ -722,6 +727,15 @@ export async function createGroup(input: {
     if (rpErr) throw new Error("createGroup (round_players): " + rpErr.message);
   }
 
+  // Shotgun (039): normalize the label override — a blank/whitespace string is
+  // treated as "no override" (null) so the display falls back to the derived
+  // letter. start_hole out of 1..18 is ignored (null → hole-1 start).
+  const labelOverride = input.groupLabel != null && input.groupLabel.trim() !== "" ? input.groupLabel.trim() : null;
+  const startHole =
+    input.startHole != null && Number.isInteger(input.startHole) && input.startHole >= 1 && input.startHole <= 18
+      ? input.startHole
+      : null;
+
   const matchRows = matchSpecs.map((spec, i) => ({
     tournament_id: session.tournament_id,
     session_id: input.sessionId,
@@ -732,6 +746,8 @@ export async function createGroup(input: {
     status: "pending" as const,
     result: null,
     result_source: "engine" as const,
+    start_hole: startHole, // per-group tee-off hole (039)
+    group_label: labelOverride, // null = auto-derive from group_number at display
   }));
   const { data: created, error: mErr } = await supabase.from("tournament_matches").insert(matchRows).select("*");
   if (mErr) throw new Error("createGroup (matches): " + mErr.message);
@@ -902,6 +918,35 @@ export async function deleteGroup(input: { sessionId: number; groupNumber: numbe
       .in("team_number", teamNumbers);
     if (rpErr) throw new Error("deleteGroup (round_players): " + rpErr.message);
   }
+}
+
+// Shotgun (039): set the group's tee-off hole and/or label override, updating
+// EVERY match in the group (singles: both 1-v-1s) so the foursome stays
+// consistent. `startHole` null (or out of 1..18) → an ordinary hole-1 start;
+// `groupLabel` null/blank → auto-derive from group_number at display. No scores
+// gate — the engine recomputes play order / completion live, so an admin can fix
+// a start hole mid-round. Pass only the keys to change.
+export async function setGroupShotgun(
+  sessionId: number,
+  groupNumber: number,
+  patch: { startHole?: number | null; groupLabel?: string | null },
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if ("startHole" in patch) {
+    const sh = patch.startHole;
+    update.start_hole = sh != null && Number.isInteger(sh) && sh >= 1 && sh <= 18 ? sh : null;
+  }
+  if ("groupLabel" in patch) {
+    const gl = patch.groupLabel;
+    update.group_label = gl != null && gl.trim() !== "" ? gl.trim() : null;
+  }
+  if (Object.keys(update).length === 0) return;
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update(update)
+    .eq("session_id", sessionId)
+    .eq("group_number", groupNumber);
+  if (error) throw new Error("setGroupShotgun: " + error.message);
 }
 
 // ── Phase 4 — Admin overrides (3 levels) ────────────────────────────────────
