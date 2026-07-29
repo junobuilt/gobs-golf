@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOBS Ryder Cup — Mock v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --usa:#14509E; --usa-ink:#0E3B75; --usa-bright:#2f83e6; --usa-dark:#4d9bff;
+    --can:#C8102E; --can-ink:#8E0B20; --can-bright:#e6304a; --can-dark:#ff4d55;
+    --gold:#C9A227;
+    --chrome-a:#0A2E5C; --chrome-b:#061F3D;
+    --ink:#132540; --muted:#5B6B82; --line:#E4E8EF;
+    --bg:#E9EDF2; --card:#FFFFFF; --soft:#F4F6F9; --ok:#1E7D46;
+    --sb:'Oswald',system-ui,sans-serif;
+    --ui:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:var(--ui);color:var(--ink);-webkit-font-smoothing:antialiased;padding:24px 12px 60px}
+  .wrap{max-width:960px;margin:0 auto}
+  .lead{text-align:center;margin:0 auto 8px;max-width:640px}
+  .lead h1{font-family:var(--sb);font-weight:600;letter-spacing:.04em;text-transform:uppercase;font-size:20px;margin:0 0 4px}
+  .lead p{color:var(--muted);font-size:13px;margin:0}
+  .legend{display:flex;gap:16px;justify-content:center;font-size:12px;margin:10px 0 2px;color:var(--muted)}
+  .legend b{display:inline-flex;align-items:center;gap:5px}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .tabs{display:flex;gap:6px;justify-content:center;margin:16px 0 22px;flex-wrap:wrap}
+  .tab{font-size:13px;font-weight:600;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:9px 15px;cursor:pointer;transition:.15s}
+  .tab[aria-selected="true"]{background:var(--chrome-b);color:#fff;border-color:var(--chrome-b)}
+  .tab:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+  .phone{max-width:392px;margin:0 auto;background:var(--card);border-radius:30px;box-shadow:0 24px 60px rgba(10,30,60,.18);overflow:hidden;border:1px solid var(--line)}
+  .screen{display:none} .screen.on{display:block}
+  .app-head{background:var(--chrome-b);color:#fff;padding:14px 18px 12px}
+  .app-head .name{font-family:var(--sb);font-weight:600;font-size:17px;letter-spacing:.03em}
+  .app-head .club{font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.62;margin-top:1px}
+  .body{padding:16px 14px 84px;min-height:540px}
+  .lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:20px 4px 9px}
+
+  /* ===== STANDARD POINTS BAR ===== */
+  .barwrap{background:linear-gradient(150deg,var(--chrome-a),var(--chrome-b));border-radius:16px;padding:15px 15px 13px;color:#fff;box-shadow:0 8px 22px rgba(6,31,61,.26)}
+  .track{position:relative;height:36px;border-radius:8px;background:rgba(255,255,255,.13);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+  .track::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;background:repeating-linear-gradient(to right,transparent 0,transparent calc(100%/28 - 1px),rgba(255,255,255,.20) calc(100%/28 - 1px),rgba(255,255,255,.20) calc(100%/28))}
+  .fill{position:absolute;top:0;bottom:0;display:flex;align-items:center}
+  .fill.u{left:0;background:linear-gradient(var(--usa-bright),var(--usa));justify-content:flex-start;padding-left:11px}
+  .fill.c{right:0;background:linear-gradient(var(--can-bright),var(--can));justify-content:flex-end;padding-right:11px}
+  .fill .n{font-family:var(--sb);font-weight:700;font-size:22px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.28)}
+  .winline{position:absolute;top:-3px;bottom:-3px;left:50%;width:3px;background:var(--gold);box-shadow:0 0 0 1px rgba(0,0,0,.25);z-index:3}
+  .caps{display:flex;justify-content:space-between;margin-top:8px;gap:10px}
+  .cap{font-size:11px;line-height:1.35}
+  .cap.u{text-align:left;color:#bcd6ff} .cap.c{text-align:right;color:#ffc0c9}
+  .cap .hold{display:block;font-weight:700;color:#fff} .cap .hold .t{color:var(--gold)}
+  .midline{text-align:center;font-size:11px;margin-top:9px;opacity:.9}
+  .midline .live{display:block;opacity:.72;margin-top:1px}
+  .bar-cta{display:flex;justify-content:flex-end;margin-top:11px;padding-top:11px;border-top:1px solid rgba(255,255,255,.14)}
+  .bar-cta button{font-size:12px;font-weight:600;color:#fff;background:rgba(255,255,255,.16);border:0;border-radius:8px;padding:9px 13px;cursor:pointer}
+  .bar-cta button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+  /* ===== HOME hero ===== */
+  .hero{border-radius:18px;padding:15px 15px 14px;color:#fff;background:linear-gradient(150deg,var(--chrome-a),var(--chrome-b));box-shadow:0 8px 22px rgba(6,31,61,.28)}
+  .hero .eyebrow{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);margin-bottom:5px}
+  .hero h2{font-family:var(--sb);font-weight:600;font-size:21px;margin:0 0 11px;letter-spacing:.02em}
+  .hero .today{display:flex;align-items:center;justify-content:space-between;margin-top:13px;gap:10px;background:rgba(255,255,255,.08);border-radius:11px;padding:10px 12px}
+  .hero .today .d{font-size:12px;line-height:1.45}
+  .hero .today .d .dd{font-family:var(--sb);font-weight:600;letter-spacing:.02em;font-size:13px}
+  .hero .today .d .ff{opacity:.82}
+  .hero .today .go{flex-shrink:0;font-size:12px;font-weight:600;color:#fff;background:rgba(255,255,255,.16);border:0;border-radius:8px;padding:9px 12px;cursor:pointer}
+  .hero .today .go:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+  /* ===== shared match card ===== */
+  .mcard{display:flex;border-radius:13px;overflow:hidden;margin-bottom:9px;border:1px solid var(--line);cursor:pointer;background:var(--card);transition:.12s}
+  .mcard:hover{box-shadow:0 6px 16px rgba(19,37,64,.1);transform:translateY(-1px)}
+  .mcard:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .mcard .stripe{width:6px;flex-shrink:0}
+  .mcard.lead-u .stripe{background:var(--usa)} .mcard.lead-c .stripe{background:var(--can)}
+  .mcard.tie .stripe{background:linear-gradient(var(--usa) 50%,var(--can) 50%)}
+  .mcard.none .stripe{background:var(--line)}
+  .mcard .in{flex:1;padding:11px 13px;display:flex;align-items:center;gap:12px}
+  .mcard .pair{flex:1;min-width:0}
+  .mcard .pair .u,.mcard .pair .c{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mcard .pair .u{color:var(--usa-ink)} .mcard .pair .c{color:var(--can-ink);margin-top:3px}
+  .mcard .status{text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:4px;min-width:66px}
+  .mcard .status .s{font-family:var(--sb);font-weight:600;font-size:15px;letter-spacing:.01em;line-height:1}
+  .mcard .status .s.u{color:var(--usa)} .mcard .status .s.c{color:var(--can)} .mcard .status .s.sq{color:var(--muted)}
+  .mcard .status .thru{font-size:10px;color:var(--muted);letter-spacing:.02em;line-height:1}
+  .mcard .chev{color:var(--muted);font-size:17px;flex-shrink:0}
+  .tap-hint{font-size:11px;color:var(--muted);text-align:center;margin:4px 0 0}
+
+  .nav{position:sticky;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--line)}
+  .nav a{flex:1;text-align:center;padding:9px 0 10px;font-size:10px;color:var(--muted);text-decoration:none;font-weight:600}
+  .nav a .ic{display:block;font-size:17px;margin-bottom:2px}
+  .nav a.active{color:var(--chrome-b)}
+
+  /* ===== TOURNAMENT HOME ===== */
+  .th-title{font-family:var(--sb);font-weight:600;font-size:21px;margin:4px 2px 1px;letter-spacing:.02em}
+  .th-sub{font-size:12px;color:var(--muted);margin:0 2px 12px}
+  .yourmatch{display:flex;align-items:center;justify-content:space-between;background:var(--chrome-b);color:#fff;border-radius:12px;padding:12px 14px;margin:14px 0;cursor:pointer;gap:10px}
+  .yourmatch:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .yourmatch .l{font-size:13px;line-height:1.4}
+  .yourmatch .l .who .u{color:var(--usa-dark);font-weight:600} .yourmatch .l .who .c{color:var(--can-dark);font-weight:600}
+  .yourmatch .l .sub2{opacity:.72;font-size:11px}
+  .yourmatch .a{font-size:18px;flex-shrink:0}
+  .sday{border:1px solid var(--line);border-radius:13px;margin-bottom:10px;overflow:hidden;background:var(--card)}
+  .sday .sh{display:flex;align-items:center;justify-content:space-between;padding:12px 13px;cursor:pointer}
+  .sday .sh:focus-visible{outline:3px solid var(--gold);outline-offset:-2px}
+  .sday .sh .dn{font-family:var(--sb);font-weight:600;font-size:14px}
+  .sday .sh .df{font-size:11px;color:var(--muted);margin-top:1px}
+  .sday .sh .rt{display:flex;align-items:center;gap:9px}
+  .badge-st{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:3px 8px}
+  .badge-st.live{background:#fdecec;color:var(--can)} .badge-st.up{background:var(--soft);color:var(--muted)}
+  .sday .sh .chev{color:var(--muted);font-size:15px;transition:.2s}
+  .sday.open .sh .chev{transform:rotate(180deg)}
+  .sday .pairings{display:none;border-top:1px solid var(--line);padding:10px 10px 4px;background:var(--soft)}
+  .sday.open .pairings{display:block}
+  .sday .pairings .note{font-size:12px;color:var(--muted);padding:2px 4px 8px}
+
+  /* ===== SCOREBOARD ===== */
+  .sb-title h2{font-family:var(--sb);font-weight:600;font-size:18px;margin:2px 2px 12px;letter-spacing:.02em}
+  .day{margin-bottom:16px}
+  .day-head{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 8px}
+  .day-head .dn{font-family:var(--sb);font-weight:600;font-size:14px}
+  .day-head .df{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+  .row{border:1px solid var(--line);border-radius:13px;margin-bottom:8px;overflow:hidden;background:var(--card)}
+  .row .main{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:11px 12px;cursor:pointer}
+  .row .main:focus-visible{outline:3px solid var(--gold);outline-offset:-2px}
+  .row.lead-u{background:linear-gradient(90deg,rgba(20,80,158,.09),transparent 46%)}
+  .row.lead-c{background:linear-gradient(270deg,rgba(200,16,46,.08),transparent 46%)}
+  .st-side{min-width:0}
+  .st-side .names{font-size:12.5px;line-height:1.3;font-weight:600}
+  .st-side.u .names{color:var(--usa-ink)} .st-side.c{display:flex;flex-direction:column;align-items:flex-end}
+  .st-side.c .names{color:var(--can-ink);text-align:right}
+  .st-side .pt{font-family:var(--sb);font-weight:700;font-size:21px;line-height:1;margin-top:3px}
+  .st-side.u .pt{color:var(--usa)} .st-side.c .pt{color:var(--can)}
+  .st-side .ptl{font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+  .center{text-align:center;min-width:76px;display:flex;flex-direction:column;align-items:center;gap:2px}
+  .center .stt{font-family:var(--sb);font-weight:600;font-size:15px;letter-spacing:.01em;white-space:nowrap}
+  .center .stt.u{color:var(--usa)} .center .stt.c{color:var(--can)} .center .stt.sq{color:var(--ink)} .center .stt.pre{color:var(--muted);font-size:12px}
+  .center .thru{font-size:9.5px;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+  .center .chev{color:var(--muted);font-size:15px;margin-top:1px;transition:.2s}
+  .row.open .center .chev{transform:rotate(180deg)}
+  .holes{display:none;border-top:1px solid var(--line);background:var(--soft);padding:11px 10px}
+  .row.open .holes{display:block}
+  .hstrip{display:grid;grid-template-columns:auto repeat(9,1fr);gap:3px;font-size:10px;text-align:center}
+  .hstrip .rl{font-weight:700;color:var(--muted);text-align:left;padding-right:4px;font-size:9px;display:flex;align-items:center;letter-spacing:.04em}
+  .hstrip .hn{color:var(--muted);font-weight:600;padding:2px 0}
+  .cell{padding:4px 0;border-radius:4px;font-weight:700;color:#fff}
+  .cell.u{background:var(--usa)} .cell.c{background:var(--can)}
+  .cell.h{background:linear-gradient(135deg,var(--usa) 0 50%,var(--can) 50% 100%)}
+  .cell.x{background:#e7ebf1;color:#b6bfcc;font-weight:600}
+
+  /* ===== SCORECARD ===== */
+  .sc-hero{background:linear-gradient(150deg,var(--chrome-a),var(--chrome-b));color:#fff;border-radius:16px;padding:14px 15px}
+  .sc-hero .fmt{font-family:var(--sb);font-weight:600;font-size:17px;letter-spacing:.02em}
+  .sc-hero .sub{font-size:11px;opacity:.72;margin-top:1px;text-transform:uppercase;letter-spacing:.09em}
+  .sc-hero .pairing{display:flex;justify-content:space-between;align-items:flex-start;margin-top:12px;font-size:13px;gap:10px}
+  .sc-hero .pairing .u{color:var(--usa-dark);font-weight:600}
+  .sc-hero .pairing .c{color:var(--can-dark);font-weight:600;text-align:right}
+  .sc-hero .pairing small{font-weight:400;opacity:.72;display:block;margin-top:2px;color:#cdd8e8}
+  .sc-hero .pairing .mid{font-family:var(--sb);font-size:11px;opacity:.7;padding-top:2px}
+  .sc-foot{display:flex;justify-content:space-between;align-items:flex-start;margin-top:13px;gap:10px}
+  .start-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;background:var(--gold);color:#3a2d00;border-radius:7px;padding:6px 10px}
+  .sc-btns{display:flex;flex-direction:column;gap:6px;flex-shrink:0;width:150px}
+  .sc-btns button{width:100%;font-size:12px;font-weight:600;color:#fff;background:rgba(255,255,255,.16);border:0;border-radius:8px;padding:9px 12px;cursor:pointer;white-space:nowrap;text-align:center}
+  .sc-btns button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .sc-status{font-family:var(--sb);font-weight:600;font-size:16px;color:var(--usa);margin:14px 2px 9px}
+
+  .holenav{display:flex;gap:5px;overflow-x:auto;padding:4px 2px 12px}
+  .holenav .h{flex:0 0 auto;width:31px;height:31px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--soft);color:var(--muted);border:1px solid var(--line)}
+  .holenav .h.won-u{background:var(--usa);color:#fff;border-color:var(--usa)}
+  .holenav .h.won-c{background:var(--can);color:#fff;border-color:var(--can)}
+  .holenav .h.tie{background:linear-gradient(135deg,var(--usa) 0 50%,var(--can) 50% 100%);color:#fff;border:0}
+  .holenav .h.cur{box-shadow:0 0 0 3px var(--gold);color:var(--ink);background:#fff;border-color:#fff;font-weight:800}
+  .hole-meta{font-size:12px;color:var(--muted);margin:0 2px 9px} .hole-meta b{color:var(--ink);font-family:var(--sb);font-weight:600}
+  .tblock{border:1px solid var(--line);border-radius:13px;margin-bottom:9px;overflow:hidden}
+  .tblock.u{background:linear-gradient(90deg,rgba(20,80,158,.07),transparent 55%);border-color:rgba(20,80,158,.22)}
+  .tblock.c{background:linear-gradient(270deg,rgba(200,16,46,.07),transparent 55%);border-color:rgba(200,16,46,.22)}
+  .tblock .top{display:flex;justify-content:space-between;align-items:center;padding:10px 12px 8px}
+  .tblock .who{font-size:12.5px;font-weight:600} .tblock.u .who{color:var(--usa-ink)} .tblock.c .who{color:var(--can-ink)}
+  .tblock .ch{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .tblock .entry{display:flex;align-items:center;gap:14px;padding:0 12px 6px}
+  .stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+  .stepper button{width:38px;height:42px;border:0;background:#fff;font-size:21px;color:var(--ink);cursor:pointer}
+  .mark{position:relative;width:46px;height:42px;display:flex;align-items:center;justify-content:center}
+  .mark .v{font-family:var(--sb);font-weight:700;font-size:24px;position:relative;z-index:1}
+  .mark.under::before{content:"";position:absolute;width:34px;height:34px;border:2px solid var(--ink);border-radius:50%}
+  .mark.over::before{content:"";position:absolute;width:32px;height:32px;border:2px solid var(--ink)}
+  .netlabel{font-size:12px;color:var(--muted)} .netlabel b{color:var(--ink);font-family:var(--sb);font-weight:600;font-size:15px}
+  .tblock .expand{display:flex;align-items:center;justify-content:center;gap:6px;border-top:1px solid var(--line);padding:8px;font-size:11px;font-weight:600;color:var(--muted);cursor:pointer;background:rgba(255,255,255,.5)}
+  .tblock .expand:focus-visible{outline:3px solid var(--gold);outline-offset:-2px}
+  .tblock .expand .cv{transition:.2s} .tblock.open .expand .cv{transform:rotate(180deg)}
+  .tblock .strip{display:none;padding:9px 10px 11px;background:var(--soft);border-top:1px solid var(--line)} .tblock.open .strip{display:block}
+  .nextbtn{display:flex;gap:8px;margin-top:2px}
+  .nextbtn button{flex:1;padding:13px;border-radius:11px;border:0;font-weight:700;font-size:14px;cursor:pointer}
+  .nextbtn .back{background:var(--soft);color:var(--muted)} .nextbtn .next{background:var(--chrome-b);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="lead">
+    <h1>GOBS Ryder Cup — Mock v4</h1>
+    <p>Unified hero across Home / Tournament Home / Scoreboard. Bar now shows point ticks (count from a fill's edge to the gold line = points to win). USA blue / left, Canada red / right.</p>
+  </div>
+  <div class="legend"><b><span class="sw" style="background:#14509E"></span>USA = Blue (left)</b><b><span class="sw" style="background:#C8102E"></span>Canada = Red (right)</b></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-s="home">🏠 Home</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="thome">🏁 Tournament Home</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="board">🏆 Scoreboard</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="card">✏️ Scorecard</button>
+  </div>
+
+  <div class="phone">
+    <div class="app-head"><div class="name">GOBS Golf</div><div class="club">Semiahmoo Golf &amp; Country Club</div></div>
+
+    <!-- HOME -->
+    <div class="screen on" id="home">
+      <div class="body">
+        <div class="hero">
+          <div class="eyebrow">🏁 Tournament · Day 1 of 3</div>
+          <h2>2026 GOBS Ryder Cup</h2>
+          <div class="track"><div class="fill u" style="width:30.4%"><span class="n">8½</span></div><div class="fill c" style="width:26.8%"><span class="n">7½</span></div><div class="winline"></div></div>
+          <div class="caps"><div class="cap u">14½ to win the cup</div><div class="cap c"><span class="hold"><span class="t">🏆</span> Canada holds the cup</span>Retains on a 14–14 tie</div></div>
+          <div class="midline">16 of 28 matches complete<span class="live">8 live now</span></div>
+          <div class="today">
+            <div class="d"><span class="dd">Day 1</span><br><span class="ff">Modified Alternate Shot</span></div>
+            <button class="go">Tournament Home →</button>
+          </div>
+        </div>
+
+        <div class="lbl">Your matches today · tap to score</div>
+        <div class="mcard lead-u" tabindex="0" role="button"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Bob P / Dan S</div><div class="c">Bill T / Hunter L</div></div><div class="status"><span class="s u">2 UP</span><span class="thru">thru 13</span></div><span class="chev">›</span></div></div>
+        <div class="mcard tie" tabindex="0" role="button"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Chuck B / Dave V</div><div class="c">Dan G / Don W</div></div><div class="status"><span class="s sq">All Square</span><span class="thru">thru 9</span></div><span class="chev">›</span></div></div>
+        <div class="mcard none" tabindex="0" role="button"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Donald P / Eddie A</div><div class="c">DeWaal S / Wayne H</div></div><div class="status"><span class="s sq" style="font-size:11px">Hole 15 · Grp B</span><span class="thru">Not started</span></div><span class="chev">›</span></div></div>
+        <p class="tap-hint">Any regular league card appears plain grey — never counted toward the cup.</p>
+      </div>
+      <nav class="nav"><a class="active"><span class="ic">🏠</span>Home</a><a><span class="ic">🏆</span>Scoreboard</a><a><span class="ic">🕐</span>History</a><a><span class="ic">👥</span>Players</a></nav>
+    </div>
+
+    <!-- TOURNAMENT HOME -->
+    <div class="screen" id="thome">
+      <div class="body">
+        <div class="hero">
+          <div class="eyebrow">🏁 Tournament · Day 1 of 3</div>
+          <h2>2026 GOBS Ryder Cup</h2>
+          <div class="track"><div class="fill u" style="width:30.4%"><span class="n">8½</span></div><div class="fill c" style="width:26.8%"><span class="n">7½</span></div><div class="winline"></div></div>
+          <div class="caps"><div class="cap u">14½ to win the cup</div><div class="cap c"><span class="hold"><span class="t">🏆</span> Canada holds the cup</span>Retains on a 14–14 tie</div></div>
+          <div class="midline">16 of 28 matches complete<span class="live">8 live now</span></div>
+          <div class="bar-cta"><button>View Full Scoreboard →</button></div>
+        </div>
+
+        <div class="yourmatch" tabindex="0" role="button">
+          <div class="l"><div class="who"><span class="u">Bob P / Dan S</span> v <span class="c">Bill T / Hunter L</span></div><span class="sub2">Your Day 1 match · 2 UP thru 13 — tap to score</span></div>
+          <div class="a">→</div>
+        </div>
+
+        <div class="lbl">Schedule &amp; pairings</div>
+        <div class="sday open">
+          <div class="sh" tabindex="0" role="button"><div><div class="dn">Day 1 — Modified Alternate Shot</div><div class="df">Mon, Oct 5 · 8 matches</div></div><div class="rt"><span class="badge-st live">Live</span><span class="chev">⌄</span></div></div>
+          <div class="pairings">
+            <div class="mcard lead-u"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Bob P / Dan S</div><div class="c">Bill T / Hunter L</div></div><div class="status"><span class="s u">2 UP</span><span class="thru">thru 13</span></div><span class="chev">›</span></div></div>
+            <div class="mcard tie"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Chuck B / Dave V</div><div class="c">Dan G / Don W</div></div><div class="status"><span class="s sq">All Square</span><span class="thru">thru 9</span></div><span class="chev">›</span></div></div>
+            <div class="mcard none"><div class="stripe"></div><div class="in"><div class="pair"><div class="u">Donald P / Eddie A</div><div class="c">DeWaal S / Wayne H</div></div><div class="status"><span class="s sq" style="font-size:11px">Hole 15 · Grp B</span><span class="thru">Not started</span></div><span class="chev">›</span></div></div>
+          </div>
+        </div>
+        <div class="sday">
+          <div class="sh" tabindex="0" role="button"><div><div class="dn">Day 2 — Best Ball</div><div class="df">Tue, Oct 6 · 8 matches</div></div><div class="rt"><span class="badge-st up">Upcoming</span><span class="chev">⌄</span></div></div>
+          <div class="pairings"><div class="note">Pairings set Sunday night.</div></div>
+        </div>
+        <div class="sday">
+          <div class="sh" tabindex="0" role="button"><div><div class="dn">Day 3 — Singles</div><div class="df">Wed, Oct 7 · 12 matches</div></div><div class="rt"><span class="badge-st up">Upcoming</span><span class="chev">⌄</span></div></div>
+          <div class="pairings"><div class="note">1-on-1 · two separate cards per pairing.</div></div>
+        </div>
+      </div>
+      <nav class="nav"><a><span class="ic">🏠</span>Home</a><a class="active"><span class="ic">🏆</span>Scoreboard</a><a><span class="ic">🕐</span>History</a><a><span class="ic">👥</span>Players</a></nav>
+    </div>
+
+    <!-- SCOREBOARD -->
+    <div class="screen" id="board">
+      <div class="body">
+        <div class="hero" style="margin-bottom:16px">
+          <div class="eyebrow">🏁 Tournament · Day 1 of 3</div>
+          <h2>2026 GOBS Ryder Cup</h2>
+          <div class="track"><div class="fill u" style="width:30.4%"><span class="n">8½</span></div><div class="fill c" style="width:26.8%"><span class="n">7½</span></div><div class="winline"></div></div>
+          <div class="caps"><div class="cap u">14½ to win the cup</div><div class="cap c"><span class="hold"><span class="t">🏆</span> Canada holds the cup</span>Retains on a 14–14 tie</div></div>
+          <div class="midline">16 of 28 matches complete<span class="live">8 live now · 12 points still in play</span></div>
+          <div class="bar-cta"><button>Tournament Home →</button></div>
+        </div>
+
+        <div class="day">
+          <div class="day-head"><span class="dn">Day 1 — Modified Alternate Shot</span><span class="df">Mon · 8 matches</span></div>
+          <div class="row lead-u open" data-row>
+            <div class="main" tabindex="0" role="button">
+              <div class="st-side u"><div class="names">Bob P / Dan S</div><div class="pt">7½</div><div class="ptl">pts</div></div>
+              <div class="center"><div class="stt u">2 UP</div><div class="thru">thru 13</div><div class="chev">⌄</div></div>
+              <div class="st-side c"><div class="names">Bill T / Hunter L</div><div class="pt">5½</div><div class="ptl">pts</div></div>
+            </div>
+            <div class="holes">
+              <div class="hstrip"><div class="rl">1–9</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="hn">6</div><div class="hn">7</div><div class="hn">8</div><div class="hn">9</div><div class="rl"></div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell u">A</div></div>
+              <div class="hstrip" style="margin-top:6px"><div class="rl">10–18</div><div class="hn">10</div><div class="hn">11</div><div class="hn">12</div><div class="hn">13</div><div class="hn">14</div><div class="hn">15</div><div class="hn">16</div><div class="hn">17</div><div class="hn">18</div><div class="rl"></div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div></div>
+            </div>
+          </div>
+          <div class="row" data-row>
+            <div class="main" tabindex="0" role="button">
+              <div class="st-side u"><div class="names">Chuck B / Dave V</div><div class="pt">4½</div><div class="ptl">pts</div></div>
+              <div class="center"><div class="stt sq">All Square</div><div class="thru">thru 9</div><div class="chev">⌄</div></div>
+              <div class="st-side c"><div class="names">Dan G / Don W</div><div class="pt">4½</div><div class="ptl">pts</div></div>
+            </div>
+            <div class="holes"><div class="hstrip"><div class="rl">1–9</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="hn">6</div><div class="hn">7</div><div class="hn">8</div><div class="hn">9</div><div class="rl"></div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div></div></div>
+          </div>
+        </div>
+
+        <div class="day">
+          <div class="day-head"><span class="dn">Day 2 — Best Ball</span><span class="df">Tue · 8 matches</span></div>
+          <div class="row lead-c" data-row>
+            <div class="main" tabindex="0" role="button">
+              <div class="st-side u"><div class="names">Donald P / Eddie A</div><div class="pt">5</div><div class="ptl">pts</div></div>
+              <div class="center"><div class="stt c">3 &amp; 2</div><div class="thru">Final</div><div class="chev">⌄</div></div>
+              <div class="st-side c"><div class="names">DeWaal S / Wayne H</div><div class="pt">8</div><div class="ptl">pts</div></div>
+            </div>
+            <div class="holes"><div class="hstrip"><div class="rl">1–9</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="hn">6</div><div class="hn">7</div><div class="hn">8</div><div class="hn">9</div><div class="rl"></div><div class="cell c">C</div><div class="cell c">C</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell c">C</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div><div class="cell c">C</div></div></div>
+          </div>
+        </div>
+
+        <div class="day">
+          <div class="day-head"><span class="dn">Day 3 — Singles</span><span class="df">Wed · 12 matches</span></div>
+          <div class="row" data-row>
+            <div class="main" tabindex="0" role="button">
+              <div class="st-side u"><div class="names">Bob P</div><div class="pt">—</div><div class="ptl">pts</div></div>
+              <div class="center"><div class="stt pre">Not started</div><div class="thru">Hole 1 · Grp A</div><div class="chev">⌄</div></div>
+              <div class="st-side c"><div class="names">Bill T</div><div class="pt">—</div><div class="ptl">pts</div></div>
+            </div>
+            <div class="holes"><div class="hstrip"><div class="rl">1–9</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="hn">6</div><div class="hn">7</div><div class="hn">8</div><div class="hn">9</div><div class="rl"></div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div><div class="cell x">·</div></div></div>
+          </div>
+        </div>
+      </div>
+      <nav class="nav"><a><span class="ic">🏠</span>Home</a><a class="active"><span class="ic">🏆</span>Scoreboard</a><a><span class="ic">🕐</span>History</a><a><span class="ic">👥</span>Players</a></nav>
+    </div>
+
+    <!-- SCORECARD -->
+    <div class="screen" id="card">
+      <div class="body">
+        <div class="sc-hero">
+          <div class="fmt">Day 1 · Modified Alternate Shot</div>
+          <div class="sub">Alternate shot · one score per team</div>
+          <div class="pairing">
+            <span class="u">Bob P / Dan S<small>USA · Strokes 20</small></span>
+            <span class="mid">v</span>
+            <span class="c">Bill T / Hunter L<small>Canada · Strokes 19</small></span>
+          </div>
+          <div class="sc-foot">
+            <div class="start-chip">🚩 Start: Hole 15 · Group B</div>
+            <div class="sc-btns"><button>View scoreboard →</button><button>Tournament Home →</button></div>
+          </div>
+        </div>
+
+        <div class="sc-status">USA 2 UP · thru 12</div>
+
+        <div class="holenav">
+          <div class="h won-c">15</div><div class="h won-u">16</div><div class="h tie">17</div><div class="h won-u">18</div>
+          <div class="h won-u">1</div><div class="h tie">2</div><div class="h won-u">3</div><div class="h won-c">4</div>
+          <div class="h tie">5</div><div class="h won-u">6</div><div class="h won-u">7</div><div class="h won-c">8</div>
+          <div class="h cur">9</div><div class="h">10</div><div class="h">11</div><div class="h">12</div><div class="h">13</div><div class="h">14</div>
+        </div>
+
+        <div class="hole-meta">Hole <b>9</b> · Par 5 · 444 yds · SI 13</div>
+
+        <div class="tblock u" data-tb>
+          <div class="top"><span class="who">Bob P / Dan S</span><span class="ch">USA · Strokes 20</span></div>
+          <div class="entry"><div class="stepper"><button>−</button><span class="mark under"><span class="v">4</span></span><button>+</button></div><span class="netlabel">Net <b>4</b> · birdie</span></div>
+          <div class="expand" tabindex="0" role="button">All 18 holes <span class="cv">⌄</span></div>
+          <div class="strip"><div class="hstrip"><div class="rl">15–5</div><div class="hn">15</div><div class="hn">16</div><div class="hn">17</div><div class="hn">18</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="rl"></div><div class="cell c">C</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div></div></div>
+        </div>
+
+        <div class="tblock c" data-tb>
+          <div class="top"><span class="who">Bill T / Hunter L</span><span class="ch">Canada · Strokes 19</span></div>
+          <div class="entry"><div class="stepper"><button>−</button><span class="mark"><span class="v">5</span></span><button>+</button></div><span class="netlabel">Net <b>5</b> · par</span></div>
+          <div class="expand" tabindex="0" role="button">All 18 holes <span class="cv">⌄</span></div>
+          <div class="strip"><div class="hstrip"><div class="rl">15–5</div><div class="hn">15</div><div class="hn">16</div><div class="hn">17</div><div class="hn">18</div><div class="hn">1</div><div class="hn">2</div><div class="hn">3</div><div class="hn">4</div><div class="hn">5</div><div class="rl"></div><div class="cell c">C</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell u">A</div><div class="cell h">½</div><div class="cell u">A</div><div class="cell c">C</div><div class="cell h">½</div></div></div>
+        </div>
+
+        <div class="nextbtn"><button class="back">← Back</button><button class="next">Next hole →</button></div>
+      </div>
+      <nav class="nav"><a><span class="ic">🏠</span>Home</a><a><span class="ic">🏆</span>Scoreboard</a><a><span class="ic">🕐</span>History</a><a><span class="ic">👥</span>Players</a></nav>
+    </div>
+  </div>
+</div>
+
+<script>
+  const tabs=document.querySelectorAll('.tab');
+  const screens={home:home,thome:thome,board:board,card:card};
+  tabs.forEach(t=>t.addEventListener('click',()=>{
+    tabs.forEach(x=>x.setAttribute('aria-selected','false'));
+    t.setAttribute('aria-selected','true');
+    Object.values(screens).forEach(s=>s.classList.remove('on'));
+    screens[t.dataset.s].classList.add('on');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }));
+  const bind=(sel,cls)=>document.querySelectorAll(sel).forEach(el=>{
+    const tgt=el.closest(cls);
+    const go=()=>tgt.classList.toggle('open');
+    el.addEventListener('click',go);
+    el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});
+  });
+  bind('[data-row] .main','[data-row]');
+  bind('.sday .sh','.sday');
+  bind('[data-tb] .expand','[data-tb]');
+</script>
+</body>
+</html>
