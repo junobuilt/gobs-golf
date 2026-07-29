@@ -91,7 +91,7 @@ export default function MatchOverridePanel({
           <button onClick={onClose} aria-label="Close" style={{ background: "white", border: `1.5px solid ${C.border}`, borderRadius: 8, minWidth: 40, minHeight: 40, fontWeight: 700, cursor: "pointer" }}>✕</button>
         </div>
         <div style={{ fontSize: "0.8rem", color: C.muted, marginBottom: 12 }}>
-          Admin result beats the engine. A forced result stands even with no scores (envelope rule). Correcting a hole re-runs the engine.
+          Use this panel to override scores/results — changes override the scoring engine.
         </div>
 
         {error && (

@@ -28,6 +28,7 @@ import {
   setPlayerSide,
   setTournamentPublished,
   TournamentDayDateTakenError,
+  updateTournament,
 } from "@/lib/tournament/mutations";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
 import { formatPoints } from "@/lib/tournament/matchScorecard";
@@ -244,6 +245,26 @@ export default function Tournament({ allPlayers }: Props) {
     }
   }, [tournament, load]);
 
+  // Cup holder — who currently holds the cup (drives the frontend "retain" line).
+  // Optimistic-then-persist, reconcile via load() on failure (same pattern as
+  // togglePublished). `null` = no holder. Admin-only, reversible → no modal.
+  const setHolder = useCallback(
+    async (next: Side | null) => {
+      setActionError(null);
+      const cur = tournament;
+      if (!cur) return;
+      if (cur.holder_side === next) return;
+      setTournament((prev) => (prev ? { ...prev, holder_side: next } : prev));
+      try {
+        await updateTournament(cur.id, { holder_side: next });
+      } catch (e) {
+        await load();
+        setActionError(e instanceof Error ? e.message : "Couldn't update the cup holder.");
+      }
+    },
+    [tournament, load],
+  );
+
   useEffect(() => {
     load();
   }, [load]);
@@ -435,6 +456,47 @@ export default function Tournament({ allPlayers }: Props) {
           >
             {tournament.is_published ? "Live — shown on the homepage" : "Test — not shown to players"}
           </span>
+        </div>
+        {/* Cup holder — sets tournaments.holder_side (a / b / none). The frontend
+            "retain" line reads this; the control only writes it. */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, marginBottom: 6 }}>
+            Cup holder
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <SideButton
+              label={tournament.side_a_name}
+              active={tournament.holder_side === "a"}
+              sideKey="a"
+              ariaLabel="Cup holder side A"
+              onClick={() => setHolder("a")}
+            />
+            <SideButton
+              label={tournament.side_b_name}
+              active={tournament.holder_side === "b"}
+              sideKey="b"
+              ariaLabel="Cup holder side B"
+              onClick={() => setHolder("b")}
+            />
+            <button
+              onClick={() => setHolder(null)}
+              aria-label="Cup holder none"
+              style={{
+                minHeight: 44,
+                padding: "0 14px",
+                borderRadius: 8,
+                border: `1.5px solid ${tournament.holder_side === null ? C.navy : C.border}`,
+                background: tournament.holder_side === null ? "#eef2f7" : "white",
+                color: tournament.holder_side === null ? C.navy : C.muted,
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                fontFamily: FONT,
+              }}
+            >
+              None
+            </button>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
           <button
@@ -1043,16 +1105,22 @@ function SideButton({
   active,
   sideKey,
   onClick,
+  ariaLabel,
 }: {
   label: string;
   active: boolean;
   sideKey: Side;
   onClick: () => void;
+  // Distinct accessible name when the visible label (a side name) would collide
+  // with another control of the same name — e.g. the cup-holder selector's side
+  // buttons vs. the per-player side-assignment buttons.
+  ariaLabel?: string;
 }) {
   const col = SIDE_COLOR[sideKey];
   return (
     <button
       onClick={onClick}
+      aria-label={ariaLabel}
       style={{
         minHeight: 44,
         padding: "0 12px",

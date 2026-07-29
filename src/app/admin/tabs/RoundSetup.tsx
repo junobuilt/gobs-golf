@@ -24,6 +24,7 @@ import type { Format, FormatConfig } from "@/lib/scoring/types";
 import PlayerOverflowMenu from "@/components/round/PlayerOverflowMenu";
 import SeasonStartModal from "@/components/season/SeasonStartModal";
 import RecommendTeamsModal from "@/components/admin/RecommendTeamsModal";
+import { getActiveTournament } from "@/lib/tournament/queries";
 import type { RecommendResult } from "@/lib/teamRecommend";
 
 interface Props {
@@ -66,6 +67,12 @@ export default function RoundSetup({ allPlayers }: Props) {
   // the new season is named.
   const [seasonPromptOpen, setSeasonPromptOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<"format" | "teams" | null>(null);
+  // Item 5 — league-card tripwire: warn (don't block) before creating a NEW
+  // league round while a published (Live) tournament is running. The ack ref
+  // gates the one-shot warning so the modal's confirm can re-run ensureRoundShell
+  // without re-prompting; a fresh entry-button tap resets it.
+  const [tournamentWarnOpen, setTournamentWarnOpen] = useState(false);
+  const tournamentWarnAckRef = useRef(false);
   const [recommendModalOpen, setRecommendModalOpen] = useState(false);
   // Phase D.2: was_finalized is the latch from migration 012 that tells the
   // banner + reopen flow whether this round was ever finalized. A reopened
@@ -479,6 +486,19 @@ export default function RoundSetup({ allPlayers }: Props) {
       return existing.id;
     }
 
+    // Item 5 — league-card tripwire. Creating a NEW league round while a
+    // published (Live) tournament is running won't count toward the cup —
+    // warn-and-confirm (never block). The ack ref is set by the modal's confirm
+    // handler, which re-invokes this path; a fresh entry-button tap resets it.
+    if (!tournamentWarnAckRef.current) {
+      const activeTournament = await getActiveTournament();
+      if (activeTournament?.is_published) {
+        setSaving(false);
+        setTournamentWarnOpen(true);
+        return null; // resumes via handleTournamentWarnConfirm
+      }
+    }
+
     // No round yet — season-aware create. If no season is active, bail and
     // open the name prompt; the prompt's confirm handler resumes creation.
     try {
@@ -510,6 +530,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   }, [existingRoundId, selectedDate, loadRoundForDate]);
 
   const openTodaysFormat = useCallback(async () => {
+    tournamentWarnAckRef.current = false; // fresh create → re-arm the cup warning
     setPendingAction("format");
     const rid = await ensureRoundShell();
     if (!rid) return; // null = error OR the season prompt opened (resumes later)
@@ -527,6 +548,7 @@ export default function RoundSetup({ allPlayers }: Props) {
   }, []);
 
   const openEditTeams = useCallback(async () => {
+    tournamentWarnAckRef.current = false; // fresh create → re-arm the cup warning
     setPendingAction("teams");
     const rid = await ensureRoundShell();
     if (!rid) return; // null = error OR the season prompt opened (resumes later)
@@ -561,6 +583,25 @@ export default function RoundSetup({ allPlayers }: Props) {
       alert("Error starting season: " + (err instanceof Error ? err.message : String(err)));
     }
   }, [selectedDate, pendingAction]);
+
+  // Item 5 — resume round creation after the admin confirms the cup warning.
+  // Mirrors the entry-button handlers: re-run ensureRoundShell (ack now set, so
+  // it won't re-warn) and dispatch on the recorded pendingAction. A null result
+  // means an error or that the season prompt opened (which resumes separately).
+  const handleTournamentWarnConfirm = useCallback(async () => {
+    tournamentWarnAckRef.current = true;
+    setTournamentWarnOpen(false);
+    const rid = await ensureRoundShell();
+    if (!rid) return;
+    if (pendingAction === "format") {
+      setPickerFlight(flights[0] ?? null);
+      setFormatPickerOpen(true);
+    } else if (pendingAction === "teams") {
+      setViewMode("edit");
+      setMobileStep("checkin");
+    }
+    setPendingAction(null);
+  }, [ensureRoundShell, pendingAction, flights]);
 
   // Wave 1A / Session 2: persist the handicap allowance onto a FLIGHT's config,
   // merging so format/basis/override/point_values are preserved. Reloads so the
@@ -1186,6 +1227,18 @@ export default function RoundSetup({ allPlayers }: Props) {
     />
   ) : null;
 
+  // Item 5 — cup-warning tripwire modal (warn-and-confirm, never block).
+  const tournamentWarnModal = tournamentWarnOpen ? (
+    <DangerModal
+      title="A tournament is running"
+      description="This regular league round won't count toward the cup — tournament days are scored separately. Create it anyway?"
+      cannotBeUndone={false}
+      confirmLabel="Create anyway"
+      onConfirm={handleTournamentWarnConfirm}
+      onCancel={() => { setTournamentWarnOpen(false); setPendingAction(null); }}
+    />
+  ) : null;
+
   const recommendModal = recommendModalOpen ? (
     <RecommendTeamsModal
       activeSeasonId={activeSeasonId}
@@ -1496,6 +1549,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         {teamAllowanceDangerModal}
         {formatPicker}
         {seasonModal}
+        {tournamentWarnModal}
         {recommendModal}
       </div>
     );
@@ -1679,6 +1733,7 @@ export default function RoundSetup({ allPlayers }: Props) {
         })()}
         {formatPicker}
         {seasonModal}
+        {tournamentWarnModal}
         {recommendModal}
       </div>
     );
