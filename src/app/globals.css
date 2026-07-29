@@ -402,6 +402,12 @@ body {
   40% { transform: translateY(-12px); }
 }
 
+/* ── Tournament (Ryder Cup) — visible keyboard focus (mock v4 gold ring) ── */
+.tourn-focusable:focus-visible {
+  outline: 3px solid #C9A227;
+  outline-offset: 2px;
+}
+
 /* ── Utility ── */
 .text-center { text-align: center; }
 .mt-2 { margin-top: 8px; }

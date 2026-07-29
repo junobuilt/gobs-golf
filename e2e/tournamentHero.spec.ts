@@ -22,13 +22,14 @@ function tournamentRow(published: boolean) {
   };
 }
 
-test("published tournament: homepage shows the hero linking to /tournament", async ({ page, db }) => {
+test("published tournament: homepage shows the cup hero linking to /tournament", async ({ page, db }) => {
   seed(db, { ...seedNoRoundToday(), tournaments: [tournamentRow(true)] });
   await page.goto("/");
   const hero = page.getByTestId("tournament-hero");
   await expect(hero).toBeVisible();
   await expect(hero).toContainText("2026 GOBS Ryder Cup");
-  await expect(hero).toHaveAttribute("href", "/tournament");
+  await expect(page.getByTestId("pointsbar-track")).toBeVisible();
+  await expect(page.getByTestId("hero-to-tournament")).toHaveAttribute("href", "/tournament");
 });
 
 test("Test (unpublished) tournament: homepage shows NO hero (negative control)", async ({ page, db }) => {

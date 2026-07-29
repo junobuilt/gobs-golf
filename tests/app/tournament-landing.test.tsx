@@ -13,15 +13,19 @@ const mocks = vi.hoisted(() => ({
   getActiveTournament: vi.fn(),
   getTournamentSessions: vi.fn(),
   getTournamentPlayers: vi.fn(),
+  getPointAdjustments: vi.fn(),
   loadSessionMatches: vi.fn(),
   // Full-league-roster players returned by the inline supabase read.
   players: [] as Array<{ id: number; full_name: string; display_name: string | null; is_active: boolean }>,
 }));
 
+// The landing now assembles its bar via the real loadDashboard, which reads
+// getTournamentSessions + getPointAdjustments + loadSessionMatches (all mocked).
 vi.mock("@/lib/tournament/queries", () => ({
   getActiveTournament: mocks.getActiveTournament,
   getTournamentSessions: mocks.getTournamentSessions,
   getTournamentPlayers: mocks.getTournamentPlayers,
+  getPointAdjustments: mocks.getPointAdjustments,
 }));
 vi.mock("@/lib/tournament/loadMatch", () => ({
   loadSessionMatches: mocks.loadSessionMatches,
@@ -88,6 +92,8 @@ beforeEach(() => {
   mocks.getTournamentSessions.mockReset();
   mocks.getTournamentPlayers.mockReset();
   mocks.getTournamentPlayers.mockResolvedValue([]);
+  mocks.getPointAdjustments.mockReset();
+  mocks.getPointAdjustments.mockResolvedValue([]);
   mocks.loadSessionMatches.mockReset();
   mocks.players = [];
 });
@@ -132,18 +138,17 @@ describe("tournament landing", () => {
     expect(screen.getByTestId("day-11")).toBeInTheDocument();
     expect(screen.getByText("2026 GOBS Ryder Cup")).toBeInTheDocument();
 
-    // A match row per day, each linking to its scorecard.
-    const row = screen.getByTestId("match-row-500");
+    // A shared match card per day, each linking to its scorecard.
+    const row = screen.getByTestId("tmatch-card-500");
     expect(row).toHaveAttribute("href", "/tournament/match/500");
-    expect(screen.getByTestId("match-row-600")).toHaveAttribute("href", "/tournament/match/600");
-    expect(screen.getByTestId("match-row-700")).toHaveAttribute("href", "/tournament/match/700");
+    expect(screen.getByTestId("tmatch-card-600")).toHaveAttribute("href", "/tournament/match/600");
+    expect(screen.getByTestId("tmatch-card-700")).toHaveAttribute("href", "/tournament/match/700");
 
-    // Player names shown; tee time is "—".
+    // Player names shown.
     expect(row).toHaveTextContent("P1 / P2");
-    expect(row).toHaveTextContent("—");
 
-    // No day highlighted "Today" (future-dated).
-    expect(screen.queryByText("Today")).not.toBeInTheDocument();
+    // No day marked "Live" (future-dated → all "Upcoming").
+    expect(screen.queryByText("Live")).not.toBeInTheDocument();
     expect(screen.queryByTestId("tournament-empty")).not.toBeInTheDocument();
   });
 
@@ -167,7 +172,7 @@ describe("tournament landing", () => {
       makeLoaded({ id: 500, format: "greensomes", a: [{ playerId: 1, ch: 5, scored: {} }, { playerId: 2, ch: 15, scored: {} }], b: [{ playerId: 3, ch: 10, scored: {} }, { playerId: 4, ch: 20, scored: {} }] }),
     ]);
     await renderPage();
-    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
   it("device memory: Who-are-you → pick stores identity → Go to your match → Switch resets", async () => {
@@ -343,6 +348,6 @@ describe("tournament landing", () => {
     });
     await renderPage();
     expect(screen.getByText(/Couldn’t load this day’s pairings/)).toBeInTheDocument();
-    expect(screen.getByTestId("match-row-600")).toBeInTheDocument();
+    expect(screen.getByTestId("tmatch-card-600")).toBeInTheDocument();
   });
 });

@@ -1,78 +1,66 @@
 "use client";
 
+// Public TOURNAMENT HOME (mock v4 "Tournament Home"). Unified cup hero (eyebrow
+// + title + standardized PointsBar + "View Full Scoreboard →"), the device's
+// "your match" CTA, then the schedule: per-day collapsible sections whose
+// pairings render the shared TournamentMatchCard (identical to the homepage
+// card + Scoreboard row via matchStatus()).
+//
+// SSOT: the bar is deriveCupBar over loadDashboard (same loader the Scoreboard
+// uses); nothing here recomputes a cup point or a match status.
+
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { todayLocal, formatDisplayDate } from "@/lib/date";
-import { getTeamColor } from "@/lib/teamColors";
 import { supabase } from "@/lib/supabase";
-import { getActiveTournament, getTournamentSessions, getTournamentPlayers } from "@/lib/tournament/queries";
-import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import { getActiveTournament, getTournamentPlayers } from "@/lib/tournament/queries";
+import { loadDashboard, type DashboardData, type DashboardDay } from "@/lib/tournament/loadDashboard";
 import { findNearestMatchForPlayer, tournamentPlayersFromDays } from "@/lib/tournament/findPlayerMatch";
+import { deriveCupBar } from "@/lib/tournament/cup";
+import { matchStatus } from "@/lib/tournament/matchStatus";
+import { CupHero } from "@/components/tournament/CupHero";
+import { TournamentMatchCard } from "@/components/tournament/TournamentMatchCard";
+import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS } from "@/lib/tournament/tokens";
 import { getStoredPlayerId, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
-import type { LoadedMatch, SessionFormat, Side, Tournament, TournamentSession } from "@/lib/tournament/types";
-
-// Side A = blue, Side B = red — the §0 shared palette used across pairings + the
-// match scorecard.
-const SIDE_COLOR: Record<Side, string> = {
-  a: getTeamColor(4).pillText,
-  b: getTeamColor(6).pillText,
-};
+import type { SessionFormat, Tournament } from "@/lib/tournament/types";
 
 const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Alternate Shot",
+  greensomes: "Modified Alternate Shot",
   four_ball_match: "Best Ball",
   singles_match: "Singles",
 };
 
-interface DayData {
-  session: TournamentSession;
-  matches: LoadedMatch[];
-  error: boolean;
-}
 type LandingState =
   | { kind: "loading" }
-  | { kind: "empty" } // no published, active tournament
-  | { kind: "ready"; tournament: Tournament; days: DayData[] };
+  | { kind: "empty" }
+  | { kind: "ready"; tournament: Tournament; data: DashboardData };
 
 async function loadLanding(): Promise<LandingState> {
   const tournament = await getActiveTournament();
-  // Player-facing gate: only a Live (published) tournament is shown. A Test one,
-  // or none, → clean empty state (never a crash).
+  // Player-facing gate: only a Live (published) tournament is shown.
   if (!tournament || !tournament.is_published) return { kind: "empty" };
+  const data = await loadDashboard(tournament.id);
+  return { kind: "ready", tournament, data };
+}
 
-  const sessions = await getTournamentSessions(tournament.id); // day-ordered
-  // Per-day isolation: one misconfigured day (mixed tees / missing holes) shows a
-  // note, never blanks the page.
-  const results = await Promise.allSettled(
-    sessions.map((s) => (s.round_id != null ? loadSessionMatches(s.id) : Promise.resolve([] as LoadedMatch[]))),
-  );
-  const days: DayData[] = sessions.map((session, i) => {
-    const r = results[i];
-    return r.status === "fulfilled"
-      ? { session, matches: r.value, error: false }
-      : { session, matches: [], error: true };
-  });
-  return { kind: "ready", tournament, days };
+function currentDayNumber(days: DashboardDay[], today: string): number {
+  const todays = days.find((d) => d.session.played_on === today);
+  if (todays) return todays.session.day_number;
+  const past = days.filter((d) => (d.session.played_on ?? "") !== "" && (d.session.played_on ?? "") <= today);
+  if (past.length) return Math.max(...past.map((d) => d.session.day_number));
+  return days[0]?.session.day_number ?? 1;
 }
 
 export default function TournamentLandingPage() {
   const [state, setState] = useState<LandingState>({ kind: "loading" });
-  // Device memory (localStorage) — the player's identity on THIS device. Read
-  // post-mount to stay SSR/hydration-safe; null until known.
   const [storedId, setStoredId] = useState<number | null>(null);
 
   const doLoad = useCallback(async () => {
-    // Read device memory here (inside the async callback, past the effect's
-    // await boundary) so it's not a synchronous setState in the effect body.
     setStoredId(getStoredPlayerId());
     setState(await loadLanding());
   }, []);
 
-  useEffect(() => {
-    void (async () => {
-      await doLoad();
-    })();
-  }, [doLoad]);
+  useEffect(() => { void doLoad(); }, [doLoad]);
 
   const pickPlayer = useCallback((id: number) => {
     setStoredPlayerId(id);
@@ -84,92 +72,53 @@ export default function TournamentLandingPage() {
   }, []);
 
   if (state.kind === "loading") {
-    return (
-      <Shell>
-        <p style={{ color: "#6b7280" }}>Loading…</p>
-      </Shell>
-    );
+    return <Shell><p style={{ color: T.muted }}>Loading…</p></Shell>;
   }
   if (state.kind === "empty") {
     return (
       <Shell>
-        <div
-          data-testid="tournament-empty"
-          style={{
-            background: "white",
-            border: "1px solid rgba(0,0,0,0.08)",
-            borderRadius: "10px",
-            padding: "24px 20px",
-            textAlign: "center",
-            color: "#374151",
-          }}
-        >
-          <div style={{ fontSize: "1.6rem", marginBottom: "8px" }}>🏆</div>
+        <div data-testid="tournament-empty" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 10, padding: "24px 20px", textAlign: "center", color: "#374151" }}>
+          <div style={{ fontSize: "1.6rem", marginBottom: 8 }}>🏆</div>
           No tournament is live right now. Check back when the next one starts.
         </div>
       </Shell>
     );
   }
 
+  const { tournament, data } = state;
   const today = todayLocal();
+  const bar = deriveCupBar(data, tournament);
+  const dayNo = currentDayNumber(data.days, today);
+  // Today's day opens by default (mock); other days collapse. But if NO day is
+  // today (a future- or all-past-dated tournament), open every day so pairings
+  // are never hidden behind a collapsed header.
+  const anyToday = data.days.some((d) => d.session.played_on === today);
+
   return (
     <Shell>
-      <div style={{ marginBottom: "14px" }}>
-        <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0c3057" }}>{state.tournament.name}</div>
-        <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>
-          <span style={{ color: SIDE_COLOR.a }}>{state.tournament.side_a_name}</span>
-          <span style={{ color: "#9ca3af", margin: "0 6px" }}>vs</span>
-          <span style={{ color: SIDE_COLOR.b }}>{state.tournament.side_b_name}</span>
+      <CupHero
+        eyebrow={`🏁 Tournament · Day ${dayNo} of ${data.days.length}`}
+        title={tournament.name}
+        bar={bar}
+      >
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 11, paddingTop: 11, borderTop: "1px solid rgba(255,255,255,0.14)" }}>
+          <Link href="/tournament/dashboard" data-testid="to-dashboard" className={FOCUS_CLASS} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: "rgba(255,255,255,0.16)", borderRadius: 8, padding: "9px 13px", textDecoration: "none" }}>
+            View Full Scoreboard →
+          </Link>
         </div>
-        {/* C9 — the entry into the scoreboard was a small text link and easy to
-            miss; promote it to a prominent button with a comfortable (≥44px)
-            touch target for the 60–80 audience. */}
-        <Link
-          href="/tournament/dashboard"
-          data-testid="to-dashboard"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            marginTop: "10px",
-            minHeight: "44px",
-            padding: "10px 18px",
-            fontSize: "0.95rem",
-            fontWeight: 700,
-            color: "#ffffff",
-            background: "#0e4270",
-            borderRadius: "10px",
-            textDecoration: "none",
-          }}
-        >
-          View full scoreboard →
-        </Link>
-      </div>
+      </CupHero>
 
-      <DeviceMemoryPanel
-        days={state.days}
-        today={today}
-        tournamentId={state.tournament.id}
-        storedId={storedId}
-        onPick={pickPlayer}
-        onSwitch={switchPlayer}
-      />
+      <DeviceMemoryPanel days={data.days} today={today} tournamentId={tournament.id} storedId={storedId} onPick={pickPlayer} onSwitch={switchPlayer} />
 
-      {state.days.map((day) => (
-        <DaySection
-          key={day.session.id}
-          day={day}
-          isToday={day.session.played_on === today}
-          sideAName={state.tournament.side_a_name}
-          sideBName={state.tournament.side_b_name}
-        />
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.muted, margin: "20px 4px 9px" }}>Schedule &amp; pairings</div>
+      {data.days.map((day) => (
+        <DaySection key={day.session.id} day={day} isToday={day.session.played_on === today} defaultOpen={day.session.played_on === today || !anyToday} />
       ))}
     </Shell>
   );
 }
 
-// "Who are you?" (first visit) → "Go to your match" (per current day) + switch.
-// Stores IDENTITY, so it resolves the player's NEW match on day 2/3 with no
-// re-ask. localStorage only, no accounts.
+// "Who are you?" (first visit) → "Your match" CTA (mock `.yourmatch`) + switch.
 function DeviceMemoryPanel({
   days,
   today,
@@ -178,7 +127,7 @@ function DeviceMemoryPanel({
   onPick,
   onSwitch,
 }: {
-  days: DayData[];
+  days: DashboardDay[];
   today: string;
   tournamentId: number;
   storedId: number | null;
@@ -187,10 +136,6 @@ function DeviceMemoryPanel({
 }) {
   const roster = tournamentPlayersFromDays(days.map((d) => d.matches));
 
-  // Fix 2 — full-league-roster fallback (lazy). fullRoster = every active player;
-  // participantIds = the authoritative tournament_players set (membership). Both
-  // fetched only when "See all players" is tapped — no extra load for the common
-  // case, no rounds read.
   const [fullRoster, setFullRoster] = useState<Array<{ playerId: number; displayName: string }> | null>(null);
   const [participantIds, setParticipantIds] = useState<Set<number>>(new Set());
   const [loadingRoster, setLoadingRoster] = useState(false);
@@ -200,11 +145,7 @@ function DeviceMemoryPanel({
     setLoadingRoster(true);
     try {
       const [{ data }, participants] = await Promise.all([
-        supabase
-          .from("players")
-          .select("id, full_name, display_name, is_active")
-          .eq("is_active", true)
-          .order("full_name"),
+        supabase.from("players").select("id, full_name, display_name, is_active").eq("is_active", true).order("full_name"),
         getTournamentPlayers(tournamentId),
       ]);
       setParticipantIds(new Set(participants.map((tp) => tp.player_id)));
@@ -215,7 +156,7 @@ function DeviceMemoryPanel({
         })),
       );
     } catch {
-      setFullRoster([]); // best-effort — a read failure just shows an empty list
+      setFullRoster([]);
     } finally {
       setLoadingRoster(false);
     }
@@ -223,247 +164,124 @@ function DeviceMemoryPanel({
 
   const pickFromFullRoster = useCallback(
     (p: { playerId: number; displayName: string }) => {
-      if (participantIds.has(p.playerId)) {
-        onPick(p.playerId); // in the tournament → resolves normally
-      } else {
-        setNotInMsg("You’re not in this tournament yet — ask the admin to add you.");
-      }
+      if (participantIds.has(p.playerId)) onPick(p.playerId);
+      else setNotInMsg("You’re not in this tournament yet — ask the admin to add you.");
     },
     [participantIds, onPick],
   );
 
   if (roster.length === 0) return null;
 
-  const cardStyle: React.CSSProperties = {
-    background: "#eef5fc",
-    border: `1px solid ${getTeamColor(4).border}`,
-    borderRadius: "10px",
-    padding: "12px 14px",
-    marginBottom: "14px",
-  };
-  const nameBtn: React.CSSProperties = {
-    minHeight: "40px",
-    padding: "0 14px",
-    borderRadius: "8px",
-    border: "1px solid #cbd5e1",
-    background: "white",
-    color: "#0c3057",
-    fontWeight: 600,
-    cursor: "pointer",
-  };
+  const cardStyle: React.CSSProperties = { background: "#eef5fc", border: `1px solid ${SIDE_TOKENS.a.base}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14 };
+  const nameBtn: React.CSSProperties = { minHeight: 40, padding: "0 14px", borderRadius: 8, border: `1px solid ${T.line}`, background: "white", color: T.usaInk, fontWeight: 600, cursor: "pointer" };
 
-  // Not-yet-identified → the one-time picker (+ full-roster fallback).
   if (storedId == null) {
     return (
       <div data-testid="who-are-you" style={cardStyle}>
-        <div style={{ fontWeight: 800, color: "#0c3057", marginBottom: "8px" }}>Who are you?</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+        <div style={{ fontWeight: 800, color: T.usaInk, marginBottom: 8 }}>Who are you?</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {roster.map((p) => (
-            <button key={p.playerId} data-testid={`whoami-${p.playerId}`} onClick={() => onPick(p.playerId)} style={nameBtn}>
-              {p.displayName}
-            </button>
+            <button key={p.playerId} data-testid={`whoami-${p.playerId}`} onClick={() => onPick(p.playerId)} className={FOCUS_CLASS} style={nameBtn}>{p.displayName}</button>
           ))}
         </div>
 
         {fullRoster == null ? (
-          <button
-            data-testid="see-all-players"
-            onClick={openFullRoster}
-            disabled={loadingRoster}
-            style={{ marginTop: "10px", background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}
-          >
+          <button data-testid="see-all-players" onClick={openFullRoster} disabled={loadingRoster} className={FOCUS_CLASS} style={{ marginTop: 10, background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}>
             {loadingRoster ? "Loading…" : "Don’t see your name? See all players"}
           </button>
         ) : (
-          <div data-testid="all-players" style={{ marginTop: "10px" }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 800, color: "#6b7280", textTransform: "uppercase", marginBottom: "6px" }}>
-              All players
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          <div data-testid="all-players" style={{ marginTop: 10 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 800, color: T.muted, textTransform: "uppercase", marginBottom: 6 }}>All players</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {fullRoster.map((p) => (
-                <button key={p.playerId} data-testid={`allplayers-${p.playerId}`} onClick={() => pickFromFullRoster(p)} style={nameBtn}>
-                  {p.displayName}
-                </button>
+                <button key={p.playerId} data-testid={`allplayers-${p.playerId}`} onClick={() => pickFromFullRoster(p)} className={FOCUS_CLASS} style={nameBtn}>{p.displayName}</button>
               ))}
             </div>
           </div>
         )}
         {notInMsg && (
-          <div data-testid="not-in-tournament" style={{ marginTop: "10px", fontSize: "0.82rem", color: "#92400e", background: "#fef3c7", border: "1px solid #92400e", borderRadius: "8px", padding: "8px 10px" }}>
-            {notInMsg}
-          </div>
+          <div data-testid="not-in-tournament" style={{ marginTop: 10, fontSize: "0.82rem", color: "#92400e", background: "#fef3c7", border: "1px solid #92400e", borderRadius: 8, padding: "8px 10px" }}>{notInMsg}</div>
         )}
       </div>
     );
   }
 
-  // Identified → resolve THIS device's player to their NEAREST match (soonest
-  // today-or-later; else most recent). Names the day, not "today".
   const storedName = roster.find((p) => p.playerId === storedId)?.displayName ?? "you";
   const nearest = findNearestMatchForPlayer(days, storedId, today);
 
   return (
-    <div data-testid="device-identity" style={cardStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 700, color: "#0c3057" }}>You’re {storedName}</span>
-        <button
-          data-testid="switch-player"
-          onClick={onSwitch}
-          style={{ background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}
-        >
-          Not you? Switch player
-        </button>
+    <div data-testid="device-identity" style={{ marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontWeight: 700, color: T.usaInk }}>You’re {storedName}</span>
+        <button data-testid="switch-player" onClick={onSwitch} className={FOCUS_CLASS} style={{ background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}>Not you? Switch player</button>
       </div>
       {nearest ? (
         <Link
           href={`/tournament/match/${nearest.match.match.id}`}
           data-testid="go-to-your-match"
-          style={{
-            display: "block",
-            marginTop: "10px",
-            textAlign: "center",
-            background: "#0c3057",
-            color: "white",
-            borderRadius: "8px",
-            padding: "12px",
-            fontWeight: 800,
-            textDecoration: "none",
-          }}
+          className={FOCUS_CLASS}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: T.chromeB, color: "#fff", borderRadius: 12, padding: "12px 14px", gap: 10, textDecoration: "none" }}
         >
-          Your Day {nearest.day.session.day_number} match ({formatDisplayDate(nearest.day.session.played_on ?? "")}) →
+          <span style={{ fontSize: 13, lineHeight: 1.4 }}>
+            <span>
+              <span style={{ color: SIDE_TOKENS.a.dark, fontWeight: 600 }}>{nearest.match.sideA.players.map((p) => p.displayName).join(" / ") || nearest.match.sideA.displayName}</span>
+              <span style={{ opacity: 0.7, margin: "0 6px" }}>v</span>
+              <span style={{ color: SIDE_TOKENS.b.dark, fontWeight: 600 }}>{nearest.match.sideB.players.map((p) => p.displayName).join(" / ") || nearest.match.sideB.displayName}</span>
+            </span>
+            <span style={{ display: "block", opacity: 0.72, fontSize: 11, marginTop: 2 }}>
+              Your Day {nearest.day.session.day_number} match · {matchStatus(nearest.match).text}
+              {matchStatus(nearest.match).decided ? "" : ` ${matchStatus(nearest.match).thruText}`} — tap to score
+            </span>
+          </span>
+          <span aria-hidden style={{ fontSize: 18, flexShrink: 0 }}>→</span>
         </Link>
       ) : (
-        <div data-testid="no-match" style={{ marginTop: "8px", fontSize: "0.82rem", color: "#6b7280" }}>
-          You’re in the tournament but not matched — check the days below.
-        </div>
+        <div data-testid="no-match" style={{ fontSize: "0.82rem", color: T.muted }}>You’re in the tournament but not matched — check the days below.</div>
       )}
     </div>
   );
 }
 
-function DaySection({
-  day,
-  isToday,
-  sideAName,
-  sideBName,
-}: {
-  day: DayData;
-  isToday: boolean;
-  sideAName: string;
-  sideBName: string;
-}) {
-  // All days visible by default (so a future-dated tournament shows every
-  // pairing); collapsible per day; the current day highlighted.
-  const [open, setOpen] = useState(true);
+function DaySection({ day, isToday, defaultOpen }: { day: DashboardDay; isToday: boolean; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const { session, matches, error } = day;
 
   return (
-    <div
-      data-testid={`day-${session.id}`}
-      style={{
-        border: isToday ? "2px solid #0c3057" : "1px solid rgba(0,0,0,0.08)",
-        background: "white",
-        borderRadius: "10px",
-        padding: "12px 14px",
-        marginBottom: "12px",
-      }}
-    >
+    <div data-testid={`day-${session.id}`} style={{ border: `1px solid ${T.line}`, borderRadius: 13, marginBottom: 10, overflow: "hidden", background: T.card }}>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{
-          width: "100%",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          gap: "8px",
-          background: "transparent",
-          border: "none",
-          padding: 0,
-          cursor: "pointer",
-          textAlign: "left",
-        }}
+        aria-expanded={open}
+        className={FOCUS_CLASS}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 13px", cursor: "pointer", textAlign: "left", border: 0, background: "transparent" }}
       >
-        <span style={{ fontWeight: 800, color: "#0c3057", fontSize: "1rem" }}>
-          {session.name}
-          {isToday && (
-            <span
-              style={{
-                marginLeft: "8px",
-                fontSize: "0.68rem",
-                fontWeight: 800,
-                color: "#276e34",
-                background: "#e7f6ec",
-                borderRadius: "6px",
-                padding: "2px 6px",
-                textTransform: "uppercase",
-              }}
-            >
-              Today
-            </span>
-          )}
+        <span>
+          <span style={{ display: "block", fontWeight: 800, fontSize: 14, color: T.ink }}>{session.name} — {FORMAT_LABEL[session.format]}</span>
+          <span style={{ display: "block", fontSize: 11, color: T.muted, marginTop: 1 }}>{formatDisplayDate(session.played_on ?? "")} · {matches.length} match{matches.length === 1 ? "" : "es"}</span>
         </span>
-        <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>
-          {formatDisplayDate(session.played_on ?? "")} · {FORMAT_LABEL[session.format]} {open ? "▾" : "▸"}
+        <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", borderRadius: 6, padding: "3px 8px", background: isToday ? "#fdecec" : T.soft, color: isToday ? T.can : T.muted }}>{isToday ? "Live" : "Upcoming"}</span>
+          <span aria-hidden style={{ color: T.muted, fontSize: 15, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>⌄</span>
         </span>
       </button>
 
       {open && (
-        <div style={{ marginTop: "10px" }}>
+        <div style={{ borderTop: `1px solid ${T.line}`, padding: "10px 10px 4px", background: T.soft }}>
           {error ? (
-            <div style={{ fontSize: "0.8rem", color: "#92400e" }}>
-              Couldn’t load this day’s pairings — ask the admin.
-            </div>
+            <div style={{ fontSize: 12, color: "#92400e", padding: "2px 4px 8px" }}>Couldn’t load this day’s pairings — ask the admin.</div>
           ) : matches.length === 0 ? (
-            <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>No pairings yet.</div>
+            <div style={{ fontSize: 12, color: T.muted, padding: "2px 4px 8px" }}>Pairings not set yet.</div>
           ) : (
-            matches.map((m) => <MatchRow key={m.match.id} m={m} sideAName={sideAName} sideBName={sideBName} />)
+            matches.map((m) => <TournamentMatchCard key={m.match.id} m={m} />)
           )}
         </div>
       )}
     </div>
-  );
-}
-
-function MatchRow({ m, sideAName, sideBName }: { m: LoadedMatch; sideAName: string; sideBName: string }) {
-  const aNames = m.sideA.players.map((p) => p.displayName).join(" / ") || sideAName;
-  const bNames = m.sideB.players.map((p) => p.displayName).join(" / ") || sideBName;
-  return (
-    <Link
-      href={`/tournament/match/${m.match.id}`}
-      data-testid={`match-row-${m.match.id}`}
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: "10px",
-        padding: "10px 8px",
-        borderTop: "1px solid rgba(0,0,0,0.06)",
-        textDecoration: "none",
-        color: "inherit",
-      }}
-    >
-      <span style={{ fontSize: "0.9rem", lineHeight: 1.4 }}>
-        <span style={{ color: SIDE_COLOR.a, fontWeight: 600 }}>{aNames}</span>
-        <span style={{ color: "#9ca3af", fontWeight: 700, margin: "0 6px" }}>v</span>
-        <span style={{ color: SIDE_COLOR.b, fontWeight: 600 }}>{bNames}</span>
-      </span>
-      <span style={{ fontSize: "0.78rem", color: "#6b7280", whiteSpace: "nowrap" }}>—</span>
-    </Link>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main
-      style={{
-        maxWidth: "560px",
-        margin: "0 auto",
-        padding: "16px",
-        fontFamily: "Inter, -apple-system, system-ui, sans-serif",
-        background: "#f2f1ed",
-        minHeight: "100vh",
-      }}
-    >
+    <main style={{ maxWidth: 560, margin: "0 auto", padding: 16, paddingBottom: 96, fontFamily: "Inter, -apple-system, system-ui, sans-serif", background: T.bg, minHeight: "100vh" }}>
       {children}
     </main>
   );

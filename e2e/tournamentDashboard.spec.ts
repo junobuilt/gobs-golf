@@ -66,49 +66,44 @@ function seedTournament(published: boolean) {
   };
 }
 
-test("published: /tournament/dashboard shows the country score + decided status", async ({ page, db }) => {
+test("published: /tournament/dashboard shows the cup PointsBar + decided status", async ({ page, db }) => {
   seed(db, seedTournament(true));
 
   await page.goto("/tournament/dashboard");
   await expect(page.getByText("2026 GOBS Ryder Cup")).toBeVisible();
 
-  // Country score header — USA 1, Canada 0 (one decided match, no halves).
-  const score = page.getByTestId("country-score");
-  await expect(score).toBeVisible();
-  await expect(score).toContainText("USA");
-  await expect(score).toContainText("Canada");
-  await expect(score).toContainText("1");
+  // Cup hero + standardized PointsBar — USA 1, Canada 0 (one decided match).
+  await expect(page.getByTestId("cup-hero")).toBeVisible();
+  await expect(page.getByTestId("pointsbar-pts-a")).toHaveText("1");
+  await expect(page.getByTestId("pointsbar-pts-b")).toHaveText("0");
+  // Holder retain line (Canada holds; total 3 → retain 1½).
+  await expect(page.getByTestId("pointsbar-cap-c")).toContainText("Canada holds the cup");
 
-  // The decided match reads "USA wins" from MatchState.
-  await expect(page.getByTestId("dash-status-500")).toContainText("USA wins");
+  // The decided match reads its spaced margin from MatchState (Adam 3 v Betty 5
+  // → USA up 1 per hole → closes 10 & 8).
+  await expect(page.getByTestId("dash-status-500")).toHaveText("10 & 8");
 
-  // Cross-link back to the landing.
+  // Cross-link back to Tournament Home.
   await expect(page.getByTestId("to-landing")).toBeVisible();
 
-  // C7 — expanding a pairing reveals a link to the READ-ONLY review, not the
-  // editable scorecard.
+  // Expanding a pairing reveals the inline HoleStrip (no separate page).
   await page.getByTestId("dash-match-500").getByRole("button").click();
-  const review = page.getByTestId("dash-review-500");
-  await expect(review).toBeVisible();
-  await expect(review).toHaveAttribute("href", "/tournament/match/500/review");
-  await review.click();
-  await expect(page).toHaveURL(/\/tournament\/match\/500\/review$/);
-  await expect(page.getByTestId("review-grid-500")).toBeVisible();
+  await expect(page.getByTestId("dash-holes-500").getByTestId("hole-strip")).toBeVisible();
 });
 
 test("Test (unpublished): /tournament/dashboard shows the empty state", async ({ page, db }) => {
   seed(db, seedTournament(false));
   await page.goto("/tournament/dashboard");
   await expect(page.getByTestId("dashboard-empty")).toBeVisible();
-  await expect(page.getByTestId("country-score")).toHaveCount(0);
+  await expect(page.getByTestId("cup-hero")).toHaveCount(0);
 });
 
-test("landing links to the dashboard", async ({ page, db }) => {
+test("Tournament Home links to the dashboard", async ({ page, db }) => {
   seed(db, seedTournament(true));
   await page.goto("/tournament");
   const link = page.getByTestId("to-dashboard");
   await expect(link).toBeVisible();
   await link.click();
   await expect(page).toHaveURL(/\/tournament\/dashboard$/);
-  await expect(page.getByTestId("country-score")).toBeVisible();
+  await expect(page.getByTestId("cup-hero")).toBeVisible();
 });

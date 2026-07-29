@@ -66,11 +66,10 @@ test("published tournament: /tournament lists all 3 days + pairings, each match 
   await expect(page.getByTestId("day-10")).toBeVisible();
   await expect(page.getByTestId("day-11")).toBeVisible();
 
-  const row = page.getByTestId("match-row-500");
+  const row = page.getByTestId("tmatch-card-500");
   await expect(row).toBeVisible();
-  await expect(row).toContainText("—"); // tee time not set
 
-  // The match line links to its scorecard.
+  // The match card links to its scorecard.
   await row.click();
   await expect(page).toHaveURL(/\/tournament\/match\/500$/);
   await expect(page.getByTestId("match-header-500")).toBeVisible();
