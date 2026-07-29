@@ -2,15 +2,14 @@
 //
 // Single source of truth: this module does NOT reimplement stroke-index
 // allocation or net math. It reuses `getHandicapStrokes` (the scorecard "dots"
-// allocator, src/lib/scoring/handicap.ts) and — for the greensomes pair — the
-// Wave 1C `computeTeamHandicap` half-of-combined path. The one genuinely new
-// rule is MATCH strokes (§2.1): everybody plays off the lowest handicap in the
-// match. The derived per-hole quantity is always called `matchNet` (never
-// `net`) — it uses MATCH strokes, so it legitimately differs from league net
-// (which uses a player's own allowance-adjusted CH).
+// allocator, src/lib/scoring/handicap.ts). The greensomes team handicap is the
+// GOBS 60/40 rule (see `greensomesTeamHandicap`). The one genuinely new rule is
+// MATCH strokes (§2.1): everybody plays off the lowest handicap in the match.
+// The derived per-hole quantity is always called `matchNet` (never `net`) — it
+// uses MATCH strokes, so it legitimately differs from league net (which uses a
+// player's own allowance-adjusted CH).
 
 import { getHandicapStrokes } from "@/lib/scoring/handicap";
-import { computeTeamHandicap } from "@/lib/scoring/teamHandicap";
 import type {
   HoleOutcome,
   MatchInput,
@@ -26,30 +25,23 @@ import type {
   StandingsMatchInput,
 } from "./types";
 
-// ── Greensomes team handicap ────────────────────────────────────────────────
-// Q4 (Dad confirmed 2026-07-27): greensomes team handicap is 60% of the LOWER
-// course handicap + 40% of the higher, added, rounded .5 up (Math.round on the
-// non-negative CHs we store). This replaced the earlier "half of combined"
-// convention. Flip GREENSOMES_TEAM_HANDICAP_METHOD back to "half_combined" (which
-// reuses the scoring core's computeTeamHandicap alternate_shot branch) + a golden
-// update if it ever reverts. This wrapper is tournament-only; the LEAGUE
+// ── Greensomes team handicap (GOBS 60/40) ───────────────────────────────────
+// Q4 (Dad confirmed 2026-07-27): the greensomes team handicap is 60% of the
+// LOWER course handicap + 40% of the higher, added, rounded to a whole number
+// (Math.round; the CHs we store are non-negative). Order-independent. Note the
+// weighted sum (3·low + 2·high)/5 can never land exactly on .5, so the rounding
+// direction is unambiguous. This is THE formula — the old "half of combined"
+// convention it replaced has been removed. Tournament-only: the LEAGUE
 // alternate_shot format uses computeTeamHandicap directly and is unaffected.
-export const GREENSOMES_TEAM_HANDICAP_METHOD: "half_combined" | "sixty_forty" =
-  "sixty_forty";
-
 export function greensomesTeamHandicap(
   chA: number | null,
   chB: number | null,
 ): number {
-  if (GREENSOMES_TEAM_HANDICAP_METHOD === "sixty_forty") {
-    const a = chA ?? 0;
-    const b = chB ?? 0;
-    const low = Math.min(a, b);
-    const high = Math.max(a, b);
-    return Math.round(0.6 * low + 0.4 * high); // .5 up (Math.round on the non-neg CHs we store)
-  }
-  // Default: half of combined, .5 up — reuse the scoring core, do not reimplement.
-  return computeTeamHandicap("alternate_shot", [chA, chB]) ?? 0;
+  const a = chA ?? 0;
+  const b = chB ?? 0;
+  const low = Math.min(a, b);
+  const high = Math.max(a, b);
+  return Math.round(0.6 * low + 0.4 * high);
 }
 
 // ── Match strokes (§2.1) ────────────────────────────────────────────────────

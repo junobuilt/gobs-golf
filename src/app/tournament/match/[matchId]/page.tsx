@@ -970,6 +970,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         maxWidth: "560px",
         margin: "0 auto",
         padding: "16px",
+        paddingBottom: "96px", // clear the fixed bottom nav (mirrors dashboard/review)
         fontFamily: "Inter, -apple-system, system-ui, sans-serif",
         background: "#f2f1ed",
         minHeight: "100vh",

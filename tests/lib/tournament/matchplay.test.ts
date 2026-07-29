@@ -57,11 +57,24 @@ describe("computeMatchStrokes (§2.1)", () => {
 
 // ── §6.3 correction — greensomes min is across the two SIDES ─────────────────
 describe("greensomes team handicap + side strokes (§2.2 / correction 3 / Q4 60-40)", () => {
-  it("Q4 60/40: 5+15 → 9, 10+20 → 14 (0.6·low + 0.4·high, .5 up)", () => {
-    // Q4 weighted: 0.6·5 + 0.4·15 = 9; 0.6·10 + 0.4·20 = 14 (was 10 & 15 under
-    // half-of-combined). Only these two values move under the 60/40 flip.
-    expect(greensomesTeamHandicap(5, 15)).toBe(9);
-    expect(greensomesTeamHandicap(10, 20)).toBe(14);
+  it("GOBS 60/40 golden pairs: 0.6·low + 0.4·high, rounded", () => {
+    // Hand-computed at several CH pairs. 60%·lower + 40%·higher.
+    expect(greensomesTeamHandicap(5, 15)).toBe(9); // 3 + 6
+    expect(greensomesTeamHandicap(10, 20)).toBe(14); // 6 + 8
+    expect(greensomesTeamHandicap(7, 12)).toBe(9); // 4.2 + 4.8 = 9.0
+    expect(greensomesTeamHandicap(3, 8)).toBe(5); // 1.8 + 3.2 = 5.0
+    expect(greensomesTeamHandicap(9, 9)).toBe(9); // equal CHs → that CH
+    expect(greensomesTeamHandicap(0, 0)).toBe(0);
+    expect(greensomesTeamHandicap(8, 11)).toBe(9); // 4.8 + 4.4 = 9.2 → 9 (rounds down)
+    expect(greensomesTeamHandicap(2, 9)).toBe(5); // 1.2 + 3.6 = 4.8 → 5 (rounds up)
+  });
+
+  it("is order-independent — low/high is taken by value, not argument position", () => {
+    expect(greensomesTeamHandicap(20, 10)).toBe(greensomesTeamHandicap(10, 20)); // 14
+    expect(greensomesTeamHandicap(15, 5)).toBe(9);
+    // A null partner is treated as 0 (the low), so 40% of the present CH.
+    expect(greensomesTeamHandicap(10, null)).toBe(4); // low 0, high 10 → 0.4·10 = 4
+    expect(greensomesTeamHandicap(null, 10)).toBe(4);
   });
 
   it("yields TWO side strokes 0 and 5 — not four per-player values", () => {

@@ -7,7 +7,7 @@
 // loadMatch (single source); the pre-save builder preview uses the SAME
 // computeSideStrokes helper the loader uses, so preview and card can't diverge.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DangerModal from "./DangerModal";
 import PlayerCombobox from "@/components/playedWith/PlayerCombobox";
 import { getTeamColor } from "@/lib/teamColors";
@@ -211,6 +211,27 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
     load();
   }, [load]);
 
+  // Back-nav (browser Back + the header button). The panel is a fixed overlay,
+  // not a route, so without this the device Back button leaves /admin entirely
+  // and dead-ends on the homepage. Push a history entry when the panel opens and
+  // close on popstate; the header back button routes through history.back() too,
+  // so there is ONE close path and Back returns to the Tournament setup screen.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.history.pushState({ __pairingsPanel: true }, "");
+    const onPop = () => onCloseRef.current();
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const goBack = useCallback(() => {
+    if (typeof window !== "undefined") window.history.back();
+    else onCloseRef.current();
+  }, []);
+
   // Players already in a group today (from the loaded matches) — excluded from pickers.
   const groupedIds = useMemo(() => {
     const s = new Set<number>();
@@ -303,12 +324,14 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
   return (
     <div style={wrap}>
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 60px" }}>
-        {/* Header */}
+        {/* Header — breadcrumb back to the Tournament setup screen (routes through
+            history.back so the browser Back button and this button agree). */}
         <button
-          onClick={onClose}
+          onClick={goBack}
+          data-testid="pairings-back"
           style={{ background: "none", border: "none", color: C.navy, fontWeight: 600, fontSize: "0.9rem", cursor: "pointer", padding: "8px 0", minHeight: 44 }}
         >
-          ← Days
+          ‹ Admin · Tournament
         </button>
         <div style={{ fontSize: "1.2rem", fontWeight: 700, color: C.navy }}>{session.name}</div>
         <div style={{ color: C.muted, fontSize: "0.85rem", marginTop: 2 }}>
@@ -671,21 +694,33 @@ function GroupCard({
 function SideColumn({ side, name, match }: { side: Side; name: string; match: LoadedMatch }) {
   const col = SIDE_COLOR[side];
   const s = side === "a" ? match.sideA : match.sideB;
+  // Greensomes math caption: Team CH = 60% of the LOWER CH + 40% of the higher.
+  const chs = s.players.map((p) => p.courseHandicap ?? 0);
+  const low = chs.length ? Math.min(...chs) : 0;
+  const high = chs.length ? Math.max(...chs) : 0;
   return (
     <div style={{ flex: 1, minWidth: 0, border: `1px solid ${col.border}`, borderRadius: 8, background: col.bg, padding: "8px 10px" }}>
-      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: col.text, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{name}</div>
+      {/* Header row labels the otherwise-bare number as match strokes. */}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: col.text, textTransform: "uppercase", letterSpacing: "0.04em" }}>{name}</span>
+        {s.players.length > 0 && (
+          <span style={{ fontSize: "0.62rem", fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Strokes</span>
+        )}
+      </div>
       {s.players.length === 0 ? (
         <div style={{ color: C.muted, fontSize: "0.82rem", fontStyle: "italic" }}>— empty —</div>
       ) : (
         s.players.map((p) => (
           <div key={p.playerId} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: "0.86rem", color: C.navy, padding: "2px 0" }}>
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</span>
-            <span style={{ fontWeight: 700, color: p.matchStrokes > 0 ? C.navy : C.muted }}>{p.matchStrokes}</span>
+            <span style={{ fontWeight: 700, whiteSpace: "nowrap", color: p.matchStrokes > 0 ? C.navy : C.muted }}>{p.matchStrokes}</span>
           </div>
         ))
       )}
       {s.collapsedHandicap != null && (
-        <div style={{ fontSize: "0.72rem", color: C.muted, marginTop: 4 }}>Team CH {s.collapsedHandicap}</div>
+        <div style={{ fontSize: "0.72rem", color: C.muted, marginTop: 4 }}>
+          Team CH {s.collapsedHandicap} = 60% × {low} + 40% × {high}
+        </div>
       )}
     </div>
   );
