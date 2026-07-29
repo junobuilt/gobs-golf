@@ -2,9 +2,12 @@
 -- Shotgun start: per-group START HOLE + GROUP LABEL on a match. ADDITIVE +
 -- REVERSIBLE.
 --
--- STATUS: NOT YET APPLIED TO PROD. A BEGIN…ROLLBACK dry-run is posted for review;
--- applied only on Jonathan's explicit go-ahead. On apply, flip this header to
--- "APPLIED TO PROD <date>" (mirror 031/035/038).
+-- APPLIED TO PROD 2026-07-28 via the Supabase MCP (apply_migration, name
+-- `039_tournament_shotgun`) after a BEGIN…ROLLBACK dry-run passed. This file is
+-- the EXACT deployed body, committed after the fact. DO NOT RE-APPLY. Post-apply
+-- verify confirmed: start_hole (int, nullable) + group_label (text, nullable);
+-- CHECK (start_hole BETWEEN 1 AND 18); the 8 existing rows untouched (all NULL,
+-- no backfill).
 --
 -- WHY: in a shotgun start each foursome tees off on a different hole and plays in
 -- sequence, wrapping (e.g. start 7 → 7,8,…,18,1,…,6). A "group" is the foursome
