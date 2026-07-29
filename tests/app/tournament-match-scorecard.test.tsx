@@ -61,6 +61,9 @@ vi.mock("next/navigation", () => ({ useParams: () => ({ matchId: "500" }) }));
 
 import MatchScorecardPage from "@/app/tournament/match/[matchId]/page";
 import { MixedTeesInMatchError, MatchLoadError, MatchNotFoundError } from "@/lib/tournament/loadMatch";
+import { matchStatus } from "@/lib/tournament/matchStatus";
+import { TournamentMatchCard } from "@/components/tournament/TournamentMatchCard";
+import { HoleStrip } from "@/components/tournament/HoleStrip";
 
 async function flush() {
   for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -99,13 +102,13 @@ describe("match scorecard — four-ball rendering + counting ball", () => {
     );
     await renderPage();
 
-    const header = screen.getByTestId("match-header-500");
-    expect(header).toHaveTextContent("USA 1");
-    expect(header).toHaveTextContent("CANADA 0");
-    expect(header).toHaveTextContent("USA 1 UP");
-    expect(header).toHaveTextContent("thru 1");
+    // Redesign (mock v4): the status line replaces the old points/margin header
+    // (pts dropped — a scoreboard concept) and reads matchStatus() — SSOT with
+    // the scoreboard. "USA wins the hole" line removed (the nav circle shows it).
+    const status = screen.getByTestId("sc-status-500");
+    expect(status).toHaveTextContent("USA 1 UP");
+    expect(status).toHaveTextContent("thru 1");
 
-    expect(screen.getByTestId("hole-outcome-500")).toHaveTextContent("USA wins the hole");
     // The counting ← is on P2 (the ball the stroke made count), not P1.
     expect(screen.getByTestId("player-2-counting")).toBeInTheDocument();
     expect(screen.queryByTestId("player-1-counting")).not.toBeInTheDocument();
@@ -155,7 +158,7 @@ describe("match scorecard — offline recompute", () => {
       }),
     );
     await renderPage();
-    expect(screen.getByTestId("match-header-500")).toHaveTextContent("not started");
+    expect(screen.getByTestId("sc-status-500")).toHaveTextContent("Not started");
 
     // Each tap is its own event in real use — flush between so the stepper
     // re-renders with the updated value before the next tap (par-anchor + inc).
@@ -169,10 +172,9 @@ describe("match scorecard — offline recompute", () => {
     await tap("player-2"); // B = 4
     await tap("player-2"); // B = 5
 
-    const header = screen.getByTestId("match-header-500");
-    expect(header).toHaveTextContent("USA 1");
-    expect(header).toHaveTextContent("USA 1 UP");
-    expect(header).toHaveTextContent("thru 1");
+    const status = screen.getByTestId("sc-status-500");
+    expect(status).toHaveTextContent("USA 1 UP");
+    expect(status).toHaveTextContent("thru 1");
     // No reload happened — loadMatch called exactly once (mount).
     expect(mocks.loadMatch).toHaveBeenCalledTimes(1);
     expect(mocks.scoreEnqueue).toHaveBeenCalled(); // writes still queued (offline-tolerant)
@@ -428,7 +430,7 @@ describe("match scorecard — offline background refresh (F2)", () => {
     mocks.loadMatch.mockResolvedValueOnce(singlesFixture()); // mount succeeds → USA 1
     await renderPage();
     expect(screen.getByTestId("match-card-500")).toBeInTheDocument();
-    expect(screen.getByTestId("match-header-500")).toHaveTextContent("USA 1");
+    expect(screen.getByTestId("sc-status-500")).toHaveTextContent("USA 1 UP");
 
     // Background refetch now fails (offline).
     mocks.loadMatch.mockRejectedValue(new MatchLoadError("Failed to fetch"));
@@ -439,7 +441,7 @@ describe("match scorecard — offline background refresh (F2)", () => {
 
     // Card survives; the score is preserved; NO not-found copy.
     expect(screen.getByTestId("match-card-500")).toBeInTheDocument();
-    expect(screen.getByTestId("match-header-500")).toHaveTextContent("USA 1");
+    expect(screen.getByTestId("sc-status-500")).toHaveTextContent("USA 1 UP");
     expect(screen.queryByText(/couldn’t be found/i)).not.toBeInTheDocument();
   });
 
@@ -814,8 +816,9 @@ describe("match scorecard — functional polish (D)", () => {
     expect(dots.childElementCount).toBe(1);
     // The stepper (reused) is present below the dots.
     expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
-    // P1 net 4 (5−1) beats B best 6 → A wins hole 1, and P1 is the counting ball.
-    expect(screen.getByTestId("hole-outcome-500")).toHaveTextContent("USA wins the hole");
+    // P1 net 4 (5−1) beats B best 6 → A wins hole 1 (status shows it; the removed
+    // "wins the hole" line is superseded by the nav circle + status), P1 counts.
+    expect(screen.getByTestId("sc-status-500")).toHaveTextContent("USA 1 UP");
     expect(screen.getByTestId("player-1-counting")).toBeInTheDocument();
   });
 });
@@ -835,3 +838,68 @@ function winMap(aWins: number[], bWins: number[], halves: number[]): { a: Record
   for (const h of halves) { a[h] = 4; b[h] = 4; }
   return { a, b };
 }
+
+// ── SSOT: scorecard status/strip === the scoreboard, from one MatchState ──────
+describe("match scorecard — SSOT with the scoreboard (mock v4)", () => {
+  // Singles: A wins holes 1 & 2 (net), halves 3 → USA 2 UP thru 3.
+  function twoUp() {
+    return makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 3, 2: 3, 3: 4 } }],
+      b: [{ playerId: 2, ch: 0, scored: { 1: 4, 2: 4, 3: 4 } }],
+    });
+  }
+
+  it("scorecard status === matchStatus() === the scoreboard row (same MatchState)", async () => {
+    const m = twoUp();
+    const s = matchStatus(m);
+    expect(s.text).toBe("2 UP");
+    expect(s.thruText).toBe("thru 3");
+
+    // Scoreboard card renders matchStatus.text verbatim.
+    const board = render(<TournamentMatchCard m={m} />);
+    expect(board.getByTestId("tmatch-status-500")).toHaveTextContent("2 UP");
+    board.unmount();
+
+    // Scorecard status line composes {leader} {text} · {thruText} from the SAME
+    // helper — so it carries the identical text + thru string.
+    mocks.loadMatch.mockResolvedValue(m);
+    await renderPage();
+    const status = screen.getByTestId("sc-status-500");
+    expect(status).toHaveTextContent("USA 2 UP");
+    expect(status).toHaveTextContent("thru 3");
+  });
+
+  it("adopts 'All Square' — never the shipped 'Tied' wording", async () => {
+    const m = makeLoaded({
+      format: "singles_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }],
+      b: [{ playerId: 2, ch: 0, scored: { 1: 4 } }],
+    });
+    expect(matchStatus(m).text).toBe("All Square");
+    mocks.loadMatch.mockResolvedValue(m);
+    await renderPage();
+    const status = screen.getByTestId("sc-status-500");
+    expect(status).toHaveTextContent("All Square");
+    expect(status).not.toHaveTextContent("Tied");
+  });
+
+  it("per-team HoleStrip uses the SAME shared component + outcomes as the scoreboard", async () => {
+    const m = twoUp();
+    // The canonical strip the scoreboard renders off m.state.holeOutcomes.
+    const board = render(<HoleStrip outcomes={m.state.holeOutcomes} />);
+    const boardStrip = board.getByTestId("hole-strip").textContent;
+    board.unmount();
+
+    mocks.loadMatch.mockResolvedValue(m);
+    await renderPage();
+    // Expand the first team block ("All 18 holes") → its HoleStrip.
+    await act(async () => {
+      fireEvent.click(screen.getAllByText(/All 18 holes/)[0]);
+      await flush();
+    });
+    const cardStrip = screen.getByTestId("hole-strip").textContent;
+    // Same outcomes + (natural, start=1) order → byte-identical strip content.
+    expect(cardStrip).toBe(boardStrip);
+  });
+});

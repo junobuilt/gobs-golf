@@ -14,16 +14,12 @@ import type { LoadedMatch, Side } from "@/lib/tournament/types";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
 import { getStoredPlayerId } from "@/lib/deviceMemory";
 import { setMatchScorer, setMatchFlags } from "@/lib/tournament/mutations";
-import { getTeamColor } from "@/lib/teamColors";
 import TeamHoleEntry from "@/components/scorecard/TeamHoleEntry";
 import ScoreMark from "@/components/scorecard/ScoreMark";
 import {
   initOptimisticScores,
   overlayPending,
   recomputeState,
-  formatPoints,
-  thruDisplay,
-  marginWithSide,
   finishBanner,
   countingMarks,
   unitNet,
@@ -32,15 +28,22 @@ import {
   type PendingScore,
   type PendingTeamScore,
 } from "@/lib/tournament/matchScorecard";
+import { matchStatus, type StatusTone } from "@/lib/tournament/matchStatus";
+import { groupLabelFor } from "@/lib/tournament/matchScorecard";
+import { holePlayOrder, resolveMatchResult } from "@/lib/tournament/matchplay";
+import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, CHROME_GRADIENT, FOCUS_CLASS } from "@/lib/tournament/tokens";
+import { HoleStrip } from "@/components/tournament/HoleStrip";
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
 import MatchReviewGrid from "./MatchReviewGrid";
 
-// Side A = blue, Side B = red (shared team palette, same as the admin pairings).
-const SIDE_COLOR: Record<Side, { border: string; bg: string; text: string }> = {
-  a: { border: getTeamColor(4).border, bg: getTeamColor(4).pillBg, text: getTeamColor(4).pillText },
-  b: { border: getTeamColor(6).border, bg: getTeamColor(6).pillBg, text: getTeamColor(6).pillText },
-};
+// The status-line color for a matchStatus tone (usa=blue A up, canada=red C up,
+// square/pre=neutral). One mapping so the scorecard status matches the scoreboard.
+function statusColor(tone: StatusTone): string {
+  if (tone === "usa") return SIDE_TOKENS.a.base;
+  if (tone === "canada") return SIDE_TOKENS.b.base;
+  return T.ink;
+}
 
 type LoadState =
   | { kind: "loading" }
@@ -395,43 +398,9 @@ export default function MatchScorecardPage() {
   }
 
   const group = state.group;
-  const anyScoreAtHole = (h: number): boolean =>
-    group.some((m) => {
-      const s = scoresByMatch[m.match.id];
-      if (!s) return false;
-      for (const pid of Object.keys(s.byPlayer)) if (s.byPlayer[Number(pid)]?.[h] != null) return true;
-      return s.teamGross.a[h] != null || s.teamGross.b[h] != null;
-    });
-
-  const header = group[0];
-  const startHole = header?.match.start_hole ?? 1; // shotgun (039): nav play order
+  const startHole = group[0]?.match.start_hole ?? 1; // shotgun (039): nav play order
   return (
     <Shell>
-      <div style={{ marginBottom: "12px" }}>
-        <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0c3057" }}>
-          {header.tournament.sideAName} v {header.tournament.sideBName}
-        </div>
-        <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
-          {header.session.name} · {FORMAT_LABEL[header.session.format]}
-        </div>
-        {/* A3 — a second door to the scoreboard, always visible during play (not
-            only at finish). Reading-only; scoring stays here. */}
-        <Link
-          href="/tournament/dashboard"
-          data-testid="scorecard-view-scoreboard"
-          style={{
-            display: "inline-block",
-            marginTop: "6px",
-            fontSize: "0.8rem",
-            fontWeight: 700,
-            color: "#1a5a8c",
-            textDecoration: "none",
-          }}
-        >
-          View scoreboard →
-        </Link>
-      </div>
-
       {syncFailed && (
         <div
           data-testid="sync-failed-banner"
@@ -450,8 +419,8 @@ export default function MatchScorecardPage() {
         </div>
       )}
 
-      <HoleDotRail currentHole={currentHole} onSelect={setCurrentHole} hasScore={anyScoreAtHole} startHole={startHole} />
-
+      {/* Singles is unlinked (039), so `group` is always ONE match: each card is
+          the full mock-v4 scorecard (hero → status → nav → blocks → next). */}
       {group.map((m) => {
         const claimant = scorerByMatch[m.match.id] ?? null;
         // Unclaimed OR claimed by this device → this device may score. Claimed by
@@ -465,7 +434,8 @@ export default function MatchScorecardPage() {
             loaded={m}
             scores={scoresByMatch[m.match.id] ?? initOptimisticScores(m)}
             hole={currentHole}
-            compact={group.length > 1}
+            onSelectHole={setCurrentHole}
+            startHole={startHole}
             iAmScorer={iAmScorer}
             claimantName={claimantName}
             onTakeOver={() => takeOver(m.match.id)}
@@ -478,16 +448,21 @@ export default function MatchScorecardPage() {
           />
         );
       })}
-
-      <HolePrevNext currentHole={currentHole} onSelect={setCurrentHole} startHole={startHole} />
     </Shell>
   );
 }
 
-const FORMAT_LABEL: Record<LoadedMatch["session"]["format"], string> = {
-  greensomes: "Alternate Shot",
+// Hero title format name (mock v4: "Day 1 · Modified Alternate Shot") + the
+// uppercase sub-line under it.
+const FORMAT_TITLE: Record<LoadedMatch["session"]["format"], string> = {
+  greensomes: "Modified Alternate Shot",
   four_ball_match: "Best Ball",
   singles_match: "Singles",
+};
+const FORMAT_SUB: Record<LoadedMatch["session"]["format"], string> = {
+  greensomes: "Alternate shot · one score per team",
+  four_ball_match: "Best ball · two scores per side, best net counts",
+  singles_match: "Singles · one-on-one match play",
 };
 
 function displayForPlayer(m: LoadedMatch, playerId: number, fallback = "Player"): string {
@@ -500,7 +475,8 @@ function MatchCard({
   loaded,
   scores,
   hole,
-  compact,
+  onSelectHole,
+  startHole,
   iAmScorer,
   claimantName,
   onTakeOver,
@@ -514,7 +490,8 @@ function MatchCard({
   loaded: LoadedMatch;
   scores: OptimisticScores;
   hole: number;
-  compact: boolean;
+  onSelectHole: (hole: number) => void; // shotgun nav (rail + prev/next) selection
+  startHole: number;
   iAmScorer: boolean;
   claimantName: string | null; // resolved name of whoever holds the claim, or null
   onTakeOver: () => void;
@@ -541,43 +518,43 @@ function MatchCard({
     loaded.state.status === "complete" &&
     state.status === "complete" &&
     loaded.state.result !== state.result;
-  const outcome = state.holeOutcomes[hole - 1];
+  // Status from the LIVE recompute (same helpers the loader + scoreboard use):
+  // matchStatus reads .state + .resolved, so feed it the live state and a live
+  // resolved (resolveMatchResult over the same match row loadMatch uses). This
+  // keeps the line SSOT-identical to the scoreboard while updating offline.
+  const status = matchStatus({
+    ...loaded,
+    state,
+    resolved: resolveMatchResult(state, loaded.match),
+  }); // SSOT with the scoreboard; live-aware
 
-  const pad = compact ? "10px 12px" : "14px 16px";
   return (
-    <div
-      data-testid={`match-card-${loaded.match.id}`}
-      style={{
-        background: "white",
-        border: "1px solid rgba(0,0,0,0.08)",
-        borderRadius: "10px",
-        padding: pad,
-        marginBottom: "12px",
-      }}
-    >
-      {/* Header (§3): points — margin · thru (thru = closedOutHole ?? thru). */}
+    <div data-testid={`match-card-${loaded.match.id}`}>
+      {/* Hero (mock v4 .sc-hero): day · format, the pairing (USA left / Canada
+          right), shotgun start chip + the two scoreboard/home buttons. */}
+      <ScHero loaded={loaded} startHole={startHole} />
+
+      {/* Status line (mock .sc-status) — matchStatus() text, prefixed with the
+          leader's name and colored by tone. SAME helper the scoreboard uses. */}
       <div
-        data-testid={`match-header-${loaded.match.id}`}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          gap: "8px",
-          flexWrap: "wrap",
-          marginBottom: compact ? "6px" : "10px",
-        }}
+        data-testid={`sc-status-${loaded.match.id}`}
+        style={{ fontWeight: 700, fontSize: "1rem", color: statusColor(status.tone), margin: "14px 2px 9px", letterSpacing: "0.01em" }}
       >
-        <span style={{ fontWeight: 800, color: "#0c3057", fontSize: compact ? "0.95rem" : "1.05rem" }}>
-          <span style={{ color: SIDE_COLOR.a.text }}>{loaded.sideA.displayName} {formatPoints(state.pointsA)}</span>
-          {" — "}
-          <span style={{ color: SIDE_COLOR.b.text }}>{loaded.sideB.displayName} {formatPoints(state.pointsB)}</span>
-        </span>
-        <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#374151" }}>
-          {state.thru === 0 && !marginWithSide(state, loaded)
-            ? "not started"
-            : `${marginWithSide(state, loaded)}${marginWithSide(state, loaded) ? " · " : ""}thru ${thruDisplay(state)}`}
-        </span>
+        {status.leaderSide != null
+          ? `${(status.leaderSide === "a" ? loaded.sideA.displayName : loaded.sideB.displayName)} ${status.text} · ${status.thruText}`
+          : status.decided
+            ? status.text
+            : `${status.text}${status.thruText && status.thruText !== status.text ? ` ${status.thruText}` : ""}`}
       </div>
+
+      {/* Hole nav (mock .holenav): shotgun play order, circles tinted by who won
+          each hole (same outcomes as HoleStrip), current = gold ring. */}
+      <HoleDotRail
+        currentHole={hole}
+        onSelect={onSelectHole}
+        outcomes={state.holeOutcomes}
+        startHole={startHole}
+      />
 
       {/* Flag markers (§B, migration 037 multi-flag). Metadata only — holes the
           opposing side flagged for a second look; never a score/status. Visible to
@@ -754,24 +731,16 @@ function MatchCard({
           <span>SI {holeMeta.strokeIndex}</span>
         </div>
       )}
+      {/* Per-team entry blocks (mock .tblock). Format decides the entry area:
+          greensomes = one team box; four-ball = two player boxes + counting mark;
+          singles = one player box. The "USA wins the hole" line was removed — the
+          nav circle + the per-block HoleStrip already show who won. */}
       {loaded.session.format === "greensomes"
-        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam, !iAmScorer)
-        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer, !iAmScorer)}
-      {/* Hole outcome line (§4.4): nothing when a side has no score. */}
-      {outcome != null && (
-        <div
-          data-testid={`hole-outcome-${loaded.match.id}`}
-          style={{ marginTop: "10px", fontWeight: 700, color: "#0c3057", fontSize: "0.9rem" }}
-        >
-          →{" "}
-          {outcome === "halved"
-            ? "Halved"
-            : `${outcome === "side_a" ? loaded.sideA.displayName : loaded.sideB.displayName} wins the hole`}
-        </div>
-      )}
+        ? renderGreensomes(loaded, scores, hole, holeMeta, state, startHole, onSetTeam, !iAmScorer)
+        : renderIndividual(loaded, scores, hole, holeMeta, state, startHole, onSetPlayer, !iAmScorer)}
 
-      {/* §C — read-only 18-hole review grid (paper verification at the turn/end).
-          Collapsed by default; no entry here. */}
+      {/* §C — read-only 18-hole review grid (paper verification: gross + dots per
+          unit, which the win/loss HoleStrip doesn't show). Collapsed by default. */}
       <div style={{ marginTop: "12px" }}>
         <button
           type="button"
@@ -780,12 +749,12 @@ function MatchCard({
           onClick={() => setReviewOpen((v) => !v)}
           style={{
             background: "none",
-            border: "1px solid #cbd5e1",
+            border: `1px solid ${T.line}`,
             borderRadius: "8px",
             padding: "8px 12px",
             fontSize: "0.8rem",
             fontWeight: 700,
-            color: "#0c3057",
+            color: T.ink,
             cursor: "pointer",
           }}
         >
@@ -794,6 +763,11 @@ function MatchCard({
         {reviewOpen && (
           <MatchReviewGrid loaded={loaded} scores={scores} state={state} flaggedHoles={flaggedHoles} />
         )}
+      </div>
+
+      {/* Back / Next hole (mock .nextbtn) — shotgun rotation + wrap. */}
+      <div style={{ marginTop: "12px" }}>
+        <HolePrevNext currentHole={hole} onSelect={onSelectHole} startHole={startHole} />
       </div>
     </div>
   );
@@ -806,34 +780,39 @@ function renderGreensomes(
   scores: OptimisticScores,
   hole: number,
   holeMeta: { par: number; strokeIndex: number },
+  state: ReturnType<typeof recomputeState>,
+  startHole: number,
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void,
   readOnly: boolean,
 ) {
+  const order = holePlayOrder(startHole);
   const row = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
     const gross = scores.teamGross[side][hole];
     const ms = ls.sideMatchStrokes ?? 0;
     const net = unitNet(ms, holeMeta.strokeIndex, gross ?? null);
     const names = ls.players.map((p) => p.displayName).join(" / ") || "—";
+    // Strokes label (approved): the collapsed 60/40 team handicap.
+    const sub = `${ls.displayName} · Strokes ${ls.collapsedHandicap ?? "—"}`;
     return (
-      <SideBlock key={side} side={side} title={names} subtitle={`Team CH ${ls.collapsedHandicap ?? "—"}`}>
-        <ScoreBox
+      <TeamBlock key={side} side={side} title={names} sub={sub} outcomes={state.holeOutcomes} playOrder={order}>
+        <EntryRow
           testid={`greensomes-${side}`}
-          balls={[gross ?? undefined]}
+          gross={gross ?? undefined}
           par={holeMeta.par}
           dots={strokeDots(ms, holeMeta.strokeIndex)}
           net={net}
           disabled={readOnly}
           onSet={(v) => onSetTeam(loaded, side, ls.teamNumber, hole, v)}
         />
-      </SideBlock>
+      </TeamBlock>
     );
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+    <>
       {row("a")}
       {row("b")}
-    </div>
+    </>
   );
 }
 
@@ -845,9 +824,11 @@ function renderIndividual(
   hole: number,
   holeMeta: { par: number; strokeIndex: number },
   state: ReturnType<typeof recomputeState>,
+  startHole: number,
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void,
   readOnly: boolean,
 ) {
+  const order = holePlayOrder(startHole);
   const sideRow = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
     const present = ls.players.map((p) => scores.byPlayer[p.playerId]?.[hole] != null);
@@ -857,18 +838,22 @@ function renderIndividual(
       present,
     );
     return (
-      <SideBlock key={side} side={side} title={ls.displayName}>
+      <TeamBlock key={side} side={side} title={ls.displayName} outcomes={state.holeOutcomes} playOrder={order}>
         {ls.players.map((p, i) => {
           const gross = scores.byPlayer[p.playerId]?.[hole];
           const net = unitNet(p.matchStrokes, holeMeta.strokeIndex, gross ?? null);
           return (
-            <div key={p.playerId} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-              <span style={{ minWidth: "84px", fontWeight: 600, color: "#111827", fontSize: "0.9rem" }}>
+            <div key={p.playerId} style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: i < ls.players.length - 1 ? "8px" : 0 }}>
+              <span style={{ minWidth: "92px", fontWeight: 600, color: T.ink, fontSize: "0.86rem" }}>
                 {p.displayName}
+                {/* Strokes label (approved): per-player match strokes. */}
+                <span style={{ display: "block", fontSize: "0.66rem", fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 1 }}>
+                  Strokes {p.matchStrokes}
+                </span>
               </span>
-              <ScoreBox
+              <EntryRow
                 testid={`player-${p.playerId}`}
-                balls={[gross ?? undefined]}
+                gross={gross ?? undefined}
                 par={holeMeta.par}
                 dots={strokeDots(p.matchStrokes, holeMeta.strokeIndex)}
                 net={net}
@@ -879,45 +864,91 @@ function renderIndividual(
             </div>
           );
         })}
-      </SideBlock>
+      </TeamBlock>
     );
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+    <>
       {sideRow("a")}
       {sideRow("b")}
-    </div>
+    </>
   );
 }
 
-function SideBlock({
+// #RRGGBB + alpha → rgba(), for the mock's translucent country gradients.
+function hexA(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+// Net-vs-par term for the entry netlabel ("Net 4 · birdie").
+function netTerm(net: number, par: number): string {
+  const d = net - par;
+  if (d <= -3) return "albatross";
+  if (d === -2) return "eagle";
+  if (d === -1) return "birdie";
+  if (d === 0) return "par";
+  if (d === 1) return "bogey";
+  if (d === 2) return "double bogey";
+  if (d === 3) return "triple bogey";
+  return `+${d}`;
+}
+
+// Mock v4 .tblock: country-gradient block, name/strokes top, entry, and a
+// chevron that expands the SHARED colorized HoleStrip (same outcomes + play
+// order the scoreboard/nav read). `sub` is the small right-aligned meta.
+function TeamBlock({
   side,
   title,
-  subtitle,
+  sub,
+  outcomes,
+  playOrder,
   children,
 }: {
   side: Side;
   title: string;
-  subtitle?: string;
+  sub?: string;
+  outcomes: ReadonlyArray<import("@/lib/tournament/types").HoleOutcome>;
+  playOrder: number[];
   children: React.ReactNode;
 }) {
-  const c = SIDE_COLOR[side];
+  const [open, setOpen] = useState(false);
+  const c = SIDE_TOKENS[side];
+  const grad =
+    side === "a"
+      ? `linear-gradient(90deg, ${hexA(c.base, 0.07)}, transparent 55%)`
+      : `linear-gradient(270deg, ${hexA(c.base, 0.07)}, transparent 55%)`;
   return (
-    <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: "8px", padding: "8px 10px" }}>
-      {/* Two-weight hierarchy, sentence case: bold side name (700), light meta (500). */}
-      <div style={{ fontSize: "0.82rem", fontWeight: 700, color: c.text }}>
-        {title}
-        {subtitle && <span style={{ marginLeft: "8px", fontWeight: 500, color: "#6b7280" }}>{subtitle}</span>}
+    <div style={{ border: `1px solid ${hexA(c.base, 0.22)}`, borderRadius: 13, marginBottom: 9, overflow: "hidden", background: grad }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "10px 12px 8px" }}>
+        <span style={{ fontSize: "0.8rem", fontWeight: 600, color: c.ink }}>{title}</span>
+        {sub && <span style={{ fontSize: "0.66rem", color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{sub}</span>}
       </div>
-      <div style={{ marginTop: "6px" }}>{children}</div>
+      <div style={{ padding: "0 12px 8px" }}>{children}</div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={FOCUS_CLASS}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderTop: `1px solid ${T.line}`, padding: 8, fontSize: "0.7rem", fontWeight: 600, color: T.muted, cursor: "pointer", background: "rgba(255,255,255,0.5)", border: "none", borderTopStyle: "solid" }}
+      >
+        All 18 holes <span style={{ transform: open ? "rotate(180deg)" : "none", transition: ".2s" }}>⌄</span>
+      </button>
+      {open && (
+        <div style={{ padding: "9px 10px 11px", background: T.soft, borderTop: `1px solid ${T.line}` }}>
+          <HoleStrip outcomes={outcomes} holeOrder={playOrder} />
+        </div>
+      )}
     </div>
   );
 }
 
-// One stepper (reused TeamHoleEntry) + its stroke dots, net, and counting mark.
-function ScoreBox({
+// Mock v4 .entry: stroke dots ABOVE the reused +/− stepper, then the NET cell —
+// the net wrapped in the league notation component (ScoreMark: circle under /
+// square over) + its term + the four-ball counting-ball arrow. No math here.
+function EntryRow({
   testid,
-  balls,
+  gross,
   par,
   dots,
   net,
@@ -926,7 +957,7 @@ function ScoreBox({
   onSet,
 }: {
   testid: string;
-  balls: (number | undefined)[];
+  gross: number | undefined;
   par: number;
   dots: number;
   net: number | null;
@@ -934,30 +965,103 @@ function ScoreBox({
   disabled?: boolean;
   onSet: (value: number) => void;
 }) {
-  // Polish (§D): stroke dots ABOVE the number (league dot-above-score pattern),
-  // the reused +/− stepper unchanged, then the net score cell carrying the
-  // traditional circle/square notation (ScoreMark, net vs par) with the
-  // counting-ball arrow inline. Presentation only — no score arithmetic here.
   return (
-    <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+    <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "14px" }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
         <div data-testid={`${testid}-dots`} style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center" }}>
           {Array.from({ length: dots }).map((_, i) => (
-            <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1e40af" }} />
+            <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: SIDE_TOKENS.a.base }} />
           ))}
         </div>
-        <TeamHoleEntry ballCount={1} balls={balls} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
+        <TeamHoleEntry ballCount={1} balls={[gross]} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.82rem", color: "#374151" }}>
-        <span style={{ fontWeight: 500 }}>Net</span>
-        <span style={{ fontWeight: 700, color: "#0c3057", display: "inline-flex", alignItems: "center", minHeight: "22px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", color: T.muted }}>
+        <span>Net</span>
+        <span style={{ fontWeight: 700, color: T.ink, display: "inline-flex", alignItems: "center", minHeight: "22px" }}>
           {net == null ? "—" : <ScoreMark delta={net - par} score={net} />}
         </span>
+        {net != null && <span>· {netTerm(net, par)}</span>}
         {counting && (
-          <span data-testid={`${testid}-counting`} title="Counting ball" style={{ color: "#276e34", fontWeight: 900 }}>
+          <span data-testid={`${testid}-counting`} title="Counting ball" style={{ color: T.ok, fontWeight: 900 }}>
             ←
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+// The side's strokes shown in the hero sub-line (approved): greensomes → the
+// collapsed 60/40 team handicap; four-ball / singles → per-player match strokes.
+function strokesForSide(loaded: LoadedMatch, side: Side): string {
+  const ls = side === "a" ? loaded.sideA : loaded.sideB;
+  if (loaded.session.format === "greensomes") {
+    return ls.collapsedHandicap != null ? String(ls.collapsedHandicap) : "—";
+  }
+  return ls.players.map((p) => p.matchStrokes).join(" / ") || "—";
+}
+
+const heroBtn: React.CSSProperties = {
+  width: "100%",
+  fontSize: "0.75rem",
+  fontWeight: 600,
+  color: "#fff",
+  background: "rgba(255,255,255,0.16)",
+  border: "none",
+  borderRadius: 8,
+  padding: "9px 12px",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+  textAlign: "center",
+  textDecoration: "none",
+  boxSizing: "border-box",
+};
+
+// Mock v4 .sc-hero (navy gradient): day · format + sub, the pairing (USA left /
+// blue, Canada right / red — on-dark colors), and the foot row = shotgun start
+// chip LEFT + two equal stacked buttons RIGHT.
+function ScHero({ loaded, startHole: _startHole }: { loaded: LoadedMatch; startHole: number }) {
+  const aNames = loaded.sideA.players.map((p) => p.displayName).join(" / ") || loaded.sideA.displayName;
+  const bNames = loaded.sideB.players.map((p) => p.displayName).join(" / ") || loaded.sideB.displayName;
+  const showStart = loaded.match.start_hole != null; // shotgun only
+  const groupLabel = groupLabelFor(loaded.match.group_number, loaded.match.group_label);
+  const small: React.CSSProperties = { fontWeight: 400, opacity: 0.72, display: "block", marginTop: 2, color: "#cdd8e8" };
+  return (
+    <div style={{ background: CHROME_GRADIENT, color: "#fff", borderRadius: 16, padding: "14px 15px" }}>
+      <div style={{ fontWeight: 600, fontSize: "1.05rem", letterSpacing: "0.02em" }}>
+        {loaded.session.name} · {FORMAT_TITLE[loaded.session.format]}
+      </div>
+      <div style={{ fontSize: "0.7rem", opacity: 0.72, marginTop: 1, textTransform: "uppercase", letterSpacing: "0.09em" }}>
+        {FORMAT_SUB[loaded.session.format]}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 12, gap: 10, fontSize: "0.82rem" }}>
+        <span style={{ color: SIDE_TOKENS.a.dark, fontWeight: 600 }}>
+          {aNames}
+          <small style={small}>{loaded.sideA.displayName} · Strokes {strokesForSide(loaded, "a")}</small>
+        </span>
+        <span style={{ fontSize: "0.7rem", opacity: 0.7, paddingTop: 2 }}>v</span>
+        <span style={{ color: SIDE_TOKENS.b.dark, fontWeight: 600, textAlign: "right" }}>
+          {bNames}
+          <small style={small}>{loaded.sideB.displayName} · Strokes {strokesForSide(loaded, "b")}</small>
+        </span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 13, gap: 10 }}>
+        {showStart ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "0.7rem", fontWeight: 600, background: T.gold, color: "#3a2d00", borderRadius: 7, padding: "6px 10px" }}>
+            🚩 Start: Hole {loaded.match.start_hole}
+            {groupLabel ? ` · Group ${groupLabel}` : ""}
+          </span>
+        ) : (
+          <span />
+        )}
+        <span style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, width: 150 }}>
+          <Link href="/tournament/dashboard" data-testid="scorecard-view-scoreboard" className={FOCUS_CLASS} style={heroBtn}>
+            View scoreboard →
+          </Link>
+          <Link href="/tournament" data-testid="scorecard-tournament-home" className={FOCUS_CLASS} style={heroBtn}>
+            Tournament Home →
+          </Link>
+        </span>
       </div>
     </div>
   );

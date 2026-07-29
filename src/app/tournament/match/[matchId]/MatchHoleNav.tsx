@@ -2,6 +2,8 @@
 
 import React from "react";
 import { holePlayOrder } from "@/lib/tournament/matchplay";
+import { TOURNAMENT_TOKENS as T } from "@/lib/tournament/tokens";
+import type { HoleOutcome } from "@/lib/tournament/types";
 
 // Ported from the league scorecard's hole navigation (round/[id]/scorecard):
 // a 44px WCAG-min dot rail + a Back / Next stepper. Same touchAction hints that
@@ -10,16 +12,31 @@ import { holePlayOrder } from "@/lib/tournament/matchplay";
 // Shotgun (039): the rail renders in PLAY ORDER — rotated from `startHole` and
 // wrapping 18→1 — and Back/Next walk that sequence (endpoints at the first and
 // last played hole). startHole defaults to 1 → the ordinary 1..18 order.
+//
+// Mock v4 (.holenav): each circle is tinted by WHO WON the hole — the canonical
+// `outcomes` (MatchState.holeOutcomes, the same data HoleStrip reads): blue USA
+// (side_a) / red Canada (side_b) / split halved / faint unplayed. The current
+// hole carries a gold focus ring. Nothing is recomputed here.
+
+// The circle fill/text for a hole's outcome (unplayed = faint). Shared with the
+// current-hole override below.
+function outcomeStyle(outcome: HoleOutcome): { background: string; color: string; border: string } {
+  if (outcome === "side_a") return { background: T.usa, color: "#fff", border: T.usa };
+  if (outcome === "side_b") return { background: T.can, color: "#fff", border: T.can };
+  if (outcome === "halved")
+    return { background: `linear-gradient(135deg, ${T.usa} 0 50%, ${T.can} 50% 100%)`, color: "#fff", border: "transparent" };
+  return { background: T.soft, color: T.muted, border: T.line }; // unplayed / unresolved
+}
 
 export function HoleDotRail({
   currentHole,
   onSelect,
-  hasScore,
+  outcomes,
   startHole = 1,
 }: {
   currentHole: number;
   onSelect: (hole: number) => void;
-  hasScore: (hole: number) => boolean;
+  outcomes: ReadonlyArray<HoleOutcome>;
   startHole?: number;
 }) {
   return (
@@ -28,29 +45,33 @@ export function HoleDotRail({
         display: "flex",
         overflowX: "auto",
         gap: "6px",
-        marginBottom: "16px",
+        marginBottom: "12px",
         paddingBottom: "10px",
         touchAction: "pan-x",
       }}
     >
       {holePlayOrder(startHole).map((h) => {
-        const scored = hasScore(h);
+        const isCurrent = h === currentHole;
+        const oc = outcomeStyle(outcomes[h - 1] ?? null);
         return (
           <button
             key={h}
             data-testid={`hole-dot-${h}`}
+            aria-current={isCurrent ? "true" : undefined}
             onClick={() => onSelect(h)}
             style={{
               minWidth: "44px",
               height: "44px",
               borderRadius: "50%",
-              border: h === currentHole ? "2px solid #0c3057" : "1px solid #e2e8f0",
-              background: h === currentHole ? "#0c3057" : scored ? "#dbeafe" : "white",
-              color: h === currentHole ? "white" : scored ? "#1e40af" : "#94a3b8",
-              fontSize: "0.8rem",
-              fontWeight: "bold",
+              border: isCurrent ? `1px solid #fff` : `1px solid ${oc.border}`,
+              background: isCurrent ? "#fff" : oc.background,
+              color: isCurrent ? T.ink : oc.color,
+              boxShadow: isCurrent ? `0 0 0 3px ${T.gold}` : undefined,
+              fontSize: "0.82rem",
+              fontWeight: isCurrent ? 800 : 700,
               cursor: "pointer",
               touchAction: "manipulation",
+              flex: "0 0 auto",
             }}
           >
             {h}

@@ -72,7 +72,7 @@ test("published tournament: /tournament lists all 3 days + pairings, each match 
   // The match card links to its scorecard.
   await row.click();
   await expect(page).toHaveURL(/\/tournament\/match\/500$/);
-  await expect(page.getByTestId("match-header-500")).toBeVisible();
+  await expect(page.getByTestId("match-card-500")).toBeVisible();
 });
 
 test("Test (unpublished) tournament: /tournament shows the empty state", async ({ page, db }) => {

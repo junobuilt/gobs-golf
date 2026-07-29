@@ -70,10 +70,12 @@ test("public match scorecard: enter scores through a closeout → finish banner"
 
   await page.goto("/tournament/match/500");
 
-  // Header renders from the engine: Adam 9 up after the 9 seeded holes.
-  const header = page.getByTestId("match-header-500");
-  await expect(header).toContainText("USA 9");
-  await expect(header).toContainText("Canada 0");
+  // Status renders from matchStatus() (SSOT w/ the scoreboard): Adam 9 up after
+  // the 9 seeded holes = DORMIE (lead 9 == 9 to play — can't lose). Points were
+  // dropped from the scorecard (a scoreboard concept).
+  const status = page.getByTestId("sc-status-500");
+  await expect(status).toContainText("Dormie");
+  await expect(status).toContainText("thru 9");
 
   // F1: per-hole context (from the real loader → holes.yardage) on hole 1.
   const ctx = page.getByTestId("hole-context-500");
