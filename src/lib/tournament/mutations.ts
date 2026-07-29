@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { addDaysISO, todayLocal } from "@/lib/date";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
-import { getSessionRoundStatus } from "./queries";
+import { getDaySideAssignments, getSessionRoundStatus } from "./queries";
 import type { MatchResult, Side, SessionFormat, Tournament, TournamentMatch, TournamentSession } from "./types";
 
 // Mirrors TournamentOwnsDateError (ensureRoundShell.ts). A tournament day's
@@ -210,6 +210,67 @@ export async function setPlayerSide(
       { onConflict: "tournament_id,player_id" },
     );
   if (error) throw new Error("setPlayerSide: " + error.message);
+}
+
+// A per-day override was requested for a player who isn't in this tournament.
+// An override never grants membership (migration 038) — assign them under Sides
+// first. Distinct from the pairing-time PlayerNotAssignedToSideError so the
+// alternate-editor can show its own copy.
+export class PlayerNotInTournamentError extends Error {
+  readonly code = "player_not_in_tournament";
+  constructor(public readonly playerId: number) {
+    super(`setPlayerDaySide: player ${playerId} is not in this tournament`);
+    this.name = "PlayerNotInTournamentError";
+  }
+}
+
+// Set (or clear) a player's side FOR ONE DAY (migration 038). The sparse-override
+// contract:
+//  • `side === null` OR `side === home` → remove any override row (revert to
+//    home; keeps the table sparse — "no row = home").
+//  • `side !== home` → upsert the override (conflict key session_id,player_id).
+// Membership is required: a player with no `tournament_players` row cannot get an
+// override (throws PlayerNotInTournamentError). The home side is read from the
+// SAME row so no extra query.
+//
+// FREEZE (surfaced by the caller, not enforced here): editing an override AFTER a
+// match in this session is built does NOT re-side that built match — the match
+// row is frozen at build time (like the CH/HI snapshots). The admin rebuilds the
+// affected group; the PairingsPanel warns before applying such an edit.
+export async function setPlayerDaySide(
+  tournamentId: number,
+  sessionId: number,
+  playerId: number,
+  side: Side | null,
+): Promise<void> {
+  // Membership gate + home lookup in one read.
+  const { data: tp } = await supabase
+    .from("tournament_players")
+    .select("side")
+    .eq("tournament_id", tournamentId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  const home = (tp as { side: Side } | null)?.side ?? null;
+  if (home == null) throw new PlayerNotInTournamentError(playerId);
+
+  if (side === null || side === home) {
+    // Revert to home → remove any override row (no row = home).
+    const { error } = await supabase
+      .from("tournament_day_sides")
+      .delete()
+      .eq("session_id", sessionId)
+      .eq("player_id", playerId);
+    if (error) throw new Error("setPlayerDaySide (clear): " + error.message);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("tournament_day_sides")
+    .upsert(
+      { tournament_id: tournamentId, session_id: sessionId, player_id: playerId, side },
+      { onConflict: "session_id,player_id" },
+    );
+  if (error) throw new Error("setPlayerDaySide: " + error.message);
 }
 
 // ── Sessions (days) ─────────────────────────────────────────────────────────
@@ -468,15 +529,11 @@ async function loadSessionCore(sessionId: number): Promise<SessionCore> {
   return s;
 }
 
-async function sideAssignments(tournamentId: number): Promise<Map<number, Side>> {
-  const { data } = await supabase
-    .from("tournament_players")
-    .select("player_id, side")
-    .eq("tournament_id", tournamentId);
-  const m = new Map<number, Side>();
-  for (const tp of (data ?? []) as Array<{ player_id: number; side: Side }>) m.set(tp.player_id, tp.side);
-  return m;
-}
+// Per-day side eligibility now resolves through queries.getDaySideAssignments
+// (home overlaid with migration-038 overrides), keyed by SESSION — so an
+// alternate placed on the other side for one day validates correctly. The old
+// raw `tournament_players.side`-only helper was removed; this is the single
+// pairing-time read.
 
 // Which side a team_number is on within a session (a match's side_a vs side_b).
 async function sideOfTeamNumber(sessionId: number, teamNumber: number): Promise<Side | null> {
@@ -581,8 +638,10 @@ export async function createGroup(input: {
     throw new PlayerAlreadyGroupedError(dup);
   }
 
-  // Every present player assigned to the matching side.
-  const sideBy = await sideAssignments(session.tournament_id);
+  // Every present player eligible for the matching side ON THIS DAY (home
+  // overlaid with 038 overrides), so an alternate placed on the other side today
+  // validates correctly.
+  const sideBy = await getDaySideAssignments(session.tournament_id, input.sessionId);
   const checkSide = (ids: number[], slot: Side) => {
     for (const id of ids) {
       const s = sideBy.get(id);
@@ -764,7 +823,7 @@ export async function updateGroup(input: {
   // slot's side, and not already grouped that day.
   const slotSide = input.teamNumber != null ? await sideOfTeamNumber(input.sessionId, input.teamNumber) : null;
   const validateIncoming = async (playerId: number) => {
-    const sideBy = await sideAssignments(session.tournament_id);
+    const sideBy = await getDaySideAssignments(session.tournament_id, input.sessionId);
     const s = sideBy.get(playerId);
     if (s == null) throw new PlayerNotAssignedToSideError(playerId);
     if (slotSide != null && s !== slotSide) throw new PlayerSideMismatchError(playerId, slotSide, s);

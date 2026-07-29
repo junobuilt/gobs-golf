@@ -8,6 +8,7 @@ import {
   GroupOverfilledError,
   PlayerAlreadyGroupedError,
   PlayerNotAssignedToSideError,
+  PlayerNotInTournamentError,
   PlayerSideMismatchError,
 } from "@/lib/tournament/mutations";
 import { MatchHolesMissingError, MixedTeesInMatchError } from "@/lib/tournament/loadMatch";
@@ -19,6 +20,9 @@ export function mutationMessage(err: unknown, sideAName: string, sideBName: stri
   }
   if (err instanceof PlayerNotAssignedToSideError) {
     return "That player isn't on a side yet — assign them under Sides first.";
+  }
+  if (err instanceof PlayerNotInTournamentError) {
+    return "That player isn't in this tournament yet — assign them under Sides first.";
   }
   if (err instanceof PlayerSideMismatchError) {
     return `That player plays for ${err.actualSide === "a" ? sideAName : sideBName} and can't go on the other side.`;

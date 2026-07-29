@@ -15,7 +15,9 @@
 import { supabase } from "@/lib/supabase";
 import type {
   SessionRoundStatus,
+  Side,
   Tournament,
+  TournamentDaySide,
   TournamentPlayerJoined,
   TournamentPointAdjustment,
   TournamentSession,
@@ -55,6 +57,69 @@ export async function getTournamentPlayers(
     )
     .eq("tournament_id", tournamentId);
   return (data as unknown as TournamentPlayerJoined[] | null) ?? [];
+}
+
+// ── Per-day side resolver (migration 038) — THE canonical read ──────────────
+// A player's side FOR ONE DAY is: the sparse `tournament_day_sides` override for
+// that (session, player) if present, else their home `tournament_players.side`.
+// This mirrors the Flights `getFlightForTeam` default-to-home rule. Every
+// pairing-time consumer (createGroup/updateGroup validation, the PairingsPanel
+// pool filter) reads through here — none reads `tournament_players.side` raw for
+// a per-day decision. An override NEVER grants membership: a player with no
+// `tournament_players` row is not in the returned map even if a stray override
+// row exists (defense in depth; setPlayerDaySide also refuses to write one).
+
+// Raw override rows for one day (session) — feeds the alternate-editor UI's
+// "who differs from home" marker. Oldest first is irrelevant (one row per
+// player), so no order.
+export async function getTournamentDaySides(
+  sessionId: number,
+): Promise<TournamentDaySide[]> {
+  const { data } = await supabase
+    .from("tournament_day_sides")
+    .select("*")
+    .eq("session_id", sessionId);
+  return (data as TournamentDaySide[] | null) ?? [];
+}
+
+// The EFFECTIVE side for every participant on one day: home map overlaid with
+// that day's overrides. Overrides for non-members are ignored (the home map
+// gates membership). This batch form replaces the old raw side read at every
+// pairing-time call site.
+export async function getDaySideAssignments(
+  tournamentId: number,
+  sessionId: number,
+): Promise<Map<number, Side>> {
+  const [homeRes, overrideRes] = await Promise.all([
+    supabase
+      .from("tournament_players")
+      .select("player_id, side")
+      .eq("tournament_id", tournamentId),
+    supabase
+      .from("tournament_day_sides")
+      .select("player_id, side")
+      .eq("session_id", sessionId),
+  ]);
+  const map = new Map<number, Side>();
+  for (const tp of (homeRes.data ?? []) as Array<{ player_id: number; side: Side }>) {
+    map.set(tp.player_id, tp.side);
+  }
+  for (const o of (overrideRes.data ?? []) as Array<{ player_id: number; side: Side }>) {
+    // Only re-side an existing MEMBER — an override never grants membership.
+    if (map.has(o.player_id)) map.set(o.player_id, o.side);
+  }
+  return map;
+}
+
+// Single-player convenience over the same batch (SSOT: one resolution path).
+// null when the player is not a tournament member on that day.
+export async function getPlayerTeamForDay(
+  tournamentId: number,
+  sessionId: number,
+  playerId: number,
+): Promise<Side | null> {
+  const map = await getDaySideAssignments(tournamentId, sessionId);
+  return map.get(playerId) ?? null;
 }
 
 export async function getTournamentSessions(

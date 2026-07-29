@@ -53,6 +53,9 @@ export interface SeedData {
   tournament_matches?: Row[];
   // Phase 4 — Level-3 country-point adjustments (the dashboard reads these).
   tournament_point_adjustments?: Row[];
+  // Migration 038 — sparse per-day side overrides ("alternates"). The pairings
+  // panel reads these (getDaySideAssignments) and writes via setPlayerDaySide.
+  tournament_day_sides?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -82,6 +85,8 @@ const KNOWN_TABLES = [
   "tournament_matches",
   // Phase 4 — Level-3 country-point adjustments.
   "tournament_point_adjustments",
+  // Migration 038 — sparse per-day side overrides ("alternates").
+  "tournament_day_sides",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */

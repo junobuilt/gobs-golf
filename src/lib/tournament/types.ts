@@ -41,6 +41,19 @@ export interface TournamentPlayer {
   created_at?: string;
 }
 
+// Migration 038 — the SPARSE per-day side OVERRIDE for an "alternate". A row
+// exists ONLY when a player's side on a given day (session) differs from their
+// home `tournament_players.side`; no row → the resolver falls back to home.
+// UNIQUE (session_id, player_id). An override never grants membership.
+export interface TournamentDaySide {
+  id: number;
+  tournament_id: number;
+  session_id: number;
+  player_id: number;
+  side: Side;
+  created_at?: string;
+}
+
 // The embedded-player shape (TD2 pattern): a tournament_players row joined to
 // its `players` record so an already-assigned player still renders even after
 // being deactivated. `players` may arrive as an object or a one-element array

@@ -44,6 +44,10 @@ export interface FakeData {
   // adjustments reader/writer; absent → a select returns [] and an insert is a
   // no-op (execute short-circuits on an unknown table).
   tournament_point_adjustments?: any[];
+  // Migration 038 — sparse per-day side overrides ("alternates"). Seed [] to
+  // exercise the resolver + setPlayerDaySide; absent → a select returns [] and an
+  // insert/upsert short-circuits (unknown table).
+  tournament_day_sides?: any[];
 }
 
 export type WriteOp =

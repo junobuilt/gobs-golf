@@ -17,8 +17,8 @@ import { supabase } from "@/lib/supabase";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { computeSideStrokes } from "@/lib/tournament/matchStrokes";
 import { loadMatch, loadSessionMatches } from "@/lib/tournament/loadMatch";
-import { createGroup, deleteGroup, updateGroup } from "@/lib/tournament/mutations";
-import { getTournamentPlayers } from "@/lib/tournament/queries";
+import { createGroup, deleteGroup, setPlayerDaySide, updateGroup } from "@/lib/tournament/mutations";
+import { getDaySideAssignments, getTournamentPlayers } from "@/lib/tournament/queries";
 import { loaderMessage, mutationMessage } from "./pairingsCopy";
 import type {
   LoadedMatch,
@@ -62,8 +62,11 @@ interface TeeRow {
 }
 
 interface Roster {
-  // player_id -> { name, hi, side }
-  byId: Map<number, { name: string; hi: number | null; side: Side }>;
+  // player_id -> { name, hi, side, homeSide }. `side` is the EFFECTIVE side for
+  // THIS day (home overlaid with migration-038 overrides); `homeSide` is the
+  // tournament-wide home. `side !== homeSide` ⇒ an alternate today. The pool
+  // filter reads `side`; the alternate marker compares the two.
+  byId: Map<number, { name: string; hi: number | null; side: Side; homeSide: Side }>;
 }
 
 interface GroupView {
@@ -158,36 +161,48 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
   const [groups, setGroups] = useState<GroupView[]>([]);
   const [tees, setTees] = useState<TeeRow[]>([]);
   const [assigned, setAssigned] = useState<TournamentPlayerJoined[]>([]);
+  // Effective per-day side map (home overlaid with 038 overrides) for THIS day.
+  const [daySides, setDaySides] = useState<Map<number, Side>>(new Map());
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [altOpen, setAltOpen] = useState(false); // alternate-editor section expanded
+  // A staged per-day side change awaiting the freeze confirm (only when groups
+  // are already built for this day).
+  const [altPending, setAltPending] = useState<{ playerId: number; name: string; side: Side } | null>(null);
   const [editTarget, setEditTarget] = useState<GroupView | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ group: GroupView; hasScores: boolean } | null>(null);
 
   const format = session.format;
 
   const roster: Roster = useMemo(() => {
-    const byId = new Map<number, { name: string; hi: number | null; side: Side }>();
+    const byId = new Map<number, { name: string; hi: number | null; side: Side; homeSide: Side }>();
     for (const tp of assigned) {
       const rec = Array.isArray(tp.players) ? tp.players[0] : tp.players;
       if (!rec) continue;
-      byId.set(tp.player_id, { name: rec.display_name || rec.full_name, hi: rec.handicap_index, side: tp.side });
+      const homeSide = tp.side;
+      const side = daySides.get(tp.player_id) ?? homeSide; // effective side for this day
+      byId.set(tp.player_id, { name: rec.display_name || rec.full_name, hi: rec.handicap_index, side, homeSide });
     }
     return { byId };
-  }, [assigned]);
+  }, [assigned, daySides]);
 
   const load = useCallback(async () => {
     setLoading(true);
     // The panel owns its side roster (fetches tournament_players) rather than
-    // trusting a parent prop that may be stale after a Sides edit.
-    const [g, teeRes, players] = await Promise.all([
+    // trusting a parent prop that may be stale after a Sides edit. It also owns
+    // the EFFECTIVE per-day side map (home overlaid with 038 overrides) so the
+    // pool filter and alternate markers reflect today's alternates.
+    const [g, teeRes, players, effective] = await Promise.all([
       loadGroups(session.id),
       supabase.from("tees").select("id, color, slope_rating, course_rating, par").order("sort_order"),
       getTournamentPlayers(tournament.id),
+      getDaySideAssignments(tournament.id, session.id),
     ]);
     setGroups(g);
     setTees((teeRes.data as TeeRow[] | null) ?? []);
     setAssigned(players);
+    setDaySides(effective);
     setLoading(false);
   }, [session.id, tournament.id]);
 
@@ -254,6 +269,25 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
     }
   };
 
+  // Per-day side (alternate) editor. setPlayerDaySide handles the sparse contract
+  // (side === home → clears the override). load() re-derives the effective map.
+  const applyAlt = async (playerId: number, side: Side) => {
+    try {
+      await setPlayerDaySide(tournament.id, session.id, playerId, side);
+    } catch (err) {
+      setBanner(mutationMessage(err, tournament.side_a_name, tournament.side_b_name));
+    } finally {
+      await load();
+    }
+  };
+  // Freeze guard: once ANY group is built for this day, an override edit won't
+  // re-side already-built matches — warn before applying (mirrors CH-snapshot
+  // freeze copy). No groups yet ⇒ apply straight away.
+  const requestAlt = (playerId: number, name: string, side: Side) => {
+    if (groups.length > 0) setAltPending({ playerId, name, side });
+    else void applyAlt(playerId, side);
+  };
+
   const wrap: React.CSSProperties = {
     position: "fixed",
     inset: 0,
@@ -289,6 +323,20 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
           >
             {banner} <span style={{ fontWeight: 400 }}>(tap to dismiss)</span>
           </div>
+        )}
+
+        {/* Alternates — per-day side overrides (admin-only). Default = home
+            side; setting the other side marks the player an alternate for this
+            day and lets them be paired on that side. */}
+        {!loading && (
+          <AlternatesEditor
+            roster={roster}
+            open={altOpen}
+            onToggle={() => setAltOpen((v) => !v)}
+            sideAName={tournament.side_a_name}
+            sideBName={tournament.side_b_name}
+            onSet={requestAlt}
+          />
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", margin: "14px 0" }}>
@@ -380,6 +428,149 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
           }}
           onCancel={() => setDeleteTarget(null)}
         />
+      )}
+
+      {altPending && (
+        <DangerModal
+          title="Groups already built for this day"
+          description={
+            `Changing who ${altPending.name} plays for won't move them in matches ` +
+            `already created for this day — those pairings are locked in. You'll need ` +
+            `to rebuild ${altPending.name}'s group for the change to take effect.`
+          }
+          cannotBeUndone={false}
+          confirmLabel="Change side anyway"
+          onConfirm={async () => {
+            const p = altPending;
+            setAltPending(null);
+            await applyAlt(p.playerId, p.side);
+          }}
+          onCancel={() => setAltPending(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Alternates editor ─────────────────────────────────────────────────────────
+// Per-day side overrides. Each tournament member shows a two-way [sideA|sideB]
+// control; the EFFECTIVE side (roster.side) is highlighted. Choosing the other
+// side calls onSet (which, once groups exist, routes through the freeze confirm);
+// choosing the home side clears the override. A player whose effective side
+// differs from home is tagged "· alternate".
+function AlternatesEditor({
+  roster,
+  open,
+  onToggle,
+  sideAName,
+  sideBName,
+  onSet,
+}: {
+  roster: Roster;
+  open: boolean;
+  onToggle: () => void;
+  sideAName: string;
+  sideBName: string;
+  onSet: (playerId: number, name: string, side: Side) => void;
+}) {
+  const members = useMemo(
+    () =>
+      [...roster.byId.entries()]
+        .map(([id, rec]) => ({ id, ...rec }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [roster],
+  );
+  const altCount = members.filter((m) => m.side !== m.homeSide).length;
+  const sideName = (s: Side) => (s === "a" ? sideAName : sideBName);
+
+  const pill = (m: (typeof members)[number], s: Side) => {
+    const active = m.side === s;
+    return (
+      <button
+        key={s}
+        data-testid={`alt-${m.id}-${s}`}
+        aria-pressed={active}
+        onClick={() => {
+          if (!active) onSet(m.id, m.name, s);
+        }}
+        style={{
+          flex: 1,
+          minHeight: 36,
+          borderRadius: 7,
+          border: `1.5px solid ${active ? SIDE_COLOR[s].border : C.border}`,
+          background: active ? SIDE_COLOR[s].bg : "white",
+          color: active ? SIDE_COLOR[s].text : C.muted,
+          fontWeight: 700,
+          fontSize: "0.78rem",
+          cursor: active ? "default" : "pointer",
+          fontFamily: FONT,
+        }}
+      >
+        {sideName(s)}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 10, background: "white", overflow: "hidden" }}>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "none",
+          border: "none",
+          padding: "12px 14px",
+          cursor: "pointer",
+          fontFamily: FONT,
+          minHeight: 44,
+        }}
+      >
+        <span style={{ fontWeight: 700, color: C.navy, fontSize: "0.9rem" }}>
+          Alternates — sides for this day
+          {altCount > 0 && (
+            <span style={{ marginLeft: 8, color: C.amber, fontWeight: 700, fontSize: "0.8rem" }}>· {altCount}</span>
+          )}
+        </span>
+        <span style={{ color: C.muted, fontSize: "0.8rem" }}>{open ? "Hide" : "Edit"}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: "0 14px 12px" }}>
+          <div style={{ color: C.muted, fontSize: "0.78rem", marginBottom: 10 }}>
+            Set a player&rsquo;s side just for this day. Default is their home side; the other side marks them an alternate.
+          </div>
+          {members.length === 0 ? (
+            <div style={{ color: C.muted, fontSize: "0.85rem", padding: "4px 0" }}>
+              No players on a side yet — assign them under Sides first.
+            </div>
+          ) : (
+            members.map((m) => {
+              const isAlt = m.side !== m.homeSide;
+              return (
+                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: C.navy, fontSize: "0.86rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {m.name}
+                    </div>
+                    {isAlt && (
+                      <div data-testid={`alt-tag-${m.id}`} style={{ color: C.amber, fontSize: "0.72rem", fontWeight: 700, marginTop: 1 }}>
+                        {sideName(m.side)} today · alternate (home {sideName(m.homeSide)})
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, width: 190, flexShrink: 0 }}>
+                    {pill(m, "a")}
+                    {pill(m, "b")}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       )}
     </div>
   );
