@@ -227,6 +227,18 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // Item 5 (bug 5): lock the body while this fixed overlay is mounted so touch
+  // scroll can't chain to the page behind it (which froze the panel's own scroll
+  // on mobile, especially with the alternate picker open). Restored on unmount.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
   const goBack = useCallback(() => {
     if (typeof window !== "undefined") window.history.back();
     else onCloseRef.current();
@@ -318,6 +330,13 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
     zIndex: 900,
     background: C.bg,
     overflowY: "auto",
+    // Item 5 (bug 5): this fixed full-screen overlay is its own scroll container.
+    // With the alternate picker expanded the content grows tall and, on mobile,
+    // touch scroll chained to the body behind it and stalled ("scrollbar moves,
+    // page frozen"). Contain the overscroll and enable momentum scrolling; the
+    // body itself is locked while the panel is mounted (effect below).
+    overscrollBehavior: "contain",
+    WebkitOverflowScrolling: "touch",
     fontFamily: FONT,
   };
 
@@ -460,20 +479,21 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
       )}
 
       {altPending && (
+        // D3: no "change anyway" escape hatch once a match is built. Re-siding a
+        // built player would leave the match card on the old side while the picker
+        // shows the new one (split state, bug 6). Both buttons here only dismiss —
+        // the ONLY way to re-side is to delete + rebuild the affected group.
         <DangerModal
           title="Groups already built for this day"
           description={
-            `Changing who ${altPending.name} plays for won't move them in matches ` +
-            `already created for this day — those pairings are locked in. You'll need ` +
-            `to rebuild ${altPending.name}'s group for the change to take effect.`
+            `${altPending.name} is already in a match for this day, so their side is ` +
+            `locked in. To move them to the other side, delete and rebuild ` +
+            `${altPending.name}'s group — that's the only way to keep the card and ` +
+            `the picker in agreement.`
           }
           cannotBeUndone={false}
-          confirmLabel="Change side anyway"
-          onConfirm={async () => {
-            const p = altPending;
-            setAltPending(null);
-            await applyAlt(p.playerId, p.side);
-          }}
+          confirmLabel="Go rebuild"
+          onConfirm={() => setAltPending(null)}
           onCancel={() => setAltPending(null)}
         />
       )}

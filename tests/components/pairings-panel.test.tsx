@@ -95,7 +95,7 @@ function fourBallGroupData(): FakeData {
 afterEach(() => cleanup());
 
 describe("pairingsCopy — each typed error has its own message", () => {
-  it("maps every mutation error to distinct copy and unknown to a generic", () => {
+  it("maps every typed error to distinct copy and surfaces real detail for unknowns", () => {
     const msgs = [
       mutationMessage(new EmptyGroupError(), "USA", "Canada"),
       mutationMessage(new GroupOverfilledError("b", 3), "USA", "Canada"),
@@ -103,10 +103,28 @@ describe("pairingsCopy — each typed error has its own message", () => {
       mutationMessage(new PlayerSideMismatchError(1, "a", "b"), "USA", "Canada"),
       mutationMessage(new PlayerAlreadyGroupedError(1), "USA", "Canada"),
       mutationMessage(new GroupHasScoresError(), "USA", "Canada"),
-      mutationMessage(new Error("boom"), "USA", "Canada"),
     ];
     expect(new Set(msgs).size).toBe(msgs.length); // all distinct
     expect(msgs[1]).toMatch(/Canada/); // overfilled names the side
+
+    // Item 2 (bug 3): a non-typed error is no longer a blank generic — it surfaces
+    // the real DB detail, stripped of the internal "fn (table): " prefix.
+    expect(mutationMessage(new Error("createGroup (matches): boom"), "USA", "Canada")).toBe(
+      "Couldn't save — boom",
+    );
+    // The round_players unique-violation maps to plain-language, actionable copy.
+    expect(
+      mutationMessage(
+        new Error(
+          'createGroup (round_players): duplicate key value violates unique constraint "round_players_round_id_player_id_key"',
+        ),
+        "USA",
+        "Canada",
+      ),
+    ).toMatch(/already in this round/i);
+    // A truly empty message still falls back to the generic string.
+    expect(mutationMessage(new Error(""), "USA", "Canada")).toMatch(/Something went wrong/);
+
     expect(loaderMessage(new MixedTeesInMatchError(1, [1, 2]))).toMatch(/different tees/);
     expect(loaderMessage(new MatchHolesMissingError(1, 1))).toMatch(/no holes/);
     expect(loaderMessage(new Error("x"))).toBeNull();
@@ -217,7 +235,7 @@ describe("PairingsPanel — builder", () => {
     expect(within(row).getByText("1")).toBeTruthy();
   });
 
-  it("surfaces a banner when the create mutation fails (no silent failure)", async () => {
+  it("surfaces the SPECIFIC failure when the create mutation fails (no opaque banner)", async () => {
     fakeRef.current.setOptions({ failWrite: (op: any) => (op.table === "tournament_matches" ? { message: "boom" } : false) });
     render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: "+ Add Group" }));
@@ -226,7 +244,8 @@ describe("PairingsPanel — builder", () => {
     pick("Canada slot 1", "Bo");
     fireEvent.click(screen.getByRole("button", { name: "Save group" }));
 
-    expect(await screen.findByText(/Something went wrong/)).toBeTruthy();
+    // Item 2 (bug 3): the banner names the real reason, not "Something went wrong".
+    expect(await screen.findByText(/Couldn't save.*boom/)).toBeTruthy();
   });
 });
 
@@ -363,8 +382,9 @@ describe("PairingsPanel — Edit partial failure reload", () => {
     fireEvent.click(screen.getByRole("option", { name: "Abe" })); // swap Al → Abe (will fail to write)
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-    // Error shown inline; the tee change DID persist; the swap did NOT.
-    expect(await screen.findByText(/Something went wrong/)).toBeTruthy();
+    // Error shown inline (now names the real reason, not "Something went wrong");
+    // the tee change DID persist; the swap did NOT.
+    expect(await screen.findByText(/Couldn't save.*boom/)).toBeTruthy();
     await waitFor(() => {
       const g1TeamA = (fakeRef.current.data.round_players as any[]).filter((r) => r.team_number === 1);
       expect(g1TeamA.every((r) => r.tee_id === 2)).toBe(true); // tee persisted
@@ -373,5 +393,49 @@ describe("PairingsPanel — Edit partial failure reload", () => {
     // The reloaded modal reflects the DB: slot 1 is still Al, the tee is Blue.
     await waitFor(() => expect((screen.getByLabelText("USA slot 1") as HTMLInputElement).value).toBe("Al"));
     expect((screen.getByTestId("edit-tee") as HTMLSelectElement).value).toBe("2");
+  });
+});
+
+describe("PairingsPanel — Item 5 (bug 5): body scroll lock while mounted", () => {
+  it("locks body overflow on mount and restores it on unmount", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData());
+    document.body.style.overflow = ""; // known baseline
+    const { unmount } = render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    await screen.findByText("Al");
+    expect(document.body.style.overflow).toBe("hidden"); // locked so touch scroll can't chain to the page
+    unmount();
+    expect(document.body.style.overflow).toBe(""); // restored
+  });
+});
+
+describe("PairingsPanel — freeze guard (D3, bug 6): no 'change anyway'", () => {
+  it("a built player's day-side can't be flipped via the modal — no split state", async () => {
+    fakeRef.current = new FakeSupabase(fourBallGroupData()); // group 1 already built
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    await screen.findByText("Al"); // panel loaded
+
+    // Open the Alternates editor and try to flip Al (built into group 1, side USA)
+    // to Canada. Al starts effective side a (USA), no override.
+    fireEvent.click(screen.getByRole("button", { name: /Alternates/ }));
+    expect((await screen.findByTestId("alt-1-a")).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByTestId("alt-1-b"));
+
+    // Freeze modal appears — D3: NO "change anyway" escape hatch; copy directs to
+    // delete + rebuild the group. (Confirm button label is "Wait…" until the
+    // DangerModal delay elapses, so assert the directive copy, not the label.)
+    await screen.findByText(/Groups already built for this day/);
+    expect(screen.queryByRole("button", { name: /anyway/i })).toBeNull();
+    expect(screen.getByText(/delete and rebuild/i)).toBeTruthy();
+
+    // Opening the modal wrote NO day-side override, and Al stays on USA.
+    expect((fakeRef.current.data.tournament_day_sides ?? []).length).toBe(0);
+    expect(screen.getByTestId("alt-1-a").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("alt-1-b").getAttribute("aria-pressed")).toBe("false");
+
+    // Dismissing writes nothing either — card and picker never diverge.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText(/Groups already built/)).toBeNull());
+    expect((fakeRef.current.data.tournament_day_sides ?? []).length).toBe(0);
+    expect(screen.getByTestId("alt-1-a").getAttribute("aria-pressed")).toBe("true");
   });
 });

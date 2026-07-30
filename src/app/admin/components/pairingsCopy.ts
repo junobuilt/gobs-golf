@@ -29,6 +29,21 @@ export function mutationMessage(err: unknown, sideAName: string, sideBName: stri
   }
   if (err instanceof PlayerAlreadyGroupedError) return "That player is already in another group today.";
   if (err instanceof GroupHasScoresError) return "This group already has scores — remove them before changing it.";
+  // Not a typed domain error — surface the ACTUAL failure instead of a blank
+  // generic (the generic hid real save failures on the group builder, bug 3).
+  if (err instanceof Error) {
+    // Postgres unique-violation on round_players (round_id, player_id): a row for
+    // this player already exists in the round — e.g. a leftover unassigned
+    // (team_number = 0) row the "already grouped" guard (team_number > 0) misses.
+    if (/duplicate key|23505|round_players_round_id_player_id_key/i.test(err.message)) {
+      return "One of these players is already in this round. Remove them from their current group (or the round) first, then try again.";
+    }
+    // Any other DB/mutation error: show the real message, stripped of the
+    // internal "fnName (table): " prefix our mutations prepend, so the user
+    // sees WHAT failed instead of "Something went wrong".
+    const detail = err.message.replace(/^[A-Za-z]+ \([^)]*\):\s*/, "").trim();
+    if (detail) return `Couldn't save — ${detail}`;
+  }
   return "Something went wrong. Please try again.";
 }
 

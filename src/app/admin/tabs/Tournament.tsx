@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DangerModal from "../components/DangerModal";
 import PairingsPanel from "../components/PairingsPanel";
 import MatchOverridePanel from "../components/MatchOverridePanel";
@@ -295,14 +295,41 @@ export default function Tournament({ allPlayers }: Props) {
   const countB = rows.filter((r) => sideMap[r.id] === "b").length;
   const countU = rows.length - countA - countB;
 
+  // Per-player write serialization — the locked write-queue pattern (see
+  // RoundSetup.tsx). A rapid assign→unassign on the SAME player used to reorder
+  // (its DELETE landing after its UPSERT); and an error-triggered full reload
+  // clobbered OTHER players' not-yet-saved optimistic sides, so the banner cried
+  // wolf on writes that actually persisted (bug 2). Same-player writes now
+  // serialize; cross-player writes still run in parallel.
+  const sideWriteQueueRef = useRef<Map<number, Promise<unknown>>>(new Map());
+  const enqueueSideWrite = useCallback(
+    (playerId: number, fn: () => PromiseLike<unknown>): Promise<unknown> => {
+      const prev = sideWriteQueueRef.current.get(playerId) ?? Promise.resolve();
+      const next = prev.then(() => fn());
+      // Store an error-swallowing tail so a failed write can't wedge the chain;
+      // the real error still rejects `next` for the caller's catch.
+      sideWriteQueueRef.current.set(playerId, next.catch(() => {}));
+      return next;
+    },
+    [],
+  );
+  const drainSideWrites = useCallback(async () => {
+    await Promise.all(Array.from(sideWriteQueueRef.current.values()));
+  }, []);
+
   const assign = async (playerId: number, side: Side | null) => {
     if (!tournament) return;
+    setActionError(null);
     setSideMap((prev) => ({ ...prev, [playerId]: side ?? undefined }));
     try {
-      await setPlayerSide(tournament.id, playerId, side);
+      await enqueueSideWrite(playerId, () => setPlayerSide(tournament.id, playerId, side));
     } catch {
+      // Let every in-flight write finish first, THEN reconcile from server truth —
+      // so the reload reflects what actually persisted instead of overwriting
+      // other players' still-in-flight optimistic assignments.
+      await drainSideWrites();
       setActionError("Couldn't save that side assignment. Please try again.");
-      await load(); // reconcile on failure
+      await load();
     }
   };
 
