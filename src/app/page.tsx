@@ -580,10 +580,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Tournament hero — self-contained; renders NULL (homepage byte-identical)
-          unless a live, un-ended tournament exists. Taps through to /tournament. */}
-      <TournamentHero />
-
       <div style={{ background: "linear-gradient(135deg, #0c3057, #0f4a7a)", borderRadius: "16px", padding: "24px", color: "white", marginBottom: "24px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
         <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 800 }}>Good Ole Boys</h2>
         <p style={{ opacity: 0.8, fontSize: "0.85rem", marginBottom: "20px", marginTop: "4px" }}>{playerCount} Players · Semiahmoo GCC</p>
@@ -600,6 +596,11 @@ export default function HomePage() {
           </Link>
         </div>
       </div>
+
+      {/* Tournament hero — self-contained; renders NULL (homepage byte-identical)
+          unless tournament mode is on. Sits BELOW the GOBS card (spec 2, item 3).
+          Taps through to /tournament. */}
+      <TournamentHero />
 
       <h3 style={{ color: "#0c3057", fontSize: "1rem", marginBottom: "14px", fontWeight: 700 }}>Today's Scorecards / Teams</h3>
 
