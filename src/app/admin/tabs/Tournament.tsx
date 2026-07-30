@@ -526,11 +526,15 @@ export default function Tournament({ allPlayers }: Props) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
+          {/* Non-destructive archive (sets ended_on + is_active=false; deletes
+              nothing). Neutral styling — NOT red/danger — so it doesn't read as a
+              second delete. The only destructive path is the typed-confirm
+              teardown in the Danger zone below. */}
           <button
-            style={{ ...primaryBtn, background: "white", color: C.red, border: `1.5px solid ${C.red}` }}
+            style={{ ...primaryBtn, background: "white", color: C.navy, border: `1.5px solid ${C.border}` }}
             onClick={() => setEndOpen(true)}
           >
-            End Tournament
+            End &amp; Archive Tournament
           </button>
         </div>
       </div>
@@ -918,9 +922,9 @@ export default function Tournament({ allPlayers }: Props) {
 
       {endOpen && (
         <DangerModal
-          title="End this tournament?"
-          description={`${tournament.name} will be closed and archived.`}
-          confirmLabel="End Tournament"
+          title="End & archive this tournament?"
+          description={`${tournament.name} will be closed and archived. Its rounds, scores, and pairings are kept — nothing is deleted.`}
+          confirmLabel="End & Archive"
           onConfirm={async () => {
             setEndOpen(false);
             try {
