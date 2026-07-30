@@ -74,7 +74,7 @@ export default function TournamentDashboardPage() {
   return (
     <Shell>
       <CupHero
-        eyebrow={`🏁 Tournament · Day ${dayNo} of ${data.days.length}`}
+        eyebrow={`🏆 Scoreboard · Day ${dayNo} of ${data.days.length}`}
         title={tournament.name}
         bar={bar}
         showPointsInPlay

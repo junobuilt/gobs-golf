@@ -21,7 +21,7 @@ import { matchStatus } from "@/lib/tournament/matchStatus";
 import { CupHero } from "@/components/tournament/CupHero";
 import { TournamentMatchCard } from "@/components/tournament/TournamentMatchCard";
 import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS } from "@/lib/tournament/tokens";
-import { getStoredPlayerId, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
+import { getStoredPlayerId, getStoredPlayerName, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
 import type { SessionFormat, Tournament } from "@/lib/tournament/types";
 
 const FORMAT_LABEL: Record<SessionFormat, string> = {
@@ -54,21 +54,25 @@ function currentDayNumber(days: DashboardDay[], today: string): number {
 export default function TournamentLandingPage() {
   const [state, setState] = useState<LandingState>({ kind: "loading" });
   const [storedId, setStoredId] = useState<number | null>(null);
+  const [storedName, setStoredName] = useState<string | null>(null);
 
   const doLoad = useCallback(async () => {
     setStoredId(getStoredPlayerId());
+    setStoredName(getStoredPlayerName());
     setState(await loadLanding());
   }, []);
 
   useEffect(() => { void doLoad(); }, [doLoad]);
 
-  const pickPlayer = useCallback((id: number) => {
-    setStoredPlayerId(id);
+  const pickPlayer = useCallback((id: number, name?: string) => {
+    setStoredPlayerId(id, name ?? null);
     setStoredId(id);
+    setStoredName(name ?? null);
   }, []);
   const switchPlayer = useCallback(() => {
     clearStoredPlayerId();
     setStoredId(null);
+    setStoredName(null);
   }, []);
 
   if (state.kind === "loading") {
@@ -97,7 +101,7 @@ export default function TournamentLandingPage() {
   return (
     <Shell>
       <CupHero
-        eyebrow={`🏁 Tournament · Day ${dayNo} of ${data.days.length}`}
+        eyebrow={`🏁 Tournament Home · Day ${dayNo} of ${data.days.length}`}
         title={tournament.name}
         bar={bar}
       >
@@ -108,7 +112,7 @@ export default function TournamentLandingPage() {
         </div>
       </CupHero>
 
-      <DeviceMemoryPanel days={data.days} today={today} tournamentId={tournament.id} storedId={storedId} onPick={pickPlayer} onSwitch={switchPlayer} />
+      <DeviceMemoryPanel days={data.days} today={today} tournamentId={tournament.id} storedId={storedId} storedName={storedName} onPick={pickPlayer} onSwitch={switchPlayer} />
 
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.muted, margin: "20px 4px 9px" }}>Schedule &amp; pairings</div>
       {data.days.map((day) => (
@@ -124,6 +128,7 @@ function DeviceMemoryPanel({
   today,
   tournamentId,
   storedId,
+  storedName,
   onPick,
   onSwitch,
 }: {
@@ -131,7 +136,8 @@ function DeviceMemoryPanel({
   today: string;
   tournamentId: number;
   storedId: number | null;
-  onPick: (playerId: number) => void;
+  storedName: string | null;
+  onPick: (playerId: number, name?: string) => void;
   onSwitch: () => void;
 }) {
   const roster = tournamentPlayersFromDays(days.map((d) => d.matches));
@@ -164,7 +170,7 @@ function DeviceMemoryPanel({
 
   const pickFromFullRoster = useCallback(
     (p: { playerId: number; displayName: string }) => {
-      if (participantIds.has(p.playerId)) onPick(p.playerId);
+      if (participantIds.has(p.playerId)) onPick(p.playerId, p.displayName);
       else setNotInMsg("You’re not in this tournament yet — ask the admin to add you.");
     },
     [participantIds, onPick],
@@ -181,7 +187,7 @@ function DeviceMemoryPanel({
         <div style={{ fontWeight: 800, color: T.usaInk, marginBottom: 8 }}>Who are you?</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {roster.map((p) => (
-            <button key={p.playerId} data-testid={`whoami-${p.playerId}`} onClick={() => onPick(p.playerId)} className={FOCUS_CLASS} style={nameBtn}>{p.displayName}</button>
+            <button key={p.playerId} data-testid={`whoami-${p.playerId}`} onClick={() => onPick(p.playerId, p.displayName)} className={FOCUS_CLASS} style={nameBtn}>{p.displayName}</button>
           ))}
         </div>
 
@@ -206,13 +212,15 @@ function DeviceMemoryPanel({
     );
   }
 
-  const storedName = roster.find((p) => p.playerId === storedId)?.displayName ?? "you";
+  // Prefer the name the user tapped (device memory), then the match-roster
+  // lookup; only if BOTH are absent do we drop the name entirely — never "you".
+  const resolvedName = storedName ?? roster.find((p) => p.playerId === storedId)?.displayName ?? null;
   const nearest = findNearestMatchForPlayer(days, storedId, today);
 
   return (
     <div data-testid="device-identity" style={{ marginBottom: 4 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-        <span style={{ fontWeight: 700, color: T.usaInk }}>You’re {storedName}</span>
+        <span style={{ fontWeight: 700, color: T.usaInk }}>{resolvedName ? `You’re ${resolvedName}` : "You’re all set"}</span>
         <button data-testid="switch-player" onClick={onSwitch} className={FOCUS_CLASS} style={{ background: "transparent", border: "none", color: "#1a5a8c", fontWeight: 600, cursor: "pointer", fontSize: "0.82rem" }}>Not you? Switch player</button>
       </div>
       {nearest ? (
