@@ -551,6 +551,40 @@ output **can only match or beat** the old engine.
 
 ---
 
+### Tournament cup verdict = `cupOutcome()` (SSOT)
+
+The win/retain/in-progress verdict is owned by ONE pure helper,
+`cupOutcome()` in `src/lib/tournament/cup.ts`. Every surface's cup-state
+caption/banner reads it — never a positional or static label (the go-live P0
+bug was a static "holder retains" caption in `PointsBar` that ignored the
+points). Inputs: points per side, **live `holder_side` from the DB** (never
+assume Canada; may be null), `total` (current match count), `decided`.
+**Dynamic thresholds** off the current count — `winLine = total/2 + 0.5`,
+`retainLine = total/2`; never hardcode 8 / 4.5 / 4. **Evaluation order:**
+`CHALLENGER_WINS` (challenger ≥ winLine) → `HOLDER_WINS` (holder ≥ winLine =
+outright majority) → `HOLDER_RETAINS` (challenger's max-reachable
+`challenger + remaining×1 < winLine`; a live match can still yield a full
+point) → else `IN_PROGRESS`. It can decide EARLY (clinch with dead rubbers
+live) — do NOT lock scoring on decision. Null holder = outright win only, a tie
+stays undecided. Guarded by the acceptance table in `cup.test.ts` and the
+cross-surface verdict-equality test in `tournament-cup-surfaces.test.tsx`.
+
+### Greensomes team handicap = 60/40
+
+Greensomes (tournament alternate-shot) team handicap = **60% of the LOWER
+course handicap + 40% of the higher**, rounded to a whole number
+(`Math.round`). It is `greensomesTeamHandicap()` in `matchplay.ts` — the sole
+path (the old half-of-combined convention was removed). Both the engine and
+every display/preview read this one function; never reimplement it.
+
+### CC routes ALL questions to chat (mobile)
+
+Standing rule (restated): Claude Code never uses `AskUserQuestion` or any
+interactive desktop prompt — those block a mobile session and never reach
+Jonathan. Route every clarifying question to the chat / Dispatch reply path.
+
+---
+
 ## Dangerous action pattern
 
 Used consistently for: deactivate player, edit completed round, end round

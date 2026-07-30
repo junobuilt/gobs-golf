@@ -26,6 +26,64 @@ export function formatCupPoints(n: number): string {
   return neg ? `−${body}` : body;
 }
 
+// ── Cup verdict (SSOT) ───────────────────────────────────────────────────────
+// The ONE helper that turns points → cup state. Every surface's win/retain
+// caption reads THIS (never a positional/static label). Thresholds are dynamic
+// off the current match count; `holder_side` is live from the DB (never assume a
+// side). A live match can still yield up to 1 pt to a side, so the challenger's
+// max-reachable uses `remaining × 1`.
+export type CupState = "IN_PROGRESS" | "CHALLENGER_WINS" | "HOLDER_WINS" | "HOLDER_RETAINS";
+
+export interface CupVerdict {
+  state: CupState;
+  winnerSide: Side | null; // the side that wins/retains; null while in progress
+  label: string | null; // "USA WINS THE CUP." / "CANADA RETAINS THE CUP." / null
+}
+
+export function cupOutcome(input: {
+  pointsA: number;
+  pointsB: number;
+  sideAName: string;
+  sideBName: string;
+  holderSide: Side | null;
+  total: number;
+  decided: number;
+}): CupVerdict {
+  const { pointsA, pointsB, sideAName, sideBName, holderSide, total, decided } = input;
+  const { toWin: winLine } = cupThresholds(total); // total/2 + 0.5
+  const remaining = Math.max(0, total - decided);
+  const nameOf = (s: Side) => (s === "a" ? sideAName : sideBName);
+  const winLabel = (s: Side) => `${nameOf(s)} WINS THE CUP.`;
+
+  // No holder set (safety net — holder is set at go-live). No retain concept:
+  // a side wins outright at the win line; a tie/short stays undecided.
+  if (holderSide == null) {
+    if (pointsA >= winLine) return { state: "CHALLENGER_WINS", winnerSide: "a", label: winLabel("a") };
+    if (pointsB >= winLine) return { state: "CHALLENGER_WINS", winnerSide: "b", label: winLabel("b") };
+    return { state: "IN_PROGRESS", winnerSide: null, label: null };
+  }
+
+  const challengerSide: Side = holderSide === "a" ? "b" : "a";
+  const holderPts = holderSide === "a" ? pointsA : pointsB;
+  const challengerPts = challengerSide === "a" ? pointsA : pointsB;
+  const challengerMax = challengerPts + remaining; // a live match can still give the challenger up to 1
+
+  // Order (canonical): challenger win → holder outright majority → holder safe
+  // (retain) → still in progress. Holder "majority" = points > half = ≥ winLine
+  // (points move in ½ steps). Retain = the challenger can no longer reach the
+  // win line — the dead-tie case (N/2–N/2) is its canonical instance.
+  if (challengerPts >= winLine) {
+    return { state: "CHALLENGER_WINS", winnerSide: challengerSide, label: winLabel(challengerSide) };
+  }
+  if (holderPts >= winLine) {
+    return { state: "HOLDER_WINS", winnerSide: holderSide, label: winLabel(holderSide) };
+  }
+  if (challengerMax < winLine) {
+    return { state: "HOLDER_RETAINS", winnerSide: holderSide, label: `${nameOf(holderSide)} RETAINS THE CUP.` };
+  }
+  return { state: "IN_PROGRESS", winnerSide: null, label: null };
+}
+
 export interface CupBar {
   sideAName: string;
   sideBName: string;

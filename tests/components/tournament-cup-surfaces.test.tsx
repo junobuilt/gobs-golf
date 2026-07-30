@@ -150,3 +150,34 @@ describe("(b) matchStatus string + pts agree across the three surfaces", () => {
     expect(boardStatus).toBe("2 UP");
   });
 });
+
+describe("(c) the cup VERDICT is identical across the three surfaces (SSOT)", () => {
+  it("USA clinches → '🏆 USA WINS THE CUP.' on Home / Tournament Home / Scoreboard", async () => {
+    const flat = (g: number) => Object.fromEntries(Array.from({ length: 18 }, (_, i) => [i + 1, g]));
+    const decidedUSA = (id: number): LoadedMatch =>
+      makeLoaded({ id, format: "singles_match", a: [{ playerId: id * 10 + 1, ch: 0, scored: flat(3) }], b: [{ playerId: id * 10 + 2, ch: 0, scored: flat(5) }] });
+    // 3 matches, all decided USA → USA 3 vs 0, win line 2 → USA wins the cup.
+    mocks.loadSessionMatches.mockImplementation(async (id: number) =>
+      id === 9 ? [decidedUSA(601), decidedUSA(602)] : [decidedUSA(603)],
+    );
+
+    const read = () => screen.getByTestId("cup-verdict").textContent;
+
+    await renderSurface(<TournamentHero />);
+    const home = read();
+    cleanup();
+
+    await renderSurface(<TournamentLandingPage />);
+    const thome = read();
+    cleanup();
+
+    await renderSurface(<TournamentDashboardPage />);
+    const board = read();
+    cleanup();
+
+    expect(home).toContain("USA WINS THE CUP.");
+    // Identical string on all three surfaces (from the one cupOutcome()).
+    expect(thome).toBe(home);
+    expect(board).toBe(home);
+  });
+});

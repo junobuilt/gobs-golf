@@ -11,7 +11,7 @@
 
 import React from "react";
 import { TOURNAMENT_TOKENS as T } from "@/lib/tournament/tokens";
-import { formatCupPoints, type CupBar } from "@/lib/tournament/cup";
+import { formatCupPoints, cupOutcome, type CupBar } from "@/lib/tournament/cup";
 
 const pct = (points: number, total: number): string =>
   total > 0 ? `${Math.max(0, Math.min(100, (points / total) * 100))}%` : "0%";
@@ -37,6 +37,13 @@ function HolderCaption({ name, toRetain }: { name: string; toRetain: number }) {
 export function PointsBar({ bar, showPointsInPlay = false }: { bar: CupBar; showPointsInPlay?: boolean }) {
   const { sideAName, sideBName, pointsA, pointsB, total, decided, liveNow, pointsInPlay, toWin, toRetain, holderSide } = bar;
   const winCaption = `${formatCupPoints(toWin)} to win the cup`;
+
+  // The canonical verdict (SSOT). When decided, it REPLACES the instructional
+  // captions with the win/retain banner — the captions were a static holder-
+  // retains label that ignored the points (the go-live cup-verdict bug).
+  const verdict = cupOutcome({ pointsA, pointsB, sideAName, sideBName, holderSide, total, decided });
+  const verdictColor =
+    verdict.winnerSide === "a" ? T.usaDark : verdict.winnerSide === "b" ? T.canDark : "#fff";
 
   const capU =
     holderSide === "a" ? <HolderCaption name={sideAName} toRetain={toRetain} /> : winCaption;
@@ -103,11 +110,22 @@ export function PointsBar({ bar, showPointsInPlay = false }: { bar: CupBar; show
         <div aria-hidden style={{ position: "absolute", top: -3, bottom: -3, left: "50%", width: 3, background: T.gold, boxShadow: "0 0 0 1px rgba(0,0,0,0.25)", zIndex: 3 }} />
       </div>
 
-      {/* Captions: to-win on the challenger, holder + retain on the holder. */}
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 10 }}>
-        <div data-testid="pointsbar-cap-a" style={{ fontSize: 11, lineHeight: 1.35, textAlign: "left", color: "#bcd6ff" }}>{capU}</div>
-        <div data-testid="pointsbar-cap-c" style={{ fontSize: 11, lineHeight: 1.35, textAlign: "right", color: "#ffc0c9" }}>{capC}</div>
-      </div>
+      {/* Decided → the verdict banner (SSOT: cupOutcome). Otherwise the
+          instructional captions (to-win on the challenger, holder + retain on
+          the holder). */}
+      {verdict.state !== "IN_PROGRESS" ? (
+        <div
+          data-testid="cup-verdict"
+          style={{ textAlign: "center", marginTop: 9, fontWeight: 800, fontSize: 14, letterSpacing: "0.01em", color: verdictColor }}
+        >
+          <span style={{ color: T.gold }}>🏆</span> {verdict.label}
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 10 }}>
+          <div data-testid="pointsbar-cap-a" style={{ fontSize: 11, lineHeight: 1.35, textAlign: "left", color: "#bcd6ff" }}>{capU}</div>
+          <div data-testid="pointsbar-cap-c" style={{ fontSize: 11, lineHeight: 1.35, textAlign: "right", color: "#ffc0c9" }}>{capC}</div>
+        </div>
+      )}
 
       {/* Progress line. */}
       <div data-testid="pointsbar-midline" style={{ textAlign: "center", fontSize: 11, marginTop: 9, opacity: 0.9 }}>

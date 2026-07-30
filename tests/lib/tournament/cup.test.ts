@@ -5,7 +5,7 @@
 // tournament_matches) — a league round cannot inflate it.
 
 import { describe, it, expect } from "vitest";
-import { cupThresholds, formatCupPoints, deriveCupBar } from "@/lib/tournament/cup";
+import { cupThresholds, formatCupPoints, deriveCupBar, cupOutcome } from "@/lib/tournament/cup";
 import type { DashboardData } from "@/lib/tournament/loadDashboard";
 import { makeLoaded } from "../../support/matchFixture";
 import type { LoadedMatch, Tournament, TournamentSession } from "@/lib/tournament/types";
@@ -94,5 +94,51 @@ describe("deriveCupBar", () => {
   it("honors the holder side for the retain line (holder a)", () => {
     const bar = deriveCupBar(dashboard([decidedUSA(1)], { a: 1, b: 0 }), tournament({ holder_side: "a" }));
     expect(bar.holderSide).toBe("a");
+  });
+});
+
+describe("cupOutcome — the canonical verdict (SSOT)", () => {
+  const base = { sideAName: "USA", sideBName: "Canada", holderSide: "b" as const, total: 8 };
+  const at = (pointsA: number, pointsB: number, decided: number) =>
+    cupOutcome({ ...base, pointsA, pointsB, decided });
+
+  it("acceptance table — holder = Canada, 8 matches, win line 4.5", () => {
+    expect(at(4.0, 2.0, 6)).toMatchObject({ state: "IN_PROGRESS", winnerSide: null });
+    expect(at(5.0, 2.0, 7)).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "a", label: "USA WINS THE CUP." });
+    expect(at(5.0, 3.0, 8)).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "a", label: "USA WINS THE CUP." });
+    expect(at(4.0, 4.0, 8)).toMatchObject({ state: "HOLDER_RETAINS", winnerSide: "b", label: "Canada RETAINS THE CUP." });
+    expect(at(4.5, 3.5, 8)).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "a", label: "USA WINS THE CUP." });
+    expect(at(3.0, 5.0, 8)).toMatchObject({ state: "HOLDER_WINS", winnerSide: "b", label: "Canada WINS THE CUP." });
+  });
+
+  it("dynamic thresholds — 6 matches → win line auto-moves to 3.5", () => {
+    const six = { ...base, total: 6 };
+    // Challenger 3.5 clinches at 6 matches (was short of the 8-match 4.5 line).
+    expect(cupOutcome({ ...six, pointsA: 3.5, pointsB: 1.5, decided: 5 })).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "a" });
+    // 3.0 with matches still live → still reachable both ways → in progress.
+    expect(cupOutcome({ ...six, pointsA: 3.0, pointsB: 1.0, decided: 4 })).toMatchObject({ state: "IN_PROGRESS" });
+    // 3–3 at the end → holder retains.
+    expect(cupOutcome({ ...six, pointsA: 3.0, pointsB: 3.0, decided: 6 })).toMatchObject({ state: "HOLDER_RETAINS", winnerSide: "b" });
+  });
+
+  it("decide-early + max-reachable uses remaining × 1 (a live match can swing a full point)", () => {
+    // Holder clinches the retain with a dead rubber STILL live: USA 3.0, Canada
+    // 4.0, 7 decided (1 live). USA max = 3.0 + 1 = 4.0 < 4.5 → RETAIN now.
+    expect(at(3.0, 4.0, 7)).toMatchObject({ state: "HOLDER_RETAINS", winnerSide: "b" });
+    // USA 3.5 with 1 live can still reach 4.5 → NOT yet decided. (A ×0.5 bug here
+    // would wrongly retain at max 4.0.)
+    expect(at(3.5, 3.5, 7)).toMatchObject({ state: "IN_PROGRESS" });
+  });
+
+  it("reads the LIVE holder side — holder a (not Canada)", () => {
+    const holderA = { sideAName: "USA", sideBName: "Canada", holderSide: "a" as const, total: 8 };
+    expect(cupOutcome({ ...holderA, pointsA: 4.0, pointsB: 4.0, decided: 8 })).toMatchObject({ state: "HOLDER_RETAINS", winnerSide: "a", label: "USA RETAINS THE CUP." });
+    expect(cupOutcome({ ...holderA, pointsA: 2.0, pointsB: 5.0, decided: 8 })).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "b", label: "Canada WINS THE CUP." });
+  });
+
+  it("null holder (safety net) — outright win only; a tie stays undecided", () => {
+    const none = { sideAName: "USA", sideBName: "Canada", holderSide: null, total: 8 };
+    expect(cupOutcome({ ...none, pointsA: 4.5, pointsB: 3.5, decided: 8 })).toMatchObject({ state: "CHALLENGER_WINS", winnerSide: "a" });
+    expect(cupOutcome({ ...none, pointsA: 4.0, pointsB: 4.0, decided: 8 })).toMatchObject({ state: "IN_PROGRESS", winnerSide: null });
   });
 });
