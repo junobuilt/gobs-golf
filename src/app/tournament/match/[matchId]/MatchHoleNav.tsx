@@ -53,6 +53,13 @@ export function HoleDotRail({
       {holePlayOrder(startHole).map((h) => {
         const isCurrent = h === currentHole;
         const oc = outcomeStyle(outcomes[h - 1] ?? null);
+        // A PLAYED hole always wears its outcome color — even when it's the
+        // current hole (the gold focus ring alone marks "current"). Only an
+        // UNplayed current hole gets the neutral white chip. This is what makes
+        // the shotgun start hole turn blue/red once scored instead of staying
+        // white under the ring.
+        const played = (outcomes[h - 1] ?? null) != null;
+        const showNeutral = isCurrent && !played;
         return (
           <button
             key={h}
@@ -63,9 +70,9 @@ export function HoleDotRail({
               minWidth: "44px",
               height: "44px",
               borderRadius: "50%",
-              border: isCurrent ? `1px solid #fff` : `1px solid ${oc.border}`,
-              background: isCurrent ? "#fff" : oc.background,
-              color: isCurrent ? T.ink : oc.color,
+              border: showNeutral ? `1px solid #fff` : `1px solid ${oc.border}`,
+              background: showNeutral ? "#fff" : oc.background,
+              color: showNeutral ? T.ink : oc.color,
               boxShadow: isCurrent ? `0 0 0 3px ${T.gold}` : undefined,
               fontSize: "0.82rem",
               fontWeight: isCurrent ? 800 : 700,

@@ -504,20 +504,37 @@ function MatchCard({
 }) {
   // Single source of truth: recompute the canonical state locally from the same
   // pure engine the loader calls, over the optimistic scores. Never our own math.
+  // `state` is LIVE (updates on every stepper tap) so the status line + dots
+  // respond instantly.
   const state = useMemo(() => recomputeState(loaded, scores), [loaded, scores]);
   const [reviewOpen, setReviewOpen] = useState(false);
 
+  // Spec 2 item 1 — the terminal "match over" banner must NOT fire on every
+  // keystroke while a 60–80 player is still tapping strokes onto the current
+  // hole (it flashed the instant the running total crossed the close-out margin,
+  // reading as "input locked"). Defer the banner to a SETTLED snapshot of the
+  // scores: reset a short timer on each change, only commit ~900ms after tapping
+  // stops. Crossing-then-uncrossing the margin within the window never shows it;
+  // it appears once the hole entry settles and the match is genuinely closed.
+  const [settledScores, setSettledScores] = useState(scores);
+  useEffect(() => {
+    const t = setTimeout(() => setSettledScores(scores), 900);
+    return () => clearTimeout(t);
+  }, [scores]);
+  const settledState = useMemo(() => recomputeState(loaded, settledScores), [loaded, settledScores]);
+
   const holeMeta = loaded.holes[hole - 1];
-  const banner = finishBanner(state, loaded);
+  // Banner + its notes read the SETTLED state so they never flicker mid-entry.
+  const banner = finishBanner(settledState, loaded);
   // A1 — did a post-decision edit re-decide the match? Compare the server-
-  // committed result (loaded.state, from the last load/refresh) against the live
-  // recompute over the optimistic scores. Both must already be COMPLETE — a normal
-  // first completion is not a "change". Derived from the two MatchStates the card
-  // already holds; no engine change, no stored history.
+  // committed result (loaded.state, from the last load/refresh) against the
+  // settled recompute. Both must already be COMPLETE — a normal first completion
+  // is not a "change". Derived from the MatchStates the card already holds; no
+  // engine change, no stored history.
   const resultChanged =
     loaded.state.status === "complete" &&
-    state.status === "complete" &&
-    loaded.state.result !== state.result;
+    settledState.status === "complete" &&
+    loaded.state.result !== settledState.result;
   // Status from the LIVE recompute (same helpers the loader + scoreboard use):
   // matchStatus reads .state + .resolved, so feed it the live state and a live
   // resolved (resolveMatchResult over the same match row loadMatch uses). This
@@ -703,7 +720,7 @@ function MatchCard({
         <div style={{ marginBottom: "10px" }}>
           <MatchClosedBanner
             banner={banner}
-            scoredBeyond={state.scoredBeyondCloseout}
+            scoredBeyond={settledState.scoredBeyondCloseout}
             resultChanged={resultChanged}
             onRequestReopen={undefined /* Phase 4 wires admin override to this hook */}
           />

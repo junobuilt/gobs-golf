@@ -7,7 +7,7 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act, within, waitFor } from "@testing-library/react";
 import { makeLoaded } from "../support/matchFixture";
 
 const mocks = vi.hoisted(() => ({
@@ -301,8 +301,10 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
       await flush();
     });
 
-    // Banner auto-cleared (derived from the recompute); inputs still editable.
-    expect(screen.queryByTestId("finish-banner")).not.toBeInTheDocument();
+    // Banner auto-clears once the correction SETTLES (the terminal banner is
+    // debounced ~900ms so it never flickers mid-tap — spec 2 item 1); inputs
+    // stay editable throughout.
+    await waitFor(() => expect(screen.queryByTestId("finish-banner")).not.toBeInTheDocument(), { timeout: 2000 });
     expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
   });
 
@@ -333,9 +335,67 @@ describe("match scorecard — soft closeout keeps inputs correctable", () => {
       await flush();
     });
 
-    // Its banner cleared; inputs stay editable.
-    expect(within(screen.getByTestId("match-card-500")).queryByTestId("finish-banner")).not.toBeInTheDocument();
+    // Its banner clears once the correction settles (debounced ~900ms); inputs
+    // stay editable.
+    await waitFor(
+      () => expect(within(screen.getByTestId("match-card-500")).queryByTestId("finish-banner")).not.toBeInTheDocument(),
+      { timeout: 2000 },
+    );
     expect(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")).toBeInTheDocument();
+  });
+});
+
+// ── Spec 2 item 1: the terminal banner must not fire mid-entry ───────────────
+describe("match scorecard — terminal banner is debounced (spec 2 item 1)", () => {
+  it("does not fire on the deciding tap mid-entry; appears only once the hole entry settles", async () => {
+    const { a, b } = winMap(range(1, 9), [], []); // A wins holes 1-9 → 9 up thru 9 (NOT closed)
+    b[10] = 6; // B scored on hole 10; A's hole 10 left unscored → hole 10 unresolved on load
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({ format: "singles_match", a: [{ playerId: 1, ch: 0, scored: a }], b: [{ playerId: 2, ch: 0, scored: b }] }),
+    );
+    await renderPage();
+    // Undecided on load (hole 10 unresolved) → no banner.
+    expect(screen.queryByTestId("finish-banner")).not.toBeInTheDocument();
+
+    // Enter A's hole-10 score → A wins the hole → 10 up with 8 to play → decided.
+    // The LIVE status reflects it, but the terminal banner must NOT fire on this
+    // keystroke (it would read as "input locked" to a player still tapping).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hole-dot-10"));
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId("player-1")).getByTestId("ball-1-plus")); // A hole 10 → 4 (par), beats B's 6
+      await flush();
+    });
+    // Debounced: not shown synchronously on the deciding tap.
+    expect(screen.queryByTestId("finish-banner")).not.toBeInTheDocument();
+    // Settles ~900ms later → the banner appears, match genuinely closed.
+    await waitFor(() => expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — USA wins"), { timeout: 2000 });
+  });
+});
+
+// ── Spec 2 item 5: the shotgun start hole (== the opening current hole) must
+//    take its played color once scored, not stay neutral under the ring ───────
+describe("match scorecard — current/start hole turns played (spec 2 item 5)", () => {
+  it("a scored current hole wears the same played color as a scored non-current hole", async () => {
+    // A wins holes 1 & 2; hole 5 unplayed. Default startHole = 1 → hole 1 is the
+    // current (start) hole AND is scored.
+    const { a, b } = winMap([1, 2], [], []);
+    mocks.loadMatch.mockResolvedValue(
+      makeLoaded({ format: "singles_match", a: [{ playerId: 1, ch: 0, scored: a }], b: [{ playerId: 2, ch: 0, scored: b }] }),
+    );
+    await renderPage();
+
+    const bgOf = (id: string) =>
+      (screen.getByTestId(id).getAttribute("style") ?? "").match(/background:\s*([^;]+)/)?.[1]?.trim() ?? "";
+
+    // The current hole is still marked current (keeps the gold ring)…
+    expect(screen.getByTestId("hole-dot-1")).toHaveAttribute("aria-current", "true");
+    // …but its fill now matches a scored NON-current hole (both USA-won) rather
+    // than the neutral chip of an unplayed hole.
+    expect(bgOf("hole-dot-1")).toBe(bgOf("hole-dot-2"));
+    expect(bgOf("hole-dot-1")).not.toBe(bgOf("hole-dot-5"));
   });
 });
 
@@ -364,8 +424,12 @@ describe("match scorecard — result-changed note on a flipped winner", () => {
       });
     }
 
-    // The swap is annotated, not silent; the banner shows the new winner.
-    expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — CANADA wins 1 up.");
+    // The swap is annotated, not silent; once the edit SETTLES (banner debounced
+    // ~900ms — spec 2 item 1) the banner shows the new winner + the changed note.
+    await waitFor(
+      () => expect(screen.getByTestId("finish-banner")).toHaveTextContent("Match over — CANADA wins 1 up."),
+      { timeout: 2000 },
+    );
     expect(screen.getByTestId("result-changed-note")).toHaveTextContent(
       "Result changed after later edits — now CANADA wins 1 up.",
     );
