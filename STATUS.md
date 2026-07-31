@@ -31,6 +31,12 @@
 
 ---
 
+## 2026-07-31 (Tournament scoring & cup — READ-ONLY code review; branch `tournament`)
+
+Senior-dev correctness review of the tournament scoring + cup logic. **No source changed.** Findings in [`docs/reviews/tournament-review-2026-07-31.md`](docs/reviews/tournament-review-2026-07-31.md): no confirmed P0; cup SSOT + engine verified sound; two **P1 HOLD-FOR-JONATHAN** durability gaps (silent non-persistent-storage fallback; tournament card lacks stale-failure reconciliation UI — both parked Item B), plus P2 cup-threshold edge questions. Nothing to fix until Jonathan reviews.
+
+---
+
 ## 2026-07-28 (Tournament SCORECARD redesign — match page to mock v4; branch `tournament`)
 
 ### Where we left off
