@@ -10,6 +10,7 @@ import {
   getBackupPinStatus,
   type BackupPinStatus,
 } from "../settings/backupActions";
+import Toggle from "@/components/admin/Toggle";
 
 interface Props {
   settings: LeagueSettings;
@@ -21,28 +22,6 @@ const C = {
   green: "#2a7a3a",
   border: "rgba(0,0,0,0.08)",
 };
-
-function Toggle({ value, onChange }: { value: boolean; onChange: () => void }) {
-  return (
-    <div
-      onClick={onChange}
-      style={{
-        width: "40px", height: "22px", borderRadius: "11px",
-        background: value ? C.green : "#d1d5db",
-        position: "relative", cursor: "pointer", flexShrink: 0,
-        transition: "background 0.2s",
-      }}
-    >
-      <div style={{
-        width: "18px", height: "18px", borderRadius: "50%", background: "white",
-        position: "absolute", top: "2px",
-        left: value ? "20px" : "2px",
-        transition: "left 0.2s",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-      }} />
-    </div>
-  );
-}
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (

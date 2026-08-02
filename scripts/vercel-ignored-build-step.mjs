@@ -28,6 +28,12 @@
 // it PROCEEDS rather than wedging deploys for a solo maintainer — a broken gate
 // is not the same as a failing test. A genuinely FAILED `ci/test` status still
 // blocks.
+//
+// PREVIEW EXEMPTION: the `ci/test` gate applies ONLY to production deploys
+// (VERCEL_ENV === "production"). Preview deploys (branch/PR builds, where
+// VERCEL_ENV is "preview" or "development") ALWAYS proceed un-gated, so
+// feature branches can ship previews without waiting on — or being blocked
+// by — the CI status. Production behaviour is unchanged.
 
 const GATE_CONTEXTS = ["ci/test"]; // commit-status contexts that must be success
 const TIMEOUT_MS = 10 * 60 * 1000;
@@ -41,6 +47,8 @@ const token = process.env.GITHUB_TOKEN;
 const proceed = (msg) => { console.log(`[deploy-gate] BUILD — ${msg}`); process.exit(1); };
 const skip = (msg) => { console.log(`[deploy-gate] SKIP — ${msg}`); process.exit(0); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+if (process.env.VERCEL_ENV !== "production") proceed("preview deploy, not gated");
 
 if (!sha) proceed("no VERCEL_GIT_COMMIT_SHA — cannot gate, failing open");
 if (!token) proceed("no GITHUB_TOKEN env var — cannot gate, failing open");

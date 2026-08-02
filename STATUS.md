@@ -2,18 +2,736 @@
 
 *Auto-maintained by Claude Code at end of each session. For session handoff. Single source of truth for "what's the state right now."*
 
-**Last updated:** 2026-06-25 (Submit-transition team-total clobber fix — the "−22" bug; NO migration)
-**Session purpose:** Bug fix — tapping **Submit Final Scores** briefly flashed an inflated team total (best-N → best-ALL, ≈3×) on the scorecard headline while leaderboard/summary stayed correct and the scorecard self-healed on remount. Root cause: `submitTeam` reseeded `roundFormatConfig` (the engine-driving state) from `rounds.format_config` (frozen LEGACY round-level blob) instead of leaving it as the round's FLIGHT config; the stale `override_holes`/`best_n` then drove a local recompute. Fix: **deleted the `setRoundFormatConfig(nextCfg)` clobber** (no DB-write or query-shape change). New cross-surface test (red→green proven) + two parked TDs (TD43 fallback write-path, TD44 headline-is-local-calc). 1013/1013 vitest, 12/12 submit-touching Playwright specs, tsc clean. **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37.**
+**Last updated:** 2026-07-29 (Fix Spec 2 — Scoreboard & Frontend: banner debounce, greeting name, homepage order, surface labels, shotgun hole color; branch `tournament`)
+**Session purpose:** **Fix Spec 2 — Scoreboard & Frontend.** Five surface fixes on `tournament` — **build complete + green; NO migration; NO deletion.** Committed as three per-file commits (`b81b58f`, `868d1b3`, `8bec4fd`); **did NOT push (Jonathan merges).** **Item 1 (P1 — eager walk-off banner):** the "match over" banner fired on every stepper tap the instant the running total crossed the close-out margin, flickering while a 60–80 player was still adjusting strokes (read as "input locked"). The terminal banner (+ its scored-beyond / result-changed notes) now derives from a **SETTLED snapshot** of the optimistic scores — a ~900ms debounce (`settledScores`/`settledState`, resets on each tap) — so crossing-then-uncrossing mid-entry never shows it; it appears once the hole entry settles and the match is genuinely closed. The LIVE `state` still drives the status line + dots instantly, so input is never blocked; no engine change. **Item 2 (P2 — "You're You"):** the Tournament Home greeting fell back to the literal "you" when the stored player wasn't a match participant (the match-derived roster couldn't name them). `deviceMemory` now also persists the tapped display name (`getStoredPlayerName` / `setStoredPlayerId(id, name)`, cleared on switch); the greeting prefers it → roster lookup → name-less "You're all set" — never "You're you". **Item 3 (P2 — homepage order):** moved `<TournamentHero/>` BELOW the "Good Ole Boys" GOBS/admin card (was above); presentation-only reorder, hero still self-gates on tournament mode. **Item 4 (P2 — Home vs Scoreboard indistinguishable):** distinct hero eyebrows — Tournament Home "🏁 Tournament Home · Day N of M", Scoreboard "🏆 Scoreboard · Day N of M"; the homepage teaser hero keeps "🏁 Tournament · Day N of M". **Item 5 (P2 — shotgun start hole never "played"):** on a shotgun the card opens on the start hole as the CURRENT hole, whose gold-ring chip forced a white fill and masked the played color even after scoring; a scored current hole now wears its outcome color (blue/red/split) while keeping the gold ring, only an UNplayed current hole stays neutral white (`MatchHoleNav`). **Sole owner of `match/[matchId]/page.tsx` + `MatchHoleNav.tsx` + their tests this round (confirmed with Jonathan — A held Item B, C admin-only).** **Tests:** +2 in `tournament-match-scorecard.test.tsx` (banner absent on the deciding tap → present after settle; current/start hole played-color equals a non-current played hole ≠ an unplayed hole); the 3 edit-then-assert banner tests now `waitFor` the settle. **Green: tsc clean · vitest 1296/1296 · Playwright 9/9 (matchScorecard + tournament + hero + landing + dashboard).** **⚠ Parallel-session hygiene:** staged ONLY my files by name across the three commits (`deviceMemory.ts`, `tournament/page.tsx`, `tournament/dashboard/page.tsx`, `page.tsx`, `match/[matchId]/page.tsx`, `MatchHoleNav.tsx`, `tournament-match-scorecard.test.tsx`); left the concurrent admin session's + `.claude/settings.local.json` untouched. **⚠ Carryover: `npm run db:backup` to fold 031–039 (+ pending 027 → 028 → 030 relays).**
 
-*Prior session (2026-06-24):* Hard 4-player cap on recommended teams — see the section below.
+*Prior session (2026-07-29) — Fix Spec 3 — Admin & Bugs (`9f5faeb`):* **Fix Spec 3 — Admin & Bugs.** Five admin/UX fixes on `tournament` — **build complete + green; NO migration; NO deletion.** **Item 2 (P1 — opaque banner, bug 3):** `createGroup` threw raw `Error("createGroup (table): <db msg>")` for non-typed failures, which `mutationMessage` swallowed into a generic "Something went wrong." It now **surfaces the real detail** (strips the internal `fn (table):` prefix → "Couldn't save — <detail>") and maps the `round_players (round_id, player_id)` unique-violation — the likely A→B cause, since the "already grouped" guard only checks `team_number > 0` and misses a leftover `team_number=0` row — to plain-language "already in this round, remove them first." (Chose option (i) per relay; transactional-RPC atomicity (ii) is a separate reviewed migration later; app-level compensating delete (iii) rejected — deletion gate.) **Item 3 (P1 — Sides unassign false error, bug 2):** the tournament Sides `assign` was fire-and-forget with no serialization, and a single write's failure ran a full `load()` that clobbered other players' in-flight optimistic sides → the banner cried wolf though writes persisted. Ported the **per-player write-queue** (locked pattern) + drain-then-reload on error; banner copy unchanged. **Item 4 (P1 — freeze "change anyway", bug 6, D3):** removed the escape hatch — once a match is built the modal only dismisses (Go rebuild / Cancel) and directs to delete+rebuild; no partial re-side, so the card side and picker side can never split. **Item 5 (P2 — scroll lock, bug 5):** the fixed full-screen `PairingsPanel` overlay chained touch scroll to the body and froze with the alternate picker open — added `overscroll-behavior:contain` + `-webkit-overflow-scrolling:touch` + a **body-scroll-lock while mounted** (restored on unmount). **Parked (logged, not built):** (D4) no duplicate alternate control on the global assignment screen — the per-day PairingsPanel control is the mechanism; and the open-Q answer — moving a non-alternate on the Day-1 alternates surface writes only a sparse `tournament_day_sides` override → affects **pairing-time eligibility for NEW groups only, cannot corrupt scoring or move a built card** (scoring reads the built match row; freeze guard protects built matches) → no guard needed, optional copy tweak left unchanged to keep the shared-file diff tight during parallel sessions. **Item 1 (P0 — one-click tournament delete) — RESOLVED, Option A:** investigation found the premise was a misread — the top button was never a delete (`endTournament` archives: sets `ended_on`+`is_active=false`, deletes nothing) and was already behind a confirm; the only destructive path is the bottom typed-confirm teardown. Kept it as the non-destructive archive but **relabeled "End & Archive Tournament" and dropped the red/danger styling** (neutral navy-on-white) so it no longer reads as a second delete; the modal now states its rounds/scores/pairings are kept — nothing is deleted. **Green: tsc clean · vitest 1297/1297 (+3: real-error surfacing, D3 no-split, Item-5 body-lock) · Playwright 60/60.** Item 5's mobile touch-freeze can't be reproduced in a desktop browser — recommend an on-device smoke; the body-lock half is unit-guarded. Staged ONLY my files (`pairingsCopy.ts`, `Tournament.tsx`, `PairingsPanel.tsx`, `pairings-panel.test.tsx`, docs); did NOT push (Jonathan merges). CLAUDE.md already carries the mobile-chat-only rule (no change needed).
 
-*Prior session (2026-06-22):* Apply Teams z-index fix + smaller-teams-first ordering — see the section below.
+*Prior session (2026-07-28) — Fix Spec 1 — Data & Scoring (`cupOutcome()` verdict FIX):* **Item A (P0, DONE):** the cup win/retain banner was wrong (read "Canada retains" at USA 5–Canada 3). **Root cause:** there was NO verdict logic — `PointsBar`'s captions were a STATIC positional label (holder side always "holds the cup / retains on a X–X tie"; challenger always "N to win"), never testing the points. **Fix:** new pure **`cupOutcome()` in `cup.ts`** = the ONE verdict helper (states `IN_PROGRESS`/`CHALLENGER_WINS`/`HOLDER_WINS`/`HOLDER_RETAINS`). Dynamic thresholds (`winLine = total/2+0.5`, never hardcoded); live `holder_side` (defensive null handling = outright-win-only, tie undecided); eval order challenger-win → holder-majority → holder-retain (via `challenger + remaining×1 < winLine`) → in-progress; decides early (clinch with dead rubbers live) without locking scoring. `PointsBar` now renders the verdict banner (`data-testid="cup-verdict"`) when decided, keeping the instructional captions while in-progress. **Tests:** full acceptance table + dynamic (6-match → 3.5) + decide-early/×1 + holder-a + null-holder in `cup.test.ts`; **cross-surface verdict-equality** (Home/Tournament Home/Scoreboard all read one `cupOutcome()`) in `tournament-cup-surfaces.test.tsx`. **Item B (P1, INVESTIGATION ONLY — held per instruction):** scorecard scoring is OPTIMISTIC (local recompute drives points + "match over" before DB confirm), but writes go through a **durable localStorage-backed retrying `WriteQueue`** (survives reload, drains on online/visibility/backstop, Sentry on terminal) — so a dropped connection alone should NOT lose scores. Most likely loss/confusion vectors: (1) scoreboard reads pure DB → showed stale until the pending write drained (the "needed a refresh, 17/18 missing" report = read-too-soon, not loss); (2) localStorage unavailable → in-memory fallback loses un-drained writes on reload (never surfaced); (3) NO pending/in-flight indicator (only a terminal-failure banner). **Recommended fixes logged for a focused follow-up after B's scorecard work:** pending-sync indicator, `isPersistent()===false` warning, scoreboard freshness refresh. **Green (my files): tsc clean · `cup.test.ts` + `tournament-cup-surfaces.test.tsx` pass (13) · cup-surface Playwright 7/7 (dashboard/landing/hero) · goldens untouched (no engine change).** **⚠ Parallel-session note:** 2 vitest files failed in the shared tree (`admin-tournament`, `pairings-panel`) from ANOTHER session's in-flight edits to `Tournament.tsx`/`pairingsCopy.ts` (error-copy change) — NOT caused by my cup/PointsBar work (those tests don't import cup/PointsBar). I staged ONLY my files (`cup.ts`, `PointsBar.tsx`, `cup.test.ts`, `tournament-cup-surfaces.test.tsx`, docs). **Did NOT push (Jonathan merges).** CLAUDE.md gained the `cupOutcome` SSOT + greensomes-60/40 + mobile-chat standing entries.
 
-*Prior session (2026-06-18):* Multi-start team recommendation engine — see the section below.
+*(Prior — Tournament SCORECARD redesign, `83918fc`):* Redesigned the tournament match scorecard (`src/app/tournament/match/[matchId]/page.tsx` + `MatchHoleNav.tsx` ONLY) to the signed-off mock v4 "Scorecard" screen — **build complete + green; NO migration.** **CONSUMES B's primitives (no parallel versions):** `tokens.ts` livery, `matchStatus.ts` (adopted → kills the shipped "Tied", shows "All Square"/"2 UP"/"Dormie"), `HoleStrip`. New local components in the page: **`ScHero`** (navy `CHROME_GRADIENT`: "Day 1 · Modified Alternate Shot" + sub-line; pairing USA-left-blue / Canada-right-red on-dark; foot = gold shotgun start-chip LEFT + two equal stacked buttons "View scoreboard →" `/tournament/dashboard` + "Tournament Home →" `/tournament`); **`sc-status`** line composed from `matchStatus` (leader name + text + thruText, colored by tone) — **computed off the LIVE recompute** (`matchStatus({...loaded, state, resolved: resolveMatchResult(state, match)})`) so it updates offline yet stays SSOT-identical to the scoreboard; **outcome-tinted nav** (`HoleDotRail` restyled: each circle tinted blue/red/split/faint by `state.holeOutcomes`, current = gold ring; shotgun rotation/wrap kept); **`TeamBlock`** (country-gradient blocks; entry = dots-above + reused `TeamHoleEntry` stepper + NET wrapped in the league `ScoreMark` notation + net term + four-ball counting arrow; chevron → shared `HoleStrip` in play order). **Format variations:** greensomes = 1 team box (strokes = collapsed 60/40 team handicap); four-ball = 2 player boxes + counting mark; singles = 1 player box (per-player match strokes). **Removed:** the "USA wins the hole" line (`hole-outcome`) + per-match "pts" (a scoreboard concept). **KEPT:** "Review 18 holes" full grid (gross+dots paper check). All write/claim/flag/offline/banner handlers + testids preserved. **Handed-off scroll fix** already shipped last session. **SSOT tests (`tournament-match-scorecard.test.tsx`):** scorecard `sc-status` === `matchStatus()` === `TournamentMatchCard` (scoreboard) for one MatchState; "All Square" not "Tied"; per-team `HoleStrip` byte-identical to the scoreboard's off the same `holeOutcomes`. **Deliberate test updates:** removed the "wins the hole" assertions; repointed the old `match-header`/`thru` assertions to `sc-status` (incl. 9-up-thru-9 now reads **Dormie**); e2e landing check → `match-card`. **Green: tsc clean · vitest 1287/1287 · goldens byte-identical (no engine touch) · tournament Playwright 10/10.** **Scope kept:** did NOT touch B's scoreboard/home/homepage or `PairingsPanel`; staged only my 5 files + STATUS.md. **⚠ Carryover: `npm run db:backup` to fold 031–039 (+ pending 027 → 028 → 030 relays). Recommend a live two-phone visual smoke of the redesigned card.**
 
-*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+*Prior session (2026-07-28) — Tournament Scoreboard & Frontend (cup PointsBar + hero to mock v4, `55002bf`):* Build the tournament READ surfaces to the signed-off mock `docs/design/gobs-ryder-mock-v4.html` — **build complete + green, committed `55002bf` + pushed; NO migration.** **(0) Shared primitives (SSOT, built once):** `tokens.ts` (USA #14509E / Canada #C8102E livery — supersedes the borrowed getTeamColor hues; USA=blue=left=side a, Canada=red=right=side b); `cup.ts` (`cupThresholds` to-win=total/2+0.5, to-retain=total/2 off the DYNAMIC created-match total; `formatCupPoints` "8½"; **`deriveCupBar` = the ONE PointsBar derivation** over `loadDashboard`→`computeTournamentStandings`); `matchStatus.ts` (canonical MatchState → approved vocabulary "All Square" / "2 UP" / "Dormie" / "3 & 2" spaced / "Halved" / "USA wins 3 & 2" — **supersedes shipped "Tied" at the DISPLAY layer**; engine still emits "AS"/"3&2", goldens untouched); components `PointsBar` / `CupHero` / `HoleStrip` (A/C/½/· cells) / `TournamentMatchCard`; `mode.ts` (the one "tournament mode publicly ON" = active+published+un-ended predicate, never throws). **(1) Scoreboard `/tournament/dashboard`:** cup hero + PointsBar (showPointsInPlay) + official USA│center│Canada rows, per-match "pts", inline chevron → HoleStrip (no separate page — replaces the C7 review link; `/review` route untouched, still reachable from the match card). **(2) Tournament Home `/tournament`:** same hero + "View Full Scoreboard →", your-match CTA, collapsible schedule (today open, others collapsed; ALL open when no day is today) using the shared card. **(3) Homepage tournament mode:** `TournamentHero` now renders CupHero + today's tournament cards (via `getTournamentMode`+`loadDashboard`); `BottomNav` (new client nav extracted from `layout.tsx`) swaps Leaderboard→Scoreboard→`/tournament/dashboard` when mode is ON. **(4) Card-split:** cup aggregation reads ONLY `tournament_matches` (structural); homepage league query already `.is("tournament_id", null)` — a league round is incapable of contributing; card-split hint added. **holder_side is READ-ONLY here** (the admin holder control shipped in Stream C's `1bca54c`); no migration, additive/reversible. **Required SSOT cross-surface tests (`tournament-cup-surfaces.test.tsx`):** identical PointsBar (score/thresholds/holder) across Home / Tournament Home / Scoreboard; identical `matchStatus` string + pts for a match on all three surfaces. **Green: tsc clean · vitest 1284/1284 · Playwright 10/10 (tournament + hero + landing + dashboard; matchScorecard + pairings unaffected).** **Coordination:** Stream C committed its own WIP mid-session (4 commits through `5d439c5`); I staged ONLY my 23 files (zero overlap with their commits) and left the tree's `.claude/settings.local.json` untouched. **⚠ Carryover: `npm run db:backup` to fold 031–039 (+ pending 027 → 028 → 030 relays).**
 
-*Prior session (2026-06-18):* Admin Money surface (F.2); migration 030 DRAFTED only, NOT applied — see the section below.
+*Prior session (2026-07-28) — Greensomes 60/40 cleanup + pairings polish + scorecard scroll fix (`5d439c5`):* Greensomes correctness + pairings-screen polish on `tournament` — **build complete + green; NO migration.** **Greensomes 60/40:** the formula was already correct + SSOT-shared (`greensomesTeamHandicap` = `Math.round(0.6·low + 0.4·high)`, used by BOTH the engine `sideHoleNets` AND the display/preview `computeSideStrokes` → `collapsedHandicap`), so NO math changed. Removed the now-dead `half_combined` branch + the `GREENSOMES_TEAM_HANDICAP_METHOD` toggle + the `computeTeamHandicap` import so 60/40 is the sole path — **behaviorally byte-identical, 27 goldens unchanged.** Added golden pairs (5/15→9, 10/20→14, 7/12→9, 3/8→5, 9/9→9, 0/0→0, rounding + order-independence + null-partner) and an **SSOT agreement test** (`greensomesHandicap.test.ts`: displayed `collapsedHandicap` === `greensomesTeamHandicap` === pairings preview `aCollapsed` === the side match strokes the engine allocates). Dashboard team-CH intentionally NOT added (data-level test suffices). **Pairings polish (`PairingsPanel`):** labeled the bare per-player stroke numbers with a "Strokes" column header; added a concise inline caption on greensomes cards ("Team CH 14 = 60% × 10 + 40% × 20"); **fixed back-nav** — `history.pushState` marker on open + `popstate` close so the device Back button returns to Tournament setup instead of dead-ending off `/admin` to the homepage, and relabeled "← Days" → "‹ Admin · Tournament" (the header button routes through `history.back()` so both paths agree). **Scorecard scroll fix (handed off):** `match/[matchId]/page.tsx` shell gains `paddingBottom:96px` to clear the fixed bottom nav (mirrors dashboard/review). **1284 vitest pass, tsc clean, tournament Playwright 10/10.** **⚠ CONCURRENT-SESSION NOTE: another session's "Cup" work is live on the branch (committed `1bca54c`) with MORE still uncommitted in the tree (CupHero/PointsBar/HoleStrip/mode/tokens/matchStatus/nav + edits to dashboard/landing/hero/layout/globals). I staged ONLY my 5 files + STATUS.md — their uncommitted work was left untouched.** **⚠ Carryover: `npm run db:backup` to fold 031–039 (+ pending 027 → 028 → 030 relays).**
+
+*Prior session (2026-07-28) — Tournament admin cup-holder + override copy + league-round tripwire (`1bca54c`):* Three scoped tournament admin/UX items on `tournament` — **build complete + green, committed + pushed; NO migration (both DB columns already existed).** **Item 3 — Cup-holder control:** a dynamic side-name selector (`{side_a_name} | {side_b_name} | None`) in the admin Tournament Header card writes `tournaments.holder_side` (`a`/`b`/`null`) via the existing `updateTournament` mutation, optimistic-then-reconcile (mirrors the Test/Live toggle); the frontend retain-line reader is untouched. Holder buttons carry a name-free `aria-label` ("Cup holder side A/B/none") so they don't collide by accessible name with the per-player side-assignment buttons. **Item 4 — Override-panel copy:** `MatchOverridePanel` subtitle replaced with exactly "Use this panel to override scores/results — changes override the scoring engine." (header "Results & overrides — {session}" left as-is). **Item 5 — League-round tripwire:** creating a NEW league round in `RoundSetup` while a **published (Live)** tournament is active now routes through a warn-and-confirm `DangerModal` ("won't count toward the cup … Create anyway?") — never blocks; gated on Live only (not Test); covers both entry points (Today's Format + Edit Teams) via the ack-ref/resume pattern the season prompt uses. **tsc clean; the two Playwright specs I touched (tournament, pairings) green (fixed an aria name-collision I introduced).** **Pre-existing red that is NOT mine (proved by stash-baseline): 11 vitest (`tournament-landing`/`tournament-hero`) + 2 e2e (`tournamentDashboard`) fail identically with my three files stashed — rooted in the concurrent sessions' mid-edit `loadMatch.ts` throwing `supabaseUrl is required` in the test env; none of the failing tests import a file I changed.** **Item 1 (scroll) = hand-off diff only (two off-limits page shells need `paddingBottom:96px`); Item 2 (soft-lock) parked for the scorecard redesign.** Staged ONLY my three files by name — the other sessions' uncommitted work was left untouched in the tree.
+
+*Prior session (2026-07-28) — Tournament shotgun start + singles 1-on-1 split:* migration **039** (`start_hole` 1..18 + `group_label`, APPLIED TO PROD) made `matchplay.ts` play-order + order-agnostic (`holePlayOrder` SSOT); singles foursomes split into standalone 1-v-1 cards. **1259/1259 vitest, tsc clean, tournament Playwright 10/10 — full detail in the section below.** **⚠ Carryover: `npm run db:backup` to fold 031–039 (+ the still-pending 027 → 028 → 030 relays).**
+
+*Prior session (2026-07-28) — Tournament per-day team assignment ("alternates", Model B):* Per-day team assignment for tournament "alternates" on `tournament` (Model B — sparse per-day override + resolver, mirroring the Flights default-to-home pattern). **Build complete + green; migration 038 APPLIED TO PROD.** New migration **038** `tournament_day_sides` (sparse per-day side OVERRIDE: a row exists only when a player's side on a given day differs from their home `tournament_players.side`; no row → home) — **BEGIN…ROLLBACK dry-run passed, then APPLIED TO PROD (`crscpwbuhvpiuxdebyxm`) via MCP 2026-07-28; post-apply verify confirmed table/6 NOT NULL cols/pkey+3 FKs+UNIQUE(session_id,player_id)+side CHECK/2 indexes/RLS on + "Allow all" policy/0 rows. File header flipped to APPLIED; DO NOT re-apply.** New resolver `getDaySideAssignments`/`getPlayerTeamForDay` (`queries.ts`) is the SOLE per-day-side read; `createGroup`/`updateGroup` validation + the `PairingsPanel` pool filter now resolve through it. **SSOT nuance:** scoring/handicap/dashboard/standings ALREADY derive side from the built match row (`side_a/b_team_number` → `round_players.team_number`) — none read `tournament_players.side` — so the resolver governs PAIRING-TIME eligibility while the match row stays the SCORING-TIME authority; they agree by construction (`createGroup` stamps each player into the slot the resolver dictates). `setPlayerDaySide` write is sparse (side===home → clears the row) and membership-gated (an override never grants membership → `PlayerNotInTournamentError`). `PairingsPanel` gains an admin-only **Alternates editor** (per-player USA/Canada-today control, "· alternate (home X)" tag) + a **freeze-warning** modal (editing an override after a group is built won't re-side existing matches — rebuild; mirrors the CH-snapshot freeze). Guardrail commit `a1e070a` (CLAUDE.md **Deletion gate** iron-clad + mobile-chat rule) landed FIRST, on its own. New agreement test (`perDaySides.test.ts`) asserts resolver === match-implied side === pool bucket for every built pairing, home fallback, and membership. **1249/1249 vitest (+9), tsc clean, tournament Playwright 10/10 (pairings + tournament + dashboard + landing + hero + matchScorecard) green.** **⚠ NEXT (carryover DB chore): `npm run db:backup` to regen `supabase/schema.sql` + fold 031–038 (038 is applied to prod but `schema.sql` lags until a backup; the still-pending 027 → 028 → 030 relays fold in the same run). Build committed to `tournament` (feature branch, not deployed); the new table is live in prod, so a post-merge deploy is safe whenever it lands.**
+
+*Prior session (2026-07-28) — Tournament UI fix bundle (A/B/C/D) + migration 037 multi-flag:* Tournament UI fix bundle on `tournament` — all four commits (A/B/C/D) shipped + pushed. Migration **037** widens `flagged_hole int` → `flagged_holes int[]` (NOT NULL DEFAULT `'{}'`, CHECK each element ∈ 1..18 via `<@`; backfilled the single prod test value to a one-element array; `036` column frozen for a later cleanup drop) — **applied to prod via MCP by the owner (dry-run passed, 0 rows needed backfill); file committed verbatim (`037_tournament_match_multi_flag.sql`), DO NOT re-apply.** **B — multi-flag (`9999ace`):** converted the single-flag model to a SET in lockstep across the whole audit surface — type (`flagged_holes: number[]`), writer (`setMatchFlag` → `setMatchFlags` writes the whole array), `seedFlags`, page state/refs, marker render, `MatchReviewGrid` (`.includes()`), fixtures/seeds/e2e. The opposing side flags several holes (a new flag ADDS, never replaces the latest); the scorer sees the full set ("Holes 5, 8 flagged") + resolves each independently (per-hole ✕ or auto-clear on score correction); tap a hole to jump. Metadata only — no score/status write, no engine touch. Three earlier commits: **A — match scorecard (`2898000`):** result-changed note on a post-decision winner flip (derived from committed `loaded.state` vs the live recompute — no engine change, no stored history; editor-visible + transient), "View on scoreboard →" finish-banner link + persistent "View scoreboard →" header link, **"AS" → "Tied" at the DISPLAY layer only** (`marginWithSide` + `dashboardFormat`; the engine still emits the canonical "AS" — goldens hold). **C — dashboard (`21733a1`):** rotating ▾ chevron expand affordance on pairing rows; the expanded link now opens a **new READ-ONLY review route** `/tournament/match/[id]/review` (reuses `MatchReviewGrid`, no accidental-edit risk) instead of the editable card; **desktop scroll fix** (dashboard `Shell` `paddingBottom:96px` clears the fixed bottom nav so Day 3 is reachable at desktop widths); landing "View full scoreboard →" promoted to a ≥44px button. **D — legibility (`18823c8`):** admin pairings de-densified into per-group cards (styling only); review-grid A/B strip now has a legend keyed to the real side names (`side_a_name`/`side_b_name`). **SSOT held throughout** — no `scorecard/page.tsx` / league engine / `matchplay.ts` touch; 27 tournament goldens + league goldenMaster byte-identical. **1240/1240 vitest (+4), tsc clean, tournament Playwright specs green.** **⚠ NEXT: `npm run db:backup` to fold 037 into `supabase/schema.sql` (037 is applied to prod but schema.sql lags until a backup); live two-phone smoke on the match card (multi-flag round-trip, result-changed note, review route). ⚠ Carryover: relay migrations 027 → 028 → 030; `db:backup` now folds 031–037.**
+
+*Prior session (2026-07-27) — Tournament Phase 3.2 Relay B, four commits (A/B/C/D) on `tournament`, all confined to the match scorecard surface (`tournament/match/[matchId]/`) + its seam.* **SSOT held** — claim/flag are coordination metadata, never score data; no engine / `matchplay.ts` change; 27 tournament goldens + league goldenMaster byte-identical. **A — soft scorer-claim (`d682866`):** `setMatchScorer` writes the scorer's `player_id` as text to the existing `tournament_matches.scorer_label` (no migration; `select *` round-trips it) — exact identity for a league with duplicate first names. Page reads it into `scorerByMatch`, reseeded on the 3.1 refresh path (focus/online/visibility/30s) so a takeover on another device propagates with no new infra. First score on an unclaimed match soft-claims; a non-claimant sees read-only-styled inputs (disabled stepper) + one-tap **"Take over scoring"** (no confirm) — never hard-locks, writes are never gated, nobody stranded; unidentified device scores without claiming. **B — Flag this hole (`805260c`):** migration **036** `tournament_matches.flagged_hole int` (nullable, CHECK 1..18, idempotent) + `setMatchFlag`; the opposing side flags the current hole (metadata only, never a score/status), an amber "Hole N flagged" marker rides the refresh to the scorer, who dismisses it or it **auto-clears when that hole's score is corrected**. **C — 18-hole review grid (`dc5f0ae`):** read-only `MatchReviewGrid` reusing the league `PlayerHoleGrid` per unit (greensomes = collapsed side, Decision B) + a hole-results strip read straight from `MatchState.holeOutcomes`; collapsed "Review 18 holes" expander; nothing recomputed. **D — match-card polish (`eb7ed36`):** extracted `ScoreMark` → `src/components/scorecard/ScoreMark.tsx` (PlayerHoleGrid imports it, byte-identical — the one import-only league-file touch); dots now ABOVE the number, reused stepper below, net cell carries circle/square notation + inline counting arrow; two-weight sentence-case side blocks (blue A / red B kept). **1236/1236 vitest, tsc clean, 60/60 Playwright; all goldens byte-identical.** **⚠ Migration 036 handed to the owner to dry-run + apply via MCP tonight — the `flagged_hole` column is inert in prod (reads undefined→null) until applied.** Concurrent Phase 4 (dashboard/override/teardown) committed to the same branch; my commits touched only the match surface + the ScoreMark extraction. **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `db:backup` folds 031–036.**
+
+*Prior session — three commits (A/B/C) on the `tournament` branch — read-only dashboard, admin override, self-serve teardown.* Built on top of Relay B's `d682866` (soft scorer-claim); Relay B's scorecard surface (`tournament/match/[matchId]/`) NEVER touched. **A — public dashboard (`d2a834c`):** new `/tournament/dashboard` (same is_active+is_published gate as the landing) — tournament-wide USA X — Canada Y banked score (decided only, ½ per halve), banked/in-play split (NO projected — cut), all-matches list across every day with real MatchState status, expandable to the group. SSOT: new `loadDashboard` fans out `loadSessionMatches` per day (Promise.allSettled) → the ALREADY-EXISTING pure `computeTournamentStandings`; every point is `resolved.result` (override applied), status via shared `marginWithSide`/`thruDisplay`. New `getPointAdjustments` reader + `TournamentPointAdjustment` type + pure `dashboardFormat.matchStatusLine`. No new `from("rounds")` → `roundsQueryGuard` untouched. **B — admin override, 3 levels (`4a124c5`):** L1 hole = new additive `setMatchHoleScore` (upsert `scores` on (round_player_id,hole_number); engine recomputes) — SEPARATE write path from Relay B's scorer queue, same table, never touches their files; L2 match = `overrideMatchResult` (result + result_source='admin' + admin_note; envelope rule, engine-beating) + `revertMatchResult`; L3 country = `addPointAdjustment`/`deletePointAdjustment` on `tournament_point_adjustments` (folds into banked). UI: per-day "Results →" `MatchOverridePanel` + tournament-level Point-adjustments card. All reversible. **C — safe teardown (`1be4971`):** migration **035** `delete_tournament_cascade` SECURITY DEFINER RPC (**applied to prod via MCP by the owner; file committed verbatim — DO NOT re-apply**) — rounds-FIRST leak-safe (rounds.tournament_id is ON DELETE SET NULL, so deleting the tournament first would orphan its rounds as fake league rounds), scoped to the tournament id → a league round is unreachable; `deleteTournament` wrapper; admin "Danger zone" + **type-to-confirm** (must type the tournament name exactly). **Headline test:** dashboard banked === Σ per-match `resolved` points + adjustments, asserted DIRECTLY (the SSOT-drift guard); halves = ½; decided early-closeout reads `closedOutHole` not `thru`. **1229/1229 vitest (+28 over 1201), tsc clean, 60/60 Playwright (+3); goldens untouched (no engine change — matchplay.ts not edited).** **⚠ Carryover: relay migrations 027 → 028 → 030; `npm run db:backup` now also folds 035 (→ 031+032+033+034+035).**
+
+*Prior session (2026-07-27):* Tournament Phase 3.2 Relay A patch — nearest-match + roster fallback (`29caa2d`) — see the section below.
+
+---
+
+## 2026-07-31 (Tournament scoring & cup — READ-ONLY code review; branch `tournament`)
+
+Senior-dev correctness review of the tournament scoring + cup logic. **No source changed.** Findings in [`docs/reviews/tournament-review-2026-07-31.md`](docs/reviews/tournament-review-2026-07-31.md): no confirmed P0; cup SSOT + engine verified sound; two **P1 HOLD-FOR-JONATHAN** durability gaps (silent non-persistent-storage fallback; tournament card lacks stale-failure reconciliation UI — both parked Item B), plus P2 cup-threshold edge questions. Nothing to fix until Jonathan reviews.
+
+---
+
+## 2026-07-28 (Tournament SCORECARD redesign — match page to mock v4; branch `tournament`)
+
+### Where we left off
+
+Redesigned `src/app/tournament/match/[matchId]/page.tsx` (+ `MatchHoleNav.tsx`) to the mock-v4 Scorecard screen. **No migration; green.** Consumes B's committed primitives (`tokens`, `matchStatus`, `HoleStrip`) — no parallel versions, no recompute of status/side. Scope held: did NOT touch the scoreboard/home/homepage or `PairingsPanel`.
+
+- **`ScHero`** (navy gradient): day · format + uppercase sub; pairing USA-left (blue `SIDE_TOKENS.a.dark`) / Canada-right (red `.b.dark`) on-dark; foot = gold shotgun start-chip left ("🚩 Start: Hole N · Group X", shotgun only) + two equal 150px stacked buttons right → `/tournament/dashboard` + `/tournament`.
+- **`sc-status-{id}`** line from `matchStatus` (leader name + text + `thruText`, colored by `statusColor(tone)`). **Live-aware:** `matchStatus({...loaded, state, resolved: resolveMatchResult(state, loaded.match)})` — updates offline yet identical to the scoreboard by construction. Adopts "All Square"/"2 UP"/"Dormie" (kills "Tied").
+- **Outcome-tinted nav** (`HoleDotRail`): circles tinted by `state.holeOutcomes` (blue/red/split/faint), current = gold ring; shotgun `holePlayOrder` rotation + wrap kept.
+- **`TeamBlock`** (country gradient) + **`EntryRow`**: dots-above + reused `TeamHoleEntry` stepper + NET in the league `ScoreMark` notation + net term + four-ball counting arrow; chevron → shared `HoleStrip` in play order. **Removed** the "USA wins the hole" line + per-match "pts". **Kept** "Review 18 holes" grid.
+- **Formats:** greensomes 1 team box (strokes = collapsed 60/40 team handicap); four-ball 2 player boxes + counting; singles 1 player box (per-player match strokes). Hero/status/nav/strip identical across all.
+
+### Tests / verification
+
+- **1287/1287 vitest (+3), tsc clean, tournament Playwright 10/10, goldens byte-identical** (no engine touch).
+- **SSOT** (`tournament-match-scorecard.test.tsx`): scorecard `sc-status` === `matchStatus()` === `TournamentMatchCard` (scoreboard) for one MatchState; "All Square" not "Tied"; per-team `HoleStrip` byte-identical to the scoreboard's off the same `holeOutcomes`.
+- **Deliberate updates:** removed the `hole-outcome` "wins the hole" assertions; repointed `match-header`/`thru` assertions to `sc-status` (9-up-thru-9 now reads **Dormie** per `matchStatus`); the closeout e2e → "Dormie"; the landing e2e nav check → `match-card-500`. Every write/claim/flag/offline/banner testid preserved.
+
+### Considered but not changed (confession)
+
+- **`sc-status` prefixes the leader name to every non-square text** ("USA Dormie · thru 9") — slightly formal for "Dormie" but consistent with "USA 2 UP"; the scoreboard shows the bare `matchStatus.text` (color carries the side there).
+- **`e2e/tournamentLanding.spec.ts` + `e2e/matchScorecard.spec.ts`** are B-adjacent spec files; I changed ONE assertion each (caused by my `match-header`→`sc-status` rename) — both were clean in the tree, not mid-edit.
+- **No live browser screenshot** this session (needs a seeded published match); recommend a two-phone visual smoke. `.claude/settings.local.json` left unstaged.
+
+### Tomorrow's priority
+
+- Live two-phone smoke of the redesigned card (shotgun rotation, greensomes/four-ball/singles entry, expand strip, status vs scoreboard).
+- **Carryover (unchanged):** `npm run db:backup` to fold 031–039 (+ the still-pending 027 → 028 → 030 relays).
+
+---
+
+## 2026-07-28 (Tournament admin — cup-holder control + override copy + league-round tripwire; branch `tournament`)
+
+### Where we left off
+
+Three scoped admin/UX items built + committed + pushed to `tournament`. **No migration** — both DB columns already existed. Read-only investigation approved a plan; items 1 & 2 were explicitly deferred by the owner.
+
+- **Item 3 — Cup-holder admin control (`Tournament.tsx`).** Confirmed no post-creation control existed (`holder_side` was only set at create time; `updateTournament` already accepted it in its patch but nothing called it). Added a dynamic side-name selector `[ {side_a_name} | {side_b_name} | None ]` to the Header card (after the Test/Live toggle), writing `tournaments.holder_side` (`a`/`b`/`null`) via `updateTournament`, optimistic-then-reconcile (same pattern as `togglePublished`). Reuses `SideButton` (gained an optional `ariaLabel` prop); the None button matches the Unassign styling. The frontend retain-line reader is not touched — the control only writes the column.
+- **Item 4 — Override-panel copy (`MatchOverridePanel.tsx`).** Subtitle text replaced with exactly "Use this panel to override scores/results — changes override the scoring engine." The card header ("Results & overrides — {session.name}") is unchanged.
+- **Item 5 — League-round tripwire (`RoundSetup.tsx`).** On the NEW-round branch of `ensureRoundShell` (after the existing-round early return, before the season-aware create), `getActiveTournament()` is checked; if `is_published` (Live), a warn-and-confirm `DangerModal` opens and creation returns null. Confirm sets an ack ref and re-runs `ensureRoundShell` → dispatches on `pendingAction` (mirrors the season-prompt resume). The ack ref is reset at both entry points (`openTodaysFormat` / `openEditTeams`) so each fresh create re-arms. Warn-and-confirm — never blocks. Gated on Live only, not Test.
+
+### DB changes
+
+- **None.** `tournaments.holder_side` (Item 3) and `tournament_sessions.is_locked` (relevant to the parked Item 2) already exist in schema. No migration authored or applied.
+
+### Tests / verification
+
+- **My three files: tsc clean; the two Playwright specs I affected (`tournament.spec`, `pairings.spec`) green.** They briefly went red because the new cup-holder buttons shared the accessible name "USA"/"Canada" with the per-player side buttons, shifting the specs' positional `getByRole(name)` selectors — fixed by giving the holder buttons name-free `aria-label`s ("Cup holder side A/B/none"), so **no test file needed editing** (both specs touch other-session-owned surfaces).
+- **Pre-existing red, NOT attributable to this session (proved, not asserted):** 11 vitest (`tournament-landing.test.tsx`, `tournament-hero.test.tsx`) + 2 e2e (`tournamentDashboard.spec.ts`) fail **identically with my three files `git stash`ed out**. Root cause is the concurrent sessions' mid-edit `src/lib/tournament/loadMatch.ts:14` eagerly importing the real Supabase client → `supabaseUrl is required` in the test env. None of the failing tests import any file I changed.
+
+### Considered but not changed (confession)
+
+- **Item 1 (laptop scroll bug) — hand-off diff only, NOT applied.** Diagnosed: the global fixed `.bottom-nav` overlaps ~48px of content on shells with `padding:"16px"` + `minHeight:"100vh"` and no extra bottom padding. Two pages still need the fix (`dashboard`/`review` already have it): `src/app/tournament/page.tsx` (~L464) and `src/app/tournament/match/[matchId]/page.tsx` (~L974) — each needs `paddingBottom:"96px"` added after `padding:"16px"`. **Both are off-limits (owned by other sessions); handed the one-line diffs to the owner rather than editing.**
+- **Item 2 (soft-lock a finished day) — parked** for the scorecard redesign per owner. `tournament_sessions.is_locked` already exists but is currently read/written nowhere; the read-only enforcement would live on the off-limits match scorecard page.
+- **Drift beyond the literal ask (Item 3):** added an optional `ariaLabel` prop to the shared `SideButton` (kept name-free on purpose to avoid editing the two other-session specs). Trade-off: a screen reader hears "Cup holder side A" rather than the side name; visible text still shows the name.
+- **Staged ONLY the three files by name** (`Tournament.tsx`, `MatchOverridePanel.tsx`, `RoundSetup.tsx`) + `STATUS.md` — the tree still holds the other sessions' uncommitted work (`MatchHoleNav.tsx`, match `page.tsx`, `loadMatch.ts`, `matchScorecard.ts`, `matchplay.ts`, `types.ts`, migration 039) and `.claude/settings.local.json`; none of it rode along. No `git add -A`.
+
+### Tomorrow's priority
+
+- Owner to hand the two Item-1 one-line diffs to the sessions owning `/tournament` landing + the match scorecard page.
+- Live smoke: set the cup holder in admin and confirm the frontend retain line reflects it; with a Live tournament, create a league round and confirm the cup warning fires (and that Test mode does not trigger it).
+- Item 2 to be built alongside the scorecard redesign (session-level `is_locked` auto-set when all matches complete + admin unlock + read-only gate on the scorecard).
+
+---
+
+## 2026-07-28 (Tournament shotgun start + singles 1-on-1 split; branch `tournament`)
+
+### Where we left off
+
+Both features built + green; **migration 039 dry-run passed → APPLIED TO PROD via MCP 2026-07-28, post-apply verify passed.** Feature 2 needs no migration. Nothing merged to master.
+
+- **F1 — Shotgun start.** Migration **039** `tournament_matches.start_hole` (int, CHECK 1..18, nullable) + `group_label` (text, nullable), additive + reversible. Per-group (all matches in a `group_number` share them; singles → both 1-v-1s). NULL start_hole = ordinary hole-1 start; NULL label = auto-derive A/B/C.
+  - **Engine (`matchplay.ts`) — play-order + order-agnostic.** New exported `holePlayOrder(startHole, total)` = the rotation (SSOT: engine + nav + scorecard init all read it). `computeMatchState` walks the play sequence, SKIPPING gaps: `thru` = consecutive-from-start progress (display); completion = walk-off (lead > holes-remaining, remaining counts unplayed incl. gaps) OR resolvedCount === 18; `closedOutHole` = the clinch hole NUMBER in the rotation. `MatchInput.startHole?` (default 1). **startHole=1 + no gaps ⇒ byte-identical** to the old consecutive-from-1 engine → 27 goldens untouched.
+  - **Skip-hole amber retired.** `missingHoleGap` → always null (order-agnostic makes out-of-order entry normal); the amber block removed from the card. `firstUnresolvedHole` kept as a nav hint.
+  - **Nav (`MatchHoleNav`)** renders the rail in play order + Back/Next wrap along the sequence; the page opens `currentHole` on the start hole (initial load only — a refresh never yanks the scorer).
+  - **Admin (`PairingsPanel`)** builder + edit forms gain a Start-hole select + Group-label input (placeholder = derived letter); `createGroup` stamps them, new `setGroupShotgun(sessionId, groupNumber, patch)` edits the whole group. GroupCard shows "Group A · Starts hole 7".
+- **F2 — Singles 1-on-1 split.** `loadGroup` (match scorecard) now returns `[target]` for every format — a singles foursome is TWO unlinked 1-v-1 cards, each reached via its own landing/dashboard row + each player's own nearest-match resolution (reversed the shared-rail "Decision D"). `/review` already used `loadMatch` (single) — no change. `loadSessionMatches` import dropped from the page.
+
+### DB changes
+
+- **Migration 039** (`supabase/migrations/039_tournament_shotgun.sql`) — `ADD COLUMN start_hole integer CHECK (1..18), group_label text`. **Dry-run (BEGIN…ROLLBACK) then APPLIED TO PROD `crscpwbuhvpiuxdebyxm` via MCP (`apply_migration`) 2026-07-28.** Dry-run: preflight (table present, both cols absent) → txn added both → ROLLBACK → post-check absent. Apply: `{success:true}`; **post-apply verify** confirmed start_hole (int, nullable) + group_label (text, nullable), CHECK `start_hole BETWEEN 1 AND 18`, 8 existing rows untouched (all NULL — no backfill). File header flipped to APPLIED — **DO NOT re-apply.** **Carryover:** `npm run db:backup` to fold 039 into `supabase/schema.sql`.
+
+### Tests / verification
+
+- **1259/1259 vitest (+10), tsc clean, tournament Playwright 10/10 green** (pairings, tournament, matchScorecard, dashboard, landing, hero). 27 tournament goldens + league goldenMaster **byte-identical** (no `-u`).
+- **Two load-bearing tests legitimately changed (documented in-file):** (1) matchplay §3.6 gap test rewritten — order-agnostic now counts holes past the gap (holesUp 2→5) yet stays in-progress because the gap + tail count as remaining (walk-off still safe); (2) the missing-hole amber test (unit + DOM) rewritten to assert the amber is retired.
+- **New:** `holePlayOrder` rotation/wrap; shotgun state (5&4 clinch on the 14th played hole = hole 2 for start 7; gap = next played hole; all-18-any-order completes; startHole=1 ≡ omitted); `shotgunCrossSurface.test.ts` (scorecard header "thru N"/margin === dashboard row, both from one MatchState; live recompute reproduces loader state for a rotated start). Singles DOM tests rewritten to assert only-own-card (no sibling co-render). `matchFixture` + `pairings-panel`/`pairings.spec` (`edit-tee` testid) updated.
+
+### Considered but not changed (confession)
+
+- **Uncommitted "Cup holder" work in the tree** (`Tournament.tsx` + `MatchOverridePanel.tsx`) — appeared during this session, NOT mine (a concurrent edit). Deliberately NOT staged/committed; left for its own author.
+- **`.claude/settings.local.json`** pre-existing local change — not staged.
+- **MatchReviewGrid still renders holes 1..18** (not play order) — it's a static grid, not a play walk; reordering it for shotgun is out of scope (flagged, not done).
+- **thruDisplay for a decided shotgun shows the clinch hole number** (e.g. "thru 2" for a start-7 match that closed on hole 2) — consistent with how early closeouts already display; the margin ("5&4") is the primary read.
+- No league-engine / `scorecard/page.tsx` touch; no `matchplay.ts` change beyond the play-order walk (goldens prove it).
+
+### Tomorrow's priority
+
+- **Migration 039 is APPLIED + verified** — done. Remaining chore: **`npm run db:backup`** to regen `supabase/schema.sql` + fold 031–039 (with the still-pending 027 → 028 → 030 relays in the same run).
+- Live smoke: build a shotgun group (start hole ≠ 1), confirm the scorecard opens/rotates/wraps from it and a walk-off records the right margin; open a singles 1v1 and confirm only its two players show.
+
+---
+
+## 2026-07-28 (Tournament per-day team assignment — "alternates", Model B; branch `tournament`)
+
+### Where we left off
+
+Read-only investigation → approved build (Model B) → **all code green, migration 038 dry-run passed → APPLIED TO PROD via MCP 2026-07-28, post-apply verify passed.** Guardrail commit landed first and alone. Nothing merged to master; `tournament` branch only.
+
+- **Guardrail (`a1e070a`, committed + pushed alone).** CLAUDE.md gains the iron-clad **Deletion gate** (no data/file deletion via MCP/SQL/tool without explicit prior review + written go-ahead; surface IDs/counts/scope) and reinforces the **mobile-chat-only** rule. Per the owner's request, on its own commit — not bundled.
+- **Model B, in one build (NOT yet committed at time of writing this handoff / see final commit).** Migration **038** `tournament_day_sides` — sparse per-day side override. Resolver `getDaySideAssignments(tournamentId, sessionId)` + `getPlayerTeamForDay(...)` in `queries.ts`: home map overlaid with that day's overrides; an override for a non-member is ignored (home map gates membership). `setPlayerDaySide(tournamentId, sessionId, playerId, side|null)` in `mutations.ts`: `side===null || side===home` → delete the override row (sparse "no row = home"); else upsert on `(session_id, player_id)`; refuses a non-member (`PlayerNotInTournamentError`). The old raw `sideAssignments(tournamentId)` helper was REMOVED — `createGroup`/`updateGroup` now validate against `getDaySideAssignments(tournamentId, sessionId)` (per-day eligibility), so an alternate placed on the other side today validates.
+- **Alternates editor + freeze warning (`PairingsPanel.tsx`).** New admin-only collapsible "Alternates — sides for this day" section: each member shows a two-way [sideA|sideB] control highlighting the EFFECTIVE side; choosing the other side calls `setPlayerDaySide` (→ marked "· alternate (home X)"), choosing home clears it. The panel's `roster` now carries `{side (effective), homeSide}`, so `slotOptions` (the pairing pool filter) buckets by the per-day side. **Freeze warning:** if any group is already built for the day, an override edit routes through a `DangerModal` ("Groups already built for this day … won't move them in matches already created … rebuild {name}'s group") before applying — mirrors the CH-snapshot freeze; `cannotBeUndone={false}`.
+
+### SSOT finding (the headline)
+
+The per-day scoring side was ALREADY implicitly persisted in the built match row (`tournament_matches.side_a/b_team_number` → `round_players.team_number`). Grep-verified: `matchplay.ts`, `loadMatch.ts`, `loadDashboard.ts`/`computeTournamentStandings`, scorecard, review grid, `findPlayerMatch.ts` all derive side from the match row — **none read `tournament_players.side`.** The ONLY blocker to alternates was the pairing-time hard gate (`createGroup`/`updateGroup` validation + the pool filter). So the resolver governs **pairing-time eligibility**; the match row stays the **scoring-time authority**; they agree by construction. Editing an override after a match is built does NOT re-side it (freeze) — hence the warning.
+
+### DB changes
+
+- **Migration 038** (`supabase/migrations/038_tournament_day_sides.sql`) — `tournament_day_sides(id, tournament_id→tournaments CASCADE, session_id→tournament_sessions CASCADE, player_id→players, side CHECK a/b, created_at, UNIQUE(session_id,player_id))` + 2 indexes + RLS allow-all. Additive + reversible (`DROP TABLE`). **Dry-run (BEGIN…ROLLBACK) then APPLIED TO PROD `crscpwbuhvpiuxdebyxm` via MCP (`apply_migration`) 2026-07-28.** Dry-run: preflight confirmed FK parents exist + target absent; the txn created table/indexes/RLS/policy, read back the shape, ROLLBACK, `to_regclass` = NULL (nothing persisted). Apply: `{success:true}`; **post-apply verify** confirmed table present, 6 NOT NULL cols, pkey + 3 FKs + `UNIQUE(session_id,player_id)` + side CHECK, `idx_tds_session`/`idx_tds_tournament`, RLS on + "Allow all" policy, 0 rows. File header flipped to APPLIED — **DO NOT re-apply.** **Carryover:** `npm run db:backup` to fold 038 into `supabase/schema.sql` (lags until a backup; folds with the still-pending 027 → 028 → 030 relays, 031–037).
+
+### Tests / verification
+
+- **1249/1249 vitest (+9), tsc clean, tournament Playwright 10/10 green** (pairings, tournament, tournamentDashboard, tournamentLanding, tournamentHero, matchScorecard).
+- New `tests/lib/tournament/perDaySides.test.ts` (9): home fallback (no override → home); `setPlayerDaySide` sparse write (creates one row / clears on home / clears on null / updates in place); membership (`PlayerNotInTournamentError` + stray override for a non-member ignored by the resolver); createGroup honours the override (rejected without it, succeeds with it) + the **three-way agreement** (resolver === match-implied side === pool bucket for every built player).
+- e2e mock (`supabaseMock.ts`) + vitest fake (`fake-supabase.ts`) gained `tournament_day_sides` (the Flights lesson — a new-table read that vitest alone would miss in Playwright; generic select/insert/upsert/delete handlers cover it).
+
+### Considered but not changed (confession)
+
+- **Global side chips in the admin Tournament tab (`Tournament.tsx`) unchanged** — they still set the HOME side; the per-day override lives in the day's PairingsPanel. Correct separation, not an oversight.
+- **`PlayerSideMismatchError` copy** ("plays for X and can't go on the other side") now reads against the EFFECTIVE per-day side — still accurate, left as-is.
+- **Did NOT commit the build before the migration apply gate in the same breath as the dry-run** — code committed to the feature branch (not deployed); the prod migration apply is the only thing held for go-ahead.
+- **`.claude/settings.local.json`** had a pre-existing local modification — deliberately NOT staged.
+- No refactor of unrelated code; no engine/`matchplay.ts` touch (goldens untouched — no scoring change).
+
+### Tomorrow's priority
+
+- **Migration 038 is APPLIED + verified** — done. Remaining chore: **`npm run db:backup`** to regen `supabase/schema.sql` + fold 031–038 (with the still-pending 027 → 028 → 030 relays in the same run).
+- Live smoke: set an alternate on a day, confirm they can be paired on the other side, confirm the freeze warning fires once a group exists.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.2 Relay B — scorer coordination + review grid + match-card polish; branch `tournament`)
+
+### Where we left off
+
+Four commits (A/B/C/D), all on the match scorecard surface (`src/app/tournament/match/[matchId]/` + its seam in `src/lib/tournament/`). NOT touched: `scorecard/page.tsx` (except the ScoreMark import-only extraction), the league engine, `matchplay.ts`, Phase 4's dashboard/admin files. SSOT held throughout — the claim and the flag are coordination metadata; scores/status/outcomes still come only from `computeMatchState`. A claim never changes a score.
+
+- **A — soft scorer-claim + one-tap takeover (`d682866`).** `setMatchScorer(matchId, playerId|null)` writes the scorer's `player_id` **as text** to the pre-existing `tournament_matches.scorer_label` (migration 031; no new migration — `loadMatch`'s `select *` already round-trips it). player_id (not display name) → exact identity for a league with duplicate first names, compared against Relay A's `getStoredPlayerId()`. The page threads `match.scorer_label` into `scorerByMatch`, reseeded from server on the 3.1 refresh path (focus/online/visibilitychange/30s poll) so a takeover on another device propagates here (map flips → this device's inputs disable) with no new infra. First score on an unclaimed match soft-claims it; a non-claimant sees read-only-styled inputs (`TeamHoleEntry disabled`) + one-tap **"Take over scoring"** (no confirm modal — a scorer who walks away must hand off instantly). **Never hard-locks:** the data layer never checks the claim, so a write always succeeds; takeover is the one-tap unblock. Unidentified device (no stored id) scores without claiming.
+- **B — "Flag this hole" (`805260c`).** Migration **036** `tournament_matches.flagged_hole int` (nullable, `CHECK 1..18`, idempotent `ADD COLUMN IF NOT EXISTS`). `setMatchFlag(matchId, hole|null)`. The opposing (non-scorer) view gets a "⚑ Flag this hole" button (writes the current hole); everyone sees an amber "Hole N flagged — check this score" marker that rides the refresh to the scorer's device; the scorer dismisses it (✕) or it **auto-clears** when that hole's score is corrected (`setPlayerScore`/`setTeamScore` clear a matching flag). Metadata only — never a score/status/outcome.
+- **C — 18-hole review grid (`dc5f0ae`).** New read-only `MatchReviewGrid.tsx` reusing the league `PlayerHoleGrid` per unit (four-ball/singles = one grid per player; greensomes = one collapsed side grid off `sideMatchStrokes`, Decision B) — gross + stroke dots + traditional notation. Adds a hole-results strip read straight from `MatchState.holeOutcomes` (blue A / red B / grey halved / blank unresolved), and marks a flagged hole (⚑). Surfaced via a collapsed "Review 18 holes" expander per card. Nothing recomputed — every value READ from `LoadedMatch` + the live optimistic scores.
+- **D — match-card polish, presentation only (`eb7ed36`).** Extracted `ScoreMark` (circle-under-par / square-over-par) from `PlayerHoleGrid` into `src/components/scorecard/ScoreMark.tsx`; PlayerHoleGrid imports it — behaviour byte-identical (verified by the component suite + e2e). **The one import-only touch of a league file.** `ScoreBox`: stroke dots now sit ABOVE the number (league dot-above-score pattern), reused `TeamHoleEntry` stepper below, net cell carries `ScoreMark` notation + inline counting arrow (`←`). `SideBlock`: two-weight hierarchy, sentence case (dropped the shouty all-caps). Blue-A / red-B side blocks kept (the intentional divergence).
+
+### DB changes
+
+- **Migration 036** (`supabase/migrations/036_tournament_match_flag.sql`) — `flagged_hole int` on `tournament_matches`. **Handed to the owner to dry-run + apply via MCP tonight (same relay pattern as 034/035); NOT applied by me.** The column is inert in prod until applied — `loaded.match.flagged_hole` reads `undefined → null`, so nothing renders/writes a flag until the column exists. `scorer_label` (Commit A) needed **no** migration — it already exists (031).
+
+### Tests / verification
+
+- **1236/1236 vitest, tsc clean, 60/60 Playwright; all 27 tournament goldens + league goldenMaster byte-identical** (no engine change). (Counts include Phase 4's concurrent in-tree work.)
+- New: `tournament-match-scorecard.test.tsx` +12 DOM (A: claim shows/updates via the refresh path, one-tap takeover reassigns + a write then succeeds = never hard-locked, unidentified scores without claiming; B: non-scorer flags current hole = metadata no score write, flag rides refresh, correcting the hole auto-clears, scorer dismiss; C: expander reveals a read-only grid whose per-hole outcomes equal the engine's MatchState + zero steppers inside + flagged-hole mark; D: dots render above the number, stepper below, counting arrow + engine outcome intact). `dataLayer.test.ts` +2 (`setMatchScorer`/`setMatchFlag` write only their column, never touch score/status). `matchScorecard.test.ts` + `matchFixture.ts` carry the new `flagged_hole` field.
+- **`roundsQueryGuard` untouched** — zero new `from("rounds")`; all reads go through the existing `LoadedMatch` loader.
+
+### Considered but not changed (confession)
+
+- **Sides show team `displayName`, not USA/Canada** — the loaded match has no nation label; threading one is out of scope for a styling commit (livery is a locked later layer). Blue-A / red-B kept.
+- **Counting-ball arrow already existed** (`←`) — Commit D restyled/repositioned it, didn't add it.
+- **Notation is applied to the NET cell (net vs par)**, not the stepper's gross — `TeamHoleEntry` bundles its own value and is off-limits beyond reuse, so notation lives on the net score cell the card owns. Match play is a net game, so net-vs-par notation is coherent; flagged as a deliberate choice.
+- **Claim optimism reseeds from server on every refresh** — a sub-second flip-back before this device's own claim write lands is possible and benign (self-heals next poll); nothing is ever gated on the claim, so no functional impact.
+- **Concurrent Phase 4 in the shared tree** — `types.ts`/`mutations.ts` carried Phase 4 hunks alongside mine; I partial-staged only my `flagged_hole` type hunk (Commit A) and never re-touched shared files after. Did NOT touch Phase 4's `page.tsx` (landing), `queries.ts`, `dashboard/`, `loadDashboard.ts`, `dashboardFormat.ts`.
+
+### ROADMAP entries I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.2 Relay B — scorer coordination + review grid + match-card polish (branch `tournament`).** Soft scorer-claim on `tournament_matches.scorer_label` (no migration — existing column) resolved via device `player_id`; first scorer claims, others get read-only-styled + one-tap takeover, never hard-locked (writes never gated), claim rides the 3.1 refresh path. "Flag this hole" opposing-side escape valve (migration **036** `flagged_hole`) — metadata only, auto-clears on correction. Read-only 18-hole review grid reusing `PlayerHoleGrid` + a MatchState outcomes strip. Match-card polish to the league look (dots-above-number, circle/square notation via extracted `ScoreMark`, reused steppers, inline counting arrow, blue/red side blocks). SSOT held — no engine/`matchplay.ts` change; goldens byte-identical.
+
+### Tomorrow's priority
+
+- **Owner: dry-run + apply migration 036** (`flagged_hole`) via the Supabase MCP so the flag works in prod tonight.
+- **Carryover DB chores (unchanged):** relay migrations 027 → 028 → 030; then `npm run db:backup` (now folds 031–036).
+- Live smoke on the match card: two phones on one match — claim propagation, one-tap takeover, flag round-trip, review grid vs paper, and the polished cell.
+
+---
+
+## 2026-07-27 (Tournament Phase 4 — dashboard + admin override + safe teardown; branch `tournament`)
+
+### Where we left off
+
+Three commits (A `d2a834c`, B `4a124c5`, C `1be4971`), all pushed to `origin/tournament`. This relay is read + admin-control only; it built ON TOP of Relay B's `d682866` (linear history, no conflict) and never touched `scorecard/page.tsx`, the league engine, `matchplay.ts`, or Relay B's scorecard surface (`tournament/match/[matchId]/`). SSOT holds: the dashboard computes nothing — every number is the canonical loader's (`resolved.result` / `MatchState` / shared label helpers). Next: Relay B continues its scorer track; Phase 4 is done.
+
+- **Commit A — public `/tournament/dashboard`.** New route, same public gate as the landing (`getActiveTournament` + `is_published`; Test/none → empty). Country header USA X — Canada Y from `standings.banked` (decided only, ½ halves), banked/in-play split (NO projected — cut per spec), all-matches list grouped by day (real MatchState status, expandable to the group). New `src/lib/tournament/loadDashboard.ts` fans out `loadSessionMatches` per day (Promise.allSettled, per-day isolation) → the already-existing pure `computeTournamentStandings`; maps each `LoadedMatch` to `StandingsMatchInput` off `resolved.result` (authoritative) + `state.holesUp/thru/margin`. New `getPointAdjustments` reader, `TournamentPointAdjustment` type, pure `dashboardFormat.matchStatusLine` (reuses `marginWithSide`/`thruDisplay`). Landing ↔ dashboard cross-linked. No new `from("rounds")`.
+- **Commit B — admin override (3 levels), on the middleware-gated Tournament tab.** L1 hole = `setMatchHoleScore(round_player_id, hole_number, strokes)` — NEW additive mutation, upserts `scores` on the (round_player_id,hole_number) key, engine recomputes; a SEPARATE write path from Relay B's queue (same table, own function, never their files); individual formats only (greensomes → force result). L2 match = `overrideMatchResult` (result + `result_source='admin'` + `admin_note`; `resolveMatchResult` honors it UNCONDITIONALLY, envelope rule) + `revertMatchResult`. L3 country = `addPointAdjustment`/`deletePointAdjustment` on `tournament_point_adjustments` (folds into `banked`). UI: per-day "Results →" `MatchOverridePanel` (force result + revert + per-hole correction) + tournament-level Point-adjustments card. All reversible; note where the schema supports it.
+- **Commit C — self-serve safe teardown.** `deleteTournament(id)` → `supabase.rpc("delete_tournament_cascade", {p_tournament_id})`. Admin "Danger zone" card + **type-to-confirm** DangerModal (confirm disabled until the exact tournament name is typed). Verbatim copy: "This permanently deletes '{name}' and all its rounds, scores, and pairings. League rounds are not affected. This cannot be undone."
+
+### DB changes
+
+- **Migration 035** (`035_delete_tournament_cascade.sql`) — `delete_tournament_cascade(bigint)` SECURITY DEFINER RPC, RETURNS jsonb counts. **APPLIED TO PROD via the Supabase MCP by the owner (dry-run then applied, like 034); file committed verbatim — DO NOT re-apply.** Deletes the tournament's ROUNDS first (cascades scores/team_scores/round_players + sessions/matches), then the tournament row (cascades players/point_adjustments). Rounds-first is the leak-safe order because `rounds.tournament_id` is ON DELETE SET NULL (031) — deleting the tournament first would orphan its rounds as NULL-tournament "league" rounds. `tournament_sessions.round_id` is CASCADE (032), so deleting rounds also removes sessions→matches. SQL lives in the migration → no `from("rounds")` in src → `roundsQueryGuard` untouched. Next `npm run db:backup` should fold 035 (with the still-pending 031–034).
+
+### Tests / verification
+
+- **1229/1229 vitest (+28 over the 1201 top-block baseline; +16 mine, rest from Relay B's `d682866`), tsc clean, 60/60 Playwright (+3 mine).** Goldens untouched (no engine change).
+- **Headline (SSOT-drift guard):** `tests/lib/tournament/loadDashboard.test.ts` — dashboard `standings.banked` === Σ per-match `resolved` points + adjustments, asserted DIRECTLY (not "each renders"); halved match = 0.5/0.5; decided early-closeout reads `closedOutHole` (via `thruDisplay`) not `thru` (thru=12, closedOutHole=10).
+- **Override:** `tests/lib/tournament/overrides.test.ts` — each level writes the right table/columns and reflects as canonical (L2 `resolved.result` wins over engine + envelope zero-scores; L1 upsert flips the recomputed outcome; L3 banks + reverses); cross-surface: a forced result changes `loadDashboard` banked and still equals Σ resolved. `admin-tournament.test.tsx`: add/remove adjustment + Results panel forces `result_source='admin'`.
+- **Teardown:** `tests/lib/tournament/teardown.test.ts` — RPC called with `{p_tournament_id}`; ALL tournament-owned rows removed; **ISOLATION — a league round + its scores SURVIVE**; leak-safe (the tournament's round is DELETED, never SET NULL). `admin-tournament.test.tsx`: type-to-confirm stays disabled until the exact name is typed, then fires the cascade RPC. `FakeSupabase.rpc` now models the cascade's scoping (fake has no real FKs; a live smoke confirms real Postgres FK behavior).
+
+### Considered but not changed (confession)
+
+- Not touched: `scorecard/page.tsx`, league engine, `matchplay.ts`, Relay B's `tournament/match/[matchId]/`. `MatchState` label helpers (`matchScorecard.ts`) were REUSED (imported), never edited.
+- **Projected column cut** per spec (banked + in-play only).
+- **L1 hole override is `scores`-only** (individual formats). Greensomes hole correction (team_scores) is out of scope — the panel routes greensomes to the L2 match override instead. Flagged in the panel UI.
+- L1 writes `scores` — the same table Relay B's scorer queue writes. Kept fully additive (own mutation, own conflict-key upsert); no import/reuse of their write path.
+- Override writes DON'T set the DB `status` column (only result/result_source/admin_note) — `resolveMatchResult` keys on result_source, and leaving `status` avoids interfering with Relay B's scorer flow.
+- Test fakes: added `tournament_point_adjustments` to both `FakeData` (vitest) and the e2e `SeedData`/`KNOWN_TABLES` (additive). Extended `FakeSupabase.rpc` to model `delete_tournament_cascade` (additive branch).
+- Adjustment "Add" button labelled "Add adj." and the teardown trigger "Delete tournament…" to avoid accessible-name collisions with existing modals' buttons.
+
+### ROADMAP entries I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 4 — Tournament dashboard + admin override + safe teardown (branch `tournament`).** Public `/tournament/dashboard`: country USA–Canada banked score (decided only, ½ halves), banked/in-play split, all-matches list (3 days, real MatchState status), all from the canonical loader (new `loadDashboard` fans out `loadSessionMatches` → `computeTournamentStandings`; no recompute; headline test asserts dashboard total === loader sum). Admin override 3 levels (hole score → engine recompute; match result → `result_source='admin'`, envelope rule, engine-beating; country points → `tournament_point_adjustments`) — all existing columns, reversible. Self-serve teardown: migration 035 `delete_tournament_cascade` SECURITY DEFINER RPC (rounds-first, leak-safe), type-to-confirm, league rounds provably untouched.
+
+### Tomorrow's priority
+
+- **Relay B** continues its scorer track (18-hole review grid, match-card polish, tee-time entry).
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` (now folds 031 + 032 + 033 + 034 + 035).
+
+---
+
+## 2026-07-27 (Tournament Phase 3.2 Relay A patch — nearest-match + roster fallback; branch `tournament`)
+
+### Where we left off
+
+One commit (`29caa2d`) patching Relay A device memory. Stayed within `src/app/tournament/page.tsx`, `src/lib/tournament/findPlayerMatch.ts`, `src/lib/deviceMemory.ts` (unchanged) + their tests. Not touched: `scorecard/page.tsx`, league engine, `matchplay.ts`, match scorecard surface, dashboard/admin (Phase 4 / Relay B running concurrently).
+
+- **Fix 1 — nearest upcoming match.** `findNearestMatchForPlayer(days, playerId, today)` (pure, in the player→match helper): collect the player's matches across all days; pick the soonest `played_on >= today` (ISO strings → lexicographic = chronological); if all past, the most recent; null if in no match. Landing identity panel uses it; copy names the day. A player genuinely un-paired → the "you're in the tournament but not matched — check the days below" note stays (now reachable via a stored id with no match).
+- **Fix 2 — full-league-roster fallback.** who-are-you picker adds "See all players" → lazily fetches the full active roster (`supabase.from("players").select("id, full_name, display_name, is_active").eq("is_active", true).order("full_name")` — inline, the existing pattern) **and** the tournament participant set (`getTournamentPlayers`). Membership = `tournament_players` (authoritative — an assigned-but-unpaired player resolves, not "ask admin"). Selecting a non-participant → "ask the admin to add you", not stored. Both reads lazy.
+
+### DB changes
+- **None.** No migration.
+
+### Tests / verification
+- **1201/1201 vitest (+9), tsc clean, 57/57 Playwright.**
+- `findPlayerMatch.test.ts` +4 (`findNearestMatchForPlayer`: soonest today-or-later, today counts, all-past → most recent, none → null). `tournament-landing.test.tsx`: rewrote the old "no-match-today" test (a future-dated match now RESOLVES — the whole point of Fix 1) + added soonest-of-several, all-past fallback, genuine-no-match note, and Fix 2 (See-all-players lists the league roster + a participant resolves; a non-participant → ask-admin + not stored). Added a `@/lib/supabase` + `getTournamentPlayers` mock to the landing test.
+- **`roundsQueryGuard` untouched** — the two new reads are `players` + `tournament_players`, lazy.
+
+### Considered but not changed (confession)
+- Membership uses `tournament_players` per the confirmed decision (not pairings) — the reason: pairings are built the night before, so an assigned-but-unpaired player must still resolve as "in the tournament".
+- `tournamentPlayersFromDays` still powers the DEFAULT picker (pairings roster) — unchanged; the full roster is only the fallback.
+- storedName for a stored-but-unpaired player falls back to "you" (not in the pairings roster) — a deep edge; identity is stored as `player_id`, name is looked up.
+- Pre-existing `react-hooks/set-state-in-effect` lint (homepage / Tournament / Settings) untouched; new code lint-clean.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+> **Relay A patch — nearest-match resolution + missing-name fallback (branch `tournament`).** Device-memory "go to your match" resolves the stored identity to the player's nearest today-or-later match (most-recent fallback), naming the day, instead of only today's. "Who are you?" gains a "See all players" full-league-roster fallback (membership via `tournament_players`); a league player not in the tournament is told to ask the admin.
+
+### Tomorrow's priority
+- **Relay B:** soft scorer-claim + takeover; opposing read-only view + flag-a-hole; 18-hole review grid; match-card polish; tee-time entry (new migration); Phase 4 dashboard/override.
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD38.
+
+--- **034 (migration file):** `tournaments.is_published boolean NOT NULL DEFAULT false` (Dad applied to prod on his track; committed verbatim, DO NOT re-apply). **Q4 (`5431640`):** greensomes team handicap flipped to 60/40 weighted (`GREENSOMES_TEAM_HANDICAP_METHOD` `sixty_forty` — branch already existed); deliberate value change, exactly 2 goldens moved (`greensomesTeamHandicap(5,15)` 10→9, `(10,20)` 15→14), 25/27 byte-identical (equal-spread pairs preserve match strokes; the equal-CH loadMatch golden unmoved). **Test/Live toggle (`177e5e1`):** `is_published` plumbed through `Tournament` type + `updateTournament`/`setTournamentPublished` + e2e mock default; `Toggle` promoted from Settings.tsx to `src/components/admin/Toggle.tsx`; one-tap Test/Live in the Tournament header card (default Test), optimistic-persist-reconcile like `assign`. **Landing (`3888770`):** public `/tournament` resolves the single active tournament, gated on `is_published`; lists all days (day-ordered) + pairings (§0 colours, players, tee "—"), current day highlighted, each match links to `/tournament/match/[id]`; empty state when none/Test; reuses Phase 2 loaders (Promise.allSettled per day); no new `rounds` reads. **Hero + device memory (`27e628f`):** homepage `TournamentHero` (own fetch → NULL unless `is_published && ended_on IS NULL`, so league homepage byte-identical) links to the landing; `src/lib/deviceMemory.ts` (guarded localStorage, `gobs:` namespace) stores a player IDENTITY; landing "Who are you?" picker → per-day resolve to the player's match (`findMatchForPlayer`) → "Go to your match" + "Switch player". **1192/1192 vitest (+20 net over 1172), tsc clean, 57/57 Playwright (+4); 25/27 goldens unchanged, 2 moved intentionally (Q4).** **Tee-time: no column exists — landing shows "—"; tee-time entry is a fast-follow needing its own migration.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD38 (folds 031 + 032 + 033 + 034).**
+
+*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — soft closeout — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.2 Relay A — discovery + identity; branch `tournament`)
+
+### Where we left off
+
+Five commits (migration file + Q4 engine + 3 UI). Tournament discovery is live end-to-end: admin flips Test→Live, a hero appears on the homepage, the public `/tournament` landing lists the days + pairings, and a player self-identifies once to land on their match. Not touched: `scorecard/page.tsx`, league engine, the match scorecard surface. Next is **Relay B** (soft scorer-claim + takeover, flag-a-hole, 18-hole review grid, match-card polish, tee-time entry, Phase 4 dashboard/override).
+
+- **Migration 034 file** (`supabase/migrations/034_tournaments_is_published.sql`) — `is_published boolean NOT NULL DEFAULT false`, verbatim. Dad had applied it to prod (spec said "applied before this relay" but hadn't been; a read-only `information_schema` check first turned it up missing, then present after he fixed it). DO NOT re-apply.
+- **Q4 greensomes 60/40** (`matchplay.ts`) — flipped `GREENSOMES_TEAM_HANDICAP_METHOD` to `sixty_forty` (`0.6·low + 0.4·high`, `Math.round`; the branch already existed). Deliberate value change: **2 goldens moved** (`greensomesTeamHandicap(5,15)` 10→9; `(10,20)` 15→14). 25/27 stay byte-identical, verified by hand: side strokes `[0,5]` (14−9=5, spread preserved), the §3.2 halved outcome (same), and the loadMatch greensomes golden (equal-CH pairs (10,10)/(11,11) → 60/40 == 50/50). Tournament-only; league `computeTeamHandicap` (alternate_shot) untouched → no golden-master impact.
+- **is_published plumbing + Test/Live toggle** — `Tournament.is_published` (required); `createTournament` inserts `false` (default Test); `updateTournament` Pick + `setTournamentPublished(id, v)`. `Toggle` promoted from `Settings.tsx` → `src/components/admin/Toggle.tsx` (Settings imports it; behaviour unchanged). Tournament header card: Toggle + "Test — not shown to players" / "Live — shown on the homepage", optimistic flip → persist → `load()` on failure. e2e mock defaults `is_published:false` on seeded tournaments.
+- **Public `/tournament` landing** — client route; `getActiveTournament()` gated on `is_published` (Test/none → empty state). `getTournamentSessions` (day-ordered) → `loadSessionMatches` per day (`Promise.allSettled`, per-day error note). Days visible + collapsible, current day (`played_on === todayLocal()`) highlighted with a "Today" badge; each match row = coloured sides + players + tee "—", links to `/tournament/match/[id]`. **No new `rounds` reads → `roundsQueryGuard` untouched.**
+- **Homepage hero + device memory** — `TournamentHero` (own `getActiveTournament` fetch, renders NULL unless `is_published && ended_on == null`) at the top-of-main slot in `page.tsx`; league homepage byte-identical when null. `src/lib/deviceMemory.ts` stores `player_id` (identity) in localStorage (guarded, `gobs:` namespace). Landing panel: no id → "Who are you?" picker (roster from the loaded pairings) → pick stores; has id → resolve current day's match (`findMatchForPlayer`) → "Go to your match" + "Not you? Switch player" (clears). Identity (not match id) → day 2/3 auto-resolve.
+
+### DB changes
+
+- **Migration 034** applied to prod (Dad's track); file committed verbatim. `Tournament` type + e2e mock updated. Next `db:backup` folds 031+032+033+034 → **TD38**.
+
+### Tests / verification
+
+- **1192/1192 vitest (+20 over 1172), tsc clean, 57/57 Playwright (+4).**
+- Q4: 2 moved golden values + comment updates (`matchplay.test.ts`). Toggle: DOM flip both ways + persist (`admin-tournament`), `createTournament` default Test + `setTournamentPublished` (`dataLayer`). Landing: DOM (3 days + pairings future-dated, links, tee "—", today-highlight, per-day error isolation, empty state); e2e (published lists days + click-through; Test → empty). Hero: isolation (published&!ended → shows, else null); e2e (homepage shows/absent). Device memory: `deviceMemory` get/set/clear + guards; `findMatchForPlayer` per-identity across days + roster; landing who-are-you → pick → go-to-match → switch, stored id auto-resolves current day, no-match note.
+- **Isolation / `roundsQueryGuard` untouched** — landing/hero read tournaments + tournament_sessions + go through `loadSessionMatches`; zero new `from("rounds")`.
+
+### Considered but not changed (confession)
+
+- Not touching `scorecard/page.tsx` / league engine / match scorecard surface (`tournament/match/[matchId]/`). `matchplay.ts` change was the authorised Q4 flip only.
+- Landing route is `/tournament` (single active tournament), not id-based — per confirmed decision.
+- **Tee-time: no column exists** anywhere; landing renders "—". Entry is a fast-follow needing its own migration (out of scope).
+- Pre-existing `react-hooks/set-state-in-effect` lint errors (homepage + Tournament/Settings mount effects) left as-is (unchanged count); new code lint-clean.
+- Device-memory roster is built from loaded pairings (players who have a match), not `getTournamentPlayers` — no extra query, and "Who are you?" only needs players who can go to a match.
+
+### ROADMAP entries I would have written (did NOT edit ROADMAP.md)
+
+> **Q4 — Greensomes team handicap → 60/40 weighted (branch `tournament`).** 60% of the lower course handicap + 40% of the higher, .5 up. 2 goldens moved.
+>
+> **Phase 3.2 Relay A — tournament discovery + identity (branch `tournament`).** `tournaments.is_published` (migration 034) + admin Test/Live toggle (default Test). Public `/tournament` landing (3 days + pairings, links to match scorecards, empty state) gated on is_published. Homepage hero when a live, un-ended tournament exists (league byte-identical otherwise). "Who are you?" localStorage device memory (`player_id`) resolves per-day to the player's match; switch-player resets. Tee-time column is a fast-follow (none exists).
+
+### Tomorrow's priority
+
+- **Relay B:** soft scorer-claim + one-tap takeover; opposing-side read-only live view + "Flag this hole"; read-only 18-hole review grid; match-card visual polish; tee-time entry (needs a new migration + a session/match column); Phase 4 dashboard/override.
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD38 (folds 031 + 032 + 033 + 034).
+
+--- **Soft closeout:** the card hid its score inputs the instant a match decided (`status === "complete"` → inputs gone), so a fat-fingered stray tap that closed a match early was uncorrectable — the inputs that would fix it were gone (confirmed live: a match closed on a stray tap and scoring was locked out). That contradicted the locked "soft closeout" intent. **Fix (`MatchCard` render):** the finish banner now renders ABOVE the inputs, and the inputs (steppers + hole context + outcome line) ALWAYS render — no hide, no edit-mode tap, no gate. Because the banner is derived from `computeMatchState` over the optimistic scores, correcting a stroke that un-decides the match recomputes to `in_progress` and the banner clears **automatically** — no reopen path. Removed the now-misleading `inputsHidden` seam helper. `scoredBeyondCloseout` + the Phase-4 `onRequestReopen` hook unchanged. Singles: per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner. No engine/`matchplay.ts` change. **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+
+*Prior session (2026-07-27):* Tournament Phase 3.1 FIX — soft closeout — see the section below.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 FIX — soft closeout; branch `tournament`)
+
+### Where we left off
+
+One render-branch fix on the match scorecard, one commit (`374a6ab`). Surface only (`src/app/tournament/match/[matchId]/` + its seam `matchScorecard.ts`). No change to `scorecard/page.tsx`, the league engine, or `matchplay.ts`. SSOT holds. Next is still 3.2 (scorer claim, opposing read-only view, 18-hole review grid, device memory).
+
+- **The flaw.** `MatchCard` gated on `const hidden = inputsHidden(state)` (= `status === "complete"`); a ternary `{hidden ? banner : inputs}` rendered ONLY the banner when decided, dropping the steppers/hole-context/outcome. A stray tap that closed a match early was then uncorrectable — the halve test couldn't even be run because scoring was locked out.
+- **Fix.** Replaced the ternary: `{banner && <MatchClosedBanner/>}` (with a bottom margin) renders ABOVE, and the inputs block ALWAYS renders below. Banner = "currently decided", inputs = "correct if needed". No confirmation / edit-mode / admin gate — one trusted in-person group with paper backup; a stray tap is a far smaller cost than a lockout.
+- **Auto-clear falls out of the existing recompute.** `banner = finishBanner(state, loaded)` and `state = useMemo(() => recomputeState(loaded, scores), ...)` = `computeMatchState` over the optimistic scores; `finishBanner` returns null unless `status === "complete"`. So correcting a stroke → scores change → recompute → not complete → banner gone, match live again. No reopen path.
+- **Removed `inputsHidden`** from the seam (now misleading — inputs are never hidden) + its page import + its one seam-test assertion (→ `expect(state.status).toBe("complete")`).
+- **Singles:** each `MatchCard` derives its own state, so it's automatically per-match — a decided match shows banner + live inputs while the other plays; correcting the decided one un-clears only its banner.
+- This supersedes the original §5 "remaining holes are not offered" — inputs now stay live for all holes on a decided match, exactly as during live play. `onRequestReopen` stays for genuine post-round admin edits (Phase 4).
+
+### DB changes
+
+- **None.** Render-branch only.
+
+### Tests / verification
+
+- **1172/1172 vitest (+5), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.**
+- `tournament-match-scorecard.test.tsx`: +5 (decided match renders banner + editable inputs for singles / four-ball / greensomes; correcting a stroke that un-decides → banner disappears + inputs still editable, DOM drives the real recompute; singles — correcting the decided match clears only its banner, the other untouched). **Inverted 2 existing assertions** (the closeout test + the singles-independence test) from "inputs hidden on complete" → "inputs present". `matchScorecard.test.ts`: dropped the `inputsHidden` assertion.
+- The match e2e (`e2e/matchScorecard.spec.ts`) still passes — it enters through a closeout and asserts the banner, which still shows; it never asserted inputs were hidden.
+
+### Considered but not changed (confession)
+
+- No engine/`matchplay.ts` change — status + banner stay derived; the fix is purely which branches render.
+- Removed `inputsHidden` rather than leave misleading dead code; kept `finishBanner`/`missingHoleGap`/etc.
+- Pre-existing lint (`react-hooks/set-state-in-effect` `Tournament.tsx:216`, unused `Side` in `loadMatch.ts`) untouched; new code lint-clean.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 fix — soft closeout (DONE 2026-07-27, branch `tournament`).** A decided match keeps its score inputs live beneath the finish banner (no hide, no gate), so a stray tap that closes a match early is correctable in-round. The banner is derived from `computeMatchState`, so a correction that un-decides the match clears the banner automatically — no reopen path. Applies per-match on singles.
+
+### Tomorrow's priority
+
+- **Phase 3.2:** scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid; "who are you?" device memory (localStorage).
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37.
+
+--- a live card taken offline was being replaced ~3s later by "This match couldn't be found." Two defects: (1) the §8 background refetch shared one load path with the mount load and `setState`'d the error/not-found state on failure, destroying the live card — split into `initialLoad` (owns error UI) + best-effort `backgroundRefresh` (swallows failures, never clears state, may only promote a transient `offline` mount → `ready`); (2) every `loadMatch` read ignored the Supabase `error` field so an offline read (`data:null`) threw `MatchNotFoundError` — added `MatchLoadError` + an `unwrap({data,error})` on every read so a network failure → a new retryable `offline` state (never the not-found copy), a genuine zero-row result still → not-found. Reconcile now ports the league card's **load-then-overlay** (`overlayPending`: server truth base + this match's pending/in-flight queue items) so a refresh picks up other scorers' writes without clobbering local un-synced entries. **Self-recovery:** the 30s visible-poll fires regardless of load state (stuck-offline foreground card recovers ~30s, no tab switch) + a new `window` `online` listener for near-instant recovery. **F1 (Medium):** the card showed no hole context — surfaced `HoleMeta.yardage` additively and render a per-hole row (Hole # · Par · yds · SI) once per card, all three formats. **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.** **⚠ Carryover unchanged: relay migrations 027 → 028 → 030; `npm run db:backup` → TD37 (folds 031 + 032 + 033).**
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 FIX — hole context + offline crash; branch `tournament`)
+
+### Where we left off
+
+Two browser-found fixes on the new match scorecard, one commit (`f5d315f`). Surface only (`src/app/tournament/match/[matchId]/` + `loadMatch`). No change to `scorecard/page.tsx` or the league engine. SSOT holds. Next is still 3.2 (scorer claim, opposing read-only view, 18-hole review grid, device memory).
+
+- **F2 defect #1 — background failure destroyed the live card.** `page.tsx` had one `doLoad` that `setState`'d on every call; the §8 focus/visibility/poll effect called it, so a background network failure returned `{kind:"error"|"not_found"}` and blew away the `{ready}` card. **Fix:** `initialLoad()` alone owns the error UI; `backgroundRefresh()` is best-effort — `if (next.kind !== "ready") return;` (swallow, keep card + local scores). On success it reconciles; `setState(prev => prev.kind==="ready"||prev.kind==="offline" ? next : prev)` promotes a transient offline mount → ready but never demotes a live card.
+- **F2 defect #2 — network error rendered as "not found."** Every `loadMatch` read ignored the Supabase `error`; offline (`data:null,error:set`) → `MatchNotFoundError`. **Fix:** new `MatchLoadError` (transient) + `unwrap({data,error})` on ALL reads (primary matches, session, tournament, round_players, scores, team_scores, holes). Supabase `error` → `MatchLoadError` → new `offline` state (retry copy, NEVER "not found"); genuine null-rows (no error) → `MatchNotFoundError`. `loadGroup` catch order: MixedTees/HolesMissing → setup_error; MatchNotFoundError → not_found; MatchLoadError → offline; else → error.
+- **Reconcile (load-then-overlay).** New pure `overlayPending(loaded, base, pendingScores, pendingTeam)` in `matchScorecard.ts`: base = server truth (`initOptimisticScores`), overlay this match's non-terminal queue items (score by `round_player_id → playerId`, team by `team_number → side`), scoped to `session.roundId`. Used on BOTH initial + background success, so a refresh surfaces other scorers' server writes while keeping the local scorer's un-synced entries.
+- **Self-recovery of a stuck foreground card.** The §8 effect is mounted independent of load state → its **30s visible-poll keeps firing in the `offline` state** (recovers ~30s, no tab switch). Plus a new `window` `online` listener → **near-instant** recovery when signal returns. All triggers (`online` / 30s poll / focus / visibility) route through `backgroundRefresh`, so a failed refresh can never crash the card.
+- **F1 — hole context.** `HoleMeta.yardage?` added; `loadHolesByTee` select gains `yardage` (no new query). `MatchCard` renders `Hole {n} · Par {p} · {y} yds · SI {si}` once per hole from `loaded.holes[hole-1]`, identical across all three formats (yardage segment omitted if null).
+
+### DB changes
+
+- **None.** Code-only. `holes.yardage` already existed; the loader just selects it now.
+
+### Tests / verification
+
+- **1167/1167 vitest (+11), tsc clean, 53/53 Playwright; all 27 goldens byte-identical.**
+- `matchScorecard.test.ts` +3 (`overlayPending`: score overlay by rp→player; ignores wrong-round/unknown-player; greensomes team overlay). `loadMatchErrors.test.ts` +2 NEW (Supabase error → `MatchLoadError` not `MatchNotFoundError`; null-rows → `MatchNotFoundError` — direct supabase mock). `tournament-match-scorecard.test.tsx` +6 (background-fail keeps card + preserves score + no not-found; MatchLoadError initial → offline not not-found; genuine bad-ID → not-found; self-recovery via `online`; reconcile overlays server + keeps pending; F1 hole-context row). `loadMatch.test.ts` +2 asserts (yardage surfaced). `e2e/matchScorecard.spec.ts` +hole-context assertion (350 yds via the real loader).
+- **`roundsQueryGuard` untouched** — no new `from("rounds")` reads; `unwrap` and the yardage column are the only loader edits.
+
+### Considered but not changed (confession)
+
+- Did NOT touch `scorecard/page.tsx`/league engine — ported the overlay pattern.
+- `matchplay.ts` unchanged; `HoleMeta.yardage` optional so all fixtures/goldens stay valid.
+- Background refresh recovers a card from `ready`/`offline` only; genuine `not_found`/`setup_error`/`error` stay put until reload (background never routes TO the error UI, only away from a transient offline).
+- Pre-existing lint (`react-hooks/set-state-in-effect` in `Tournament.tsx:216`, `Side` unused in `loadMatch.ts`) left untouched — not this fix's scope; new code lint-clean.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 fix — hole context + offline crash (DONE 2026-07-27, branch `tournament`).** Match card shows per-hole #/par/yds/SI (yardage surfaced additively on `HoleMeta`). Background refresh is best-effort — a failed offline refetch no longer destroys the live card, and a network error is classified transient (`MatchLoadError` → retryable `offline` state), never "match not found." Self-recovers via the 30s poll + an `online` listener. Reconcile ports the league card's load-then-overlay (`overlayPending`: server truth + pending queue items).
+
+### Tomorrow's priority
+
+- **Phase 3.2:** scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid; "who are you?" device memory (localStorage).
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37.
+
+---
+
+## 2026-07-27 (Tournament Phase 3.1 — match-play scorecard; branch `tournament`)
+
+### Where we left off
+
+Phase 3.1 shipped: the public match-play scorecard for all three formats, plus the WriteQueue team-scores extension and the §0 day-card piggyback. Route is **not** gated (middleware matcher is `/admin` only). Next is 3.2 (scorer claim/takeover, read-only opposing view, 18-hole review grid, "who are you?" device memory) — none built this session.
+
+- **Commit 1 — WriteQueue extended for `team_scores` (`7eec596`).** `WriteQueue<P = ScorePayload>` generic; `getTeamWriteQueue()` singleton writes `team_scores` (onConflict `round_id,team_number,hole_number,ball_index`) with its own localStorage namespace. Structural `keyOf` (score key unchanged). **Why two singletons, not a discriminated union:** the off-limits league scorecard (`src/app/round/[id]/scorecard/page.tsx`) reads `getWriteQueue().getItems()[].payload.round_player_id` un-narrowed — widening that queue's item type would break those reads and force an edit to a forbidden file. Keeping `getWriteQueue()` typed `WriteQueue<ScorePayload>` leaves every score-queue consumer untouched.
+- **Commit 2 — the scorecard + engine/loader (`e488332`).**
+  - **Engine (§10, authorised additive only):** `MatchState.countingUnitA/B` — four-ball only, the 0|1 index of the counting ball; `null` on unresolved holes AND ties; `undefined` for greensomes/singles. All 27 goldens byte-identical; +1 new golden (stroke flips which ball counts).
+  - **Loader (additive):** `LoadedMatch` surfaces per-player `gross[18]`, per-side `teamGross`, and `roundPlayerId` (the individual-score write FK). Same arrays the engine consumed — no parallel fetch. No new `rounds` reads.
+  - **Surface** (`src/app/tournament/match/[matchId]/`): header `points — margin · thru` with `thru = closedOutHole ?? thru`; singles renders TWO headers sharing ONE hole pointer/nav; finish banner three shapes off `result`+`closedOutHole` (early `N&M` / on-18 `n up` / halved); missing-hole amber only for a genuine out-of-order gap, inputs stay live past it (only closeout hides inputs); best-ball `←` from the engine (tie → both present balls, lone ball → itself, presence check); greensomes dots from the side's collapsed match strokes. Reopen hook **`onRequestReopen`** left unwired for Phase 4. Reuses `TeamHoleEntry` + the league dot-rail/prev-next pattern.
+  - **Pure seam** `src/lib/tournament/matchScorecard.ts` (no React/Supabase): assembles engine inputs from optimistic scores + derives all labels from `MatchState`.
+  - **§0 piggyback:** admin day-card pairings summary now colours names by side + adds `USA`/`CANADA` headers from `tournaments.side_a_name/side_b_name`.
+
+### §8 refresh decision
+
+Refetch on `focus`/`visibilitychange` + a 30s poll that runs **only while the tab is visible** (paused when hidden). No Supabase realtime (the league app has none; ~50 concurrent connections over a 4-hr round is the worst battery profile). The scorer's own device updates optimistically and needs no poll; a non-scorer viewer sees others' entries at up to ~30s — acceptable; Phase 4's dashboard can add realtime if it ever needs sub-30s.
+
+### DB changes
+
+- **None.** Code-only over the 031/032/033 substrate. No new migration.
+
+### Tests / verification
+
+- **1156/1156 vitest (+34 over 1122), tsc clean, 53/53 Playwright (+1); all 27 match goldens unchanged.**
+- `matchplay.test.ts` +4 (§10 four-ball counting ball: stroke-flip, tie→null, lone-ball→index, non-four-ball→undefined). `matchScorecard.test.ts` +15 (cross-surface parity: recompute over the loader's own grosses deep-equals `loaded.state` for all 3 formats; buildMatchInput round-trip; offline edit updates status; counting marks; missing-hole gap/release; 3 banner shapes; unitNet). `WriteQueue.test.ts` +4 + `instance.test.ts` +2 (team queue enqueue/collapse/persist/isolation + table routing). `tournament-match-scorecard.test.tsx` +8 DOM (render/outcome + counting ←; one `team_scores` row at `ball_index 1` never 2; offline header update, no reload; singles two independent matches; closeout hides inputs + scored-beyond note; missing-hole persistence; friendly `MixedTeesInMatchError` state; write-failure banner). `e2e/matchScorecard.spec.ts` +1 (seed singles match → open → enter through a closeout → finish banner).
+- **`roundsQueryGuard` untouched** — the surface loads via `loadMatch`; zero new `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **Did NOT touch** `src/app/round/[id]/scorecard/page.tsx` or the league scoring engine (import only) — the WriteQueue design was chosen specifically to avoid needing to.
+- **Did NOT extract** the league card's inline stepper/nav into shared components — ported the pattern locally (reused `TeamHoleEntry`) to avoid destabilising the highest-risk file.
+- **`matchplay.ts`**: only the authorised counting-ball addition; no other change.
+- **Per-player "net N" label** IS shown (spec §4 requires it) via a pure helper reusing the engine's own `getHandicapStrokes` allocator + loader-provided match strokes — not a reimplementation of net selection or status (those still come only from `MatchState`).
+- **Pre-existing lint:** `react-hooks/set-state-in-effect` errors already exist on `master`/`tournament` (e.g. `Tournament.tsx:216`) and the app deploys — left untouched (out of scope). New surface code is lint-clean.
+- **`onRequestReopen` reopen hook** left unwired (Phase 4 wires the admin override).
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 3.1 — Match-play scorecard (DONE 2026-07-27, branch `tournament`).** Public `/tournament/match/[id]` card for all three formats; every value from `loadMatch`/`matchplay`, optimistic local recompute offline. Additive engine field `countingUnit{A,B}` (four-ball counting ball) + loader surfaces `gross`/`teamGross`/`roundPlayerId`. `WriteQueue` made generic + `getTeamWriteQueue()` so alternate shot has offline durability. Day-card pairings now side-coloured with USA/CANADA headers. Reopen hook `onRequestReopen` left unwired for Phase 4.
+
+### Tomorrow's priority
+
+- **Phase 3.2** on top of this surface: scorer soft-claim + one-tap takeover; opposing-side read-only live view with "Flag this hole"; read-only 18-hole review grid (check against the paper card); "who are you?" one-time device memory (localStorage, no accounts) so a player lands on their own match in one tap.
+- **Carryover DB chores:** relay migrations 027 → 028 → 030; then `npm run db:backup` → TD37 (folds 031 + 032 + 033).
+
+---
+
+## 2026-07-27 (Tournament Phase 2.2c — pairings fixes + day-card visibility; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2c — three bug/UX fixes on the 2.2b pairings surface plus day-card pairings visibility. No scorecard/dashboard.
+
+- **§1 — Edit/Add slot selection blanked the field (bug).** Root cause: a slot's option list excluded every locally-picked player *including its own*, and `PlayerCombobox` derives its display label by finding `value` inside `options` — so selecting a player removed it from its own list and the field blanked. Fix: one shared **`slotOptions(roster, side, currentValue, excludeIds)`** used by both builders — it excludes grouped-elsewhere/picked-in-other-slots but **always re-adds the slot's own `currentValue`** (label from the full roster). Add Group passed the current value already (latent); Edit passed the *original*, hence the visible bug. Documented the invariant as a comment on `PlayerCombobox` so the next filtering caller doesn't rediscover it.
+- **§2 — fill / clear a seat in place.** `updateGroup` gained two branches beside swap/tee: **fill** (`teamNumber`+`toPlayerId`, no `fromPlayerId` → INSERT `round_players` on that team_number with the group's tee + CH, validated like create) and **clear** (`teamNumber`+`fromPlayerId`, no `toPlayerId` → DELETE that row; `team_number`/match/`group_number` untouched). Clearing the group's **last** player → `EmptyGroupError`; both gated by the group has-scores check. The Edit modal now renders **every** seat (occupied + empty) as a combobox (× clears, empty fills), reconciles on Save in **clear → fill → swap** order, and on any op failure **reloads the group from the DB** (`loadGroups`) into an inline-error modal so the shown state is the persisted state. Removed the "remove the group and re-add it" copy.
+- **§3 — day-card pairings summary.** `Tournament.tsx` `load()` now batch-loads matches for every day via `Promise.allSettled(sessions.map(loadSessionMatches))` and renders a compact `DayPairings` block under each card ("N groups · M players" + `A / B  v  C / D` per group; singles = two lines; amber dot on incomplete; "No pairings yet."). **Per-day isolation:** a day whose loader throws (mixed tees / missing holes) shows an inline "Couldn't load pairings — check this day's groups" note; every other day still renders and the tab stays usable. Reuses `loadSessionMatches` — no new query path, no recomputation.
+- **§4 — vocabulary.** `STANDARD_DAYS` → "Day 1 — Alternate Shot", "Day 2 — Best Ball", "Day 3 — Singles"; both `FORMAT_LABEL` maps (Tournament + PairingsPanel) → "Alternate Shot" / "Best Ball" / "Singles". `SessionFormat` tokens (`greensomes` / `four_ball_match` / `singles_match`) and all engine behaviour unchanged.
+
+### §3 query count
+
+The Tournament tab now loads matches for every day: `loadSessionMatches` per day, in parallel. Each is **~6 reads** (session, matches, tournament, round_players, scores, holes-per-tee) or **~7** for a greensomes day (adds team_scores). A standard 3-day tournament ≈ **19–21 parallel reads**. Reused the canonical loader per the no-new-query-path rule; a future `teamsOnly` mode would trim it (out of scope).
+
+### DB changes
+
+- **None.** Migrations 031/032/033 are the substrate; 2.2c is code-only.
+
+### Tests / verification
+
+- **1122/1122 vitest (+11), tsc clean, 52/52 Playwright.**
+- `pairings.test.ts` (+5: fill an empty seat [row + tee + CH, isIncomplete clears]; clear a seat [row gone, team/group intact, amber returns]; clear-last rejected; fill+clear blocked by scores; a filled seat validated like create). `pairings-panel.test.tsx` (+5: **bug 2.2c regression** — select keeps the name, still listed, excluded elsewhere; swap persists; Edit fill; Edit clear via ×; **partial-failure reload** — tee persists, swap fails, error shown, modal matches DB). `admin-tournament.test.tsx` (+1: one day's loader throwing isolated, other day's summary intact, tab usable).
+- **`roundsQueryGuard` unchanged** — fill/clear + the day summaries add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **After switching a seat to a new player within one Edit session, the original isn't re-selectable** until save (it's still in `groupedIds`). Minor; not required by the spec. Filling/clearing/swapping all work; a within-session "undo to original" would need excluding this group's members from `groupedIds` in the modal.
+- **§3 eager per-day load** adds ~20 parallel reads on tab open (approved) — no lazy/collapse.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2c — Pairings fixes + day-card visibility (DONE 2026-07-27, branch `tournament`).** Fixed the Edit/Add slot-selection blank (shared `slotOptions` keeps a slot's own value; `PlayerCombobox` invariant documented); `updateGroup` fills/clears seats in place (amber groups completable without rebuild; partial-failure Save reloads real DB state); day cards show a per-day pairings summary batched with `Promise.allSettled` (one bad day isolated); day-name/format vocabulary → Alternate Shot / Best Ball.
+
+### Tomorrow's priority
+
+- Phase 3: the match-play scorecard consuming `loadMatch` (singles = one card per foursome, both matches on screen) + score entry writing `scores` / greensomes `team_scores` at `ball_index = 1`.
+
+---
+
+## 2026-07-27 (Tournament Phase 2.2b — pairings builder UI + per-match tee; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2b — the pairings builder, wired to the 2.2a loader/data-layer. Reachable from each day card. NO scorecard/dashboard (those consume this next).
+
+- **Routing decision: in-component full-screen panel** (`src/app/admin/components/PairingsPanel.tsx`, opened via `pairingTarget` state in `Tournament.tsx`), NOT a route. The `/admin` tree navigates purely by panel state; a sub-route would re-mount + re-auth + re-fetch tournament context for no gain. Header has a "← Days" back button.
+- **Single source:** every stroke/handicap/status comes from `loadSessionMatches`/`loadMatch`. The pre-save builder preview uses the SAME `src/lib/tournament/matchStrokes.ts` `computeSideStrokes` the loader uses (extracted this session), so preview and saved card can't diverge. The panel fetches its OWN side roster (`getTournamentPlayers`) rather than trusting a parent prop that goes stale after a Sides edit.
+- **One card per group** (via `group_number`): singles renders two labelled "Match 1 / Match 2" sub-blocks in one card. Amber `isIncomplete` with a "Waiting on N <side> player(s)" reason; loader-throw groups render a "misconfigured" card, not a crash.
+- **Builder:** per-side `PlayerCombobox` slots (filtered to that side's ungrouped players), tee `<select>` (default `DEFAULT_TEE_ID`), live per-slot strokes preview (singles = per pairing row; greensomes/four-ball over filled players). Empty-slot save allowed; all-empty disabled. **Edit** = tee change (whole-group restamp) + occupied-seat swap (adding/clearing a seat → recreate; noted limitation). **Remove** = `DangerModal`, blocked once scores exist.
+- **Error copy:** `pairingsCopy.ts` (pure) maps every typed 2.2a error to distinct plain-language text; `MixedTees`/`MatchHolesMissing` → the misconfigured-card copy. No raw error text, no shared generic. Failures render via the 2.1a banner pattern.
+
+### §1 per-match tee + migration 033
+
+- **Migration 033** (`tournament_matches.group_number` nullable `>0` + `idx_tm_session_group`) — committed verbatim (applied to prod 2026-07-27 via MCP; DO NOT re-apply).
+- `createGroup({…, teeId})` — `teeId` REQUIRED; stamps `round_players.tee_id = teeId` on every row (overrides `preferred_tee_id`) and computes CH from it → a match can never span two tees → `MixedTeesInMatchError` is structurally impossible (test proves `createGroup` output never triggers it). Assigns `group_number = max(session)+1` (singles: both matches share it). `sideAPlayerIds/sideBPlayerIds` are now `(number|null)[]` — nulls are empty slots, positions preserved so singles pairing (index → who-plays-whom) survives partial groups.
+- `updateGroup({…, teeId?})` — optional tee restamps the whole group + recomputes CH; swap still keyed on team_number (singles-swap immune). `deleteGroup({sessionId, groupNumber})` removes by group.
+- **`team_scores` UNIQUE finding:** migration 018's `team_scores_round_team_hole_ball_key UNIQUE (round_id, team_number, hole_number, ball_index)` already enforces one row per (round,team,hole) at `ball_index = 1` — **no migration needed.** Loader reads `ball_index === 1` explicitly (a stray `ball_index = 2` is a visible bug, not silently folded).
+
+### Tests / verification
+
+- **1111/1111 vitest (+11), tsc clean, 52/52 Playwright (+1).**
+- `tests/components/pairings-panel.test.tsx` (+9: error-copy mapping; strokes EQUAL the loader; header counts + tee label; greensomes collapsed CH; singles two matches / one group; partial amber; builder create; failed-mutation banner; has-scores Remove block). `pairings.test.ts` extended for tee stamping/restamping + `createGroup` never triggers `MixedTees` + group_number. `e2e/pairings.spec.ts` (+1: create group → strokes render → change tee → remove).
+- **Test-infra (additive):** e2e `supabaseMock` learned `tournament_matches` + the `tournament_players→players` embed; vitest `FakeSupabase` already had them.
+- **`roundsQueryGuard` unchanged** — the panel + pairings mutations add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **Edit can't add/clear a seat in place** (updateGroup is swap+tee, safely in-place — delete+recreate would risk data loss if the recreate failed). To fill an amber "waiting on 1 player" group or clear a seat, Remove + re-add. Flagged for your call; a safe in-place add/remove would extend `updateGroup`.
+- **Greensomes write shape** (one `team_scores` row at `ball_index = 1`) is now the loader's read contract; Phase 3 score entry must honor it.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032 + 033) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2b — Pairings builder UI + per-match tee (DONE 2026-07-27, branch `tournament`).** Full-screen `PairingsPanel` per day: one card per group (singles = two matches), strokes from the loader, live builder preview via the shared `computeSideStrokes`, tee selector, amber-incomplete + misconfigured states, Edit/Remove under the has-scores rule, every typed error mapped to its own copy. `createGroup` stamps a required per-match tee (mixed tees impossible by construction) + a `group_number` (migration 033); greensomes `team_scores` read locked to `ball_index = 1`.
+
+### Tomorrow's priority
+
+- Phase 3: the match-play scorecard consuming `loadMatch` (singles = one card per foursome, both matches on screen) + score entry writing `scores` / greensomes `team_scores` at `ball_index = 1`.
+
+---
+
+## 2026-07-25 (Tournament Phase 2.2a — canonical match loader + pairings data layer; branch `tournament`)
+
+### Where we left off
+
+Phase 2.2, loader-first half. The canonical `LoadedMatch` assembler + the pairings data layer, fully tested. **NO UI** — the §3 pairings builder (the day card's `Pairings — coming next` hook at `Tournament.tsx`) is the next session, deliberately split so the single-source contract lands before the mobile builder.
+
+- **`src/lib/tournament/loadMatch.ts` — the ONE assembler.** `loadMatch(matchId)` + `loadSessionMatches(sessionId)` share `assembleMatch`. `LoadedMatch` carries the `tournament_matches` row, session `{format,name,dayNumber,playedOn,roundId}`, tournament side names, both `LoadedMatchSide` (side key, display name, team number, players `{playerId,displayName,hiSnapshot,courseHandicap,matchStrokes}`, greensomes `collapsedHandicap`/`sideMatchStrokes`), hole meta, `MatchState`, resolved `ResolvedResult`, and `isIncomplete`. **Every downstream surface (P3 scorecard, P4 dashboard) reads this — nothing recomputes strokes/nets/state/points.**
+- **All math via `matchplay.ts`.** Per-unit `matchStrokes` = `computeMatchStrokes` (singles/four-ball combine all players' CH in aThenB order — mirrors `sideHoleNets` exactly; greensomes collapses each pair via `greensomesTeamHandicap`). Tournament matches run at **100% allowance** (verified `getHandicapAllowance(null)=100`), so PH=CH and raw `round_players.course_handicap` feeds straight in.
+- **Batching + truncation.** `loadSessionMatches` fetches once per table and slices per match. Scores are one session-scoped `.in()` (History-fix per-round pattern) with a `ScoresTruncatedError` guard at `SCORES_ROW_CAP=1000`. No `from("rounds")` in the loader — nothing for `roundsQueryGuard` to scope.
+- **Mixed tees (correction #6): `MixedTeesInMatchError`.** If a match's players span >1 `tee_id` there's no single stroke-index allocation; the loader **throws** rather than allocate three players' strokes against a fourth's tee. (Single-tee is `matchplay`'s documented limitation.) `MatchHolesMissingError` if the tee has no holes.
+- **Pairings `mutations.ts`.** `createGroup({sessionId,format,sideAPlayerIds,sideBPlayerIds})` allocates the next free team numbers (max+1, never reused), writes `round_players` (via `resolveSnapshots` = `preferred_tee_id ?? DEFAULT_TEE_ID` + `computeCourseHandicap` — no new handicap math, no touching RoundSetup) and the matches (1 for greensomes/four-ball, 2 for singles by **slot index**). `updateGroup` swaps a seat keyed on **team_number** (match rows untouched → singles pairing immune). `deleteGroup` removes matches + their round_players, blocked once a team has scores. Typed errors: `EmptyGroupError`, `GroupOverfilledError`, `PlayerNotAssignedToSideError`, `PlayerSideMismatchError`, `PlayerAlreadyGroupedError`, `GroupHasScoresError`, `SessionRoundMissingError`.
+- **§5 (approved):** partial groups persist + `isIncomplete` so an admin override (envelope-rule halved) can land on the match; a **zero-player** group is rejected (`EmptyGroupError`). Over-fill (>2/side) rejected.
+- **§0 piggyback:** Add-Day league-collision copy now uses `formatDisplayDate` (matches Edit-Day); its test assertion updated.
+- **`autoPairSession` deferred** (approved) — singles are the opposing captain's call.
+
+### DB changes
+
+- **None.** Migrations 031/032 are the substrate. `tournament_matches`/`tournament_point_adjustments` were created by 031; this session is the first to write `tournament_matches`.
+
+### Tests / verification
+
+- **1100/1100 vitest (+20), tsc clean, 51/51 Playwright.**
+- New: `loadMatch.test.ts` (+8: singles/four-ball/greensomes goldens with hand-computed `matchStrokes`/nets/`MatchState`/resolved; admin-override precedence; cross-surface strokes equality; batching = one scores/matches read; `ScoresTruncatedError`; `MixedTeesInMatchError`), `pairings.test.ts` (+12: greensomes 1-match/singles 4-teams-2-matches; no team-number reuse across groups; partial persistence + `isIncomplete`; zero-player floor; all five validation errors; **singles-swap immunity**; has-scores gate).
+- **Test-infra (additive):** `FakeSupabase.fromCalls` logs every `from(table)` so the batching test asserts read counts don't scale with match count; `FakeData.tournament_matches` key added.
+- **`roundsQueryGuard` + `tournamentRoundsReads` unchanged** — the loader and pairings code add zero `from("rounds")` reads.
+
+### Considered but not changed (confession)
+
+- **NO §3 UI** — the pairings builder, slot pickers, singles 1-v-1 selection, edit/remove modals, and the day-card wiring are the next session (approved split). This session's DoD is the loader + data layer + tests only.
+- **No combined snapshot helper existed** — `resolveSnapshots` composes the scorecard's tee fallback + `computeCourseHandicap`; RoundSetup left untouched (anti-drift).
+- **Greensomes team gross** reads the lowest `ball_index` per (team, hole) from `team_scores` — greensomes is one ball, so this is the pragmatic read until P3 defines exactly how greensomes scores are written.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (folds 031 + 032) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.2a — Canonical match loader + pairings data layer (DONE 2026-07-25, branch `tournament`).** `loadMatch`/`loadSessionMatches` are the single source of assembled match data (strokes/nets/state/points all from `matchplay.ts`); batched + truncation-guarded; mixed tees within a match throw rather than mis-allocate. Pairings data layer (`createGroup`/`updateGroup`/`deleteGroup`) with sequential non-reused team numbers, singles paired by slot index and swapped by team_number, partial-group persistence for the envelope rule, and full data-layer validation. Pairings UI (§3) deferred to 2.2b.
+
+### Tomorrow's priority
+
+- Phase 2.2b: the pairings UI — wire the day card's `Pairings — coming next` to a builder (`PlayerCombobox` slots per side, explicit singles 1-v-1 ordering, Edit/Remove with the has-scores rule, strokes rendered beside every name from the loader), reusing the 2.1a error-banner pattern.
+
+---
+
+## 2026-07-25 (Tournament Phase 2.1a — admin bug fixes + standard-days redesign; branch `tournament`)
+
+### Where we left off
+
+Phase 2.1a — hardening the admin Tournament tab after manual browser verification of 2.1 surfaced three bugs and an over-generalised day-setup UX. Still NO pairings builder / match scorecard / dashboard (those remain 2.2+).
+
+- **Migration 032 committed verbatim** (`supabase/migrations/032_tournament_session_integrity.sql`) — **already applied to prod 2026-07-25 via Supabase MCP; committed after the fact, NOT re-applied.** Adds `tournament_sessions_tournament_date_unique UNIQUE (tournament_id, played_on)`, changes the session→round FK to **`ON DELETE CASCADE`** (was `SET NULL`), and relaxes the `tournaments` ended-on CHECK to `ended_on IS NULL OR ended_on >= started_on OR is_active = false`. Hand data-repair (not in the file): session 10 had `round_id` NULL and was given round 227.
+- **§1 no silent mutation failures.** `Tournament.tsx` gained an `actionError` state + dismissible red banner. `assign` (setPlayerSide), the End-Tournament confirm (previously **no** catch — the CHECK violation was invisible), and `confirmDelete` are wrapped in try/catch → banner. Add/Edit-day errors stay in-modal.
+- **§2 endTournament date.** Reads `started_on` first; `ended_on = today >= started_on ? today : started_on`. Future-dated tournament no longer records a pre-start end date.
+- **§3 auto-create standard days.** New `STANDARD_DAYS` + `createStandardDays(tournamentId, startedOn)` in `mutations.ts` — three `createSession` calls on **consecutive dates** (new `addDaysISO` in `date.ts`), day_number 1/2/3. Per-day `LeagueRoundOwnsDateError` is caught → the date is collected in `failed` (name+format+date) and the loop **continues**; any other error rethrows. `CreateTournamentModal` calls it after `createTournament` and passes `failed` up → parent renders a banner naming each blocked day. **Day # field removed** from Add Day; parent derives `day_number = max(existing)+1`.
+- **§3.1 edit a day.** New per-card **Edit** → `EditDayModal` (name/format/date) → new `editSession(session, patch)`. On a date change: **let the two UNIQUE constraints classify the collision** (no pre-check — racy/redundant). (1) `UPDATE tournament_sessions.played_on` first — 23505 ⇒ a sibling tournament day owns it → **`TournamentDayDateTakenError`** (nothing moved). (2) `UPDATE rounds.played_on WHERE id AND tournament_id` — 23505 ⇒ a **league** round owns it → **revert step 1** to the original date, then throw `LeagueRoundOwnsDateError`. (3) name/format via `updateSession`. The round MOVES; never a second round. Distinct copy per collision.
+- **§3.2 date display.** `History.tsx`'s inline `formatDate` **moved into `src/lib/date.ts` as `formatDisplayDate`** (single source; History imports it). Used on day cards + header. Inputs keep raw ISO. (Actual output is `Sat, Jul 25, 2026` — comma after weekday, matching History app-wide; see confession.)
+- **§4 session-always-has-a-round.** Day card shows amber **"No round — cannot hold scores"** when `round_id` null. `createSession` already refuses to persist a session whose `ensureTournamentRound` failed (round throws before the session insert) — **locked with a test rather than changed** (working code).
+
+### DB changes
+
+- **Migration 032** — committed verbatim (already in prod, see above). `supabase/schema.sql` still lags (carryover TD37 `db:backup` now also folds 032).
+
+### Tests / verification
+
+- **1080/1080 vitest (+9), tsc clean, 51/51 Playwright.**
+- New/updated: `dataLayer.test.ts` (+7: endTournament not-yet-started; createStandardDays happy + partial-collision; createSession no-persist-on-round-failure; editSession move / day-collision / league-revert), `admin-tournament.test.tsx` (+2: rejected-mutation banner via the side-assign path — avoids DangerModal's 1.5s delay; amber no-round warning), `tournamentRoundsReads.test.ts` (count 4→5 for editSession's tournament-scoped round move), `e2e/tournament.spec.ts` (rewritten for auto-created days + a 4th Add-Day). Both `@/lib/date` mocks switched to `importOriginal` so the real `addDaysISO`/`formatDisplayDate` resolve.
+- **`roundsQueryGuard` unchanged/unweakened** — `editSession`'s round update is `.eq("tournament_id", …)`-scoped, so it's auto-guarded; no allowlist edits.
+
+### Considered but not changed (confession)
+
+- **Date format punctuation.** The spec example is `Sat Jul 25, 2026`; the extracted `formatDisplayDate` (History's existing `toLocaleDateString("en-US", {weekday:"short",…})`) actually emits `Sat, Jul 25, 2026` (comma after the weekday). I chose the **single-source** path the spec directed ("use the existing date helpers") over hand-rolling a comma-free variant, so it now matches every other date in the app. **Flagging for your call** — if you want the exact comma-free form, it's a custom formatter (and would diverge from History again).
+- **Add-Day league-collision copy stays raw-ISO** (`"A league round already exists on 2026-08-01…"`) — unchanged from 2.1 and locked by an existing test; only the new Edit-Day copy uses `formatDisplayDate`. Left as-is to avoid touching an out-of-scope passing test; minor inconsistency flagged.
+- **EditDayModal's `onSave` isn't awaited before `setSaving(false)`** — same fire-and-forget pattern as the existing AddDayModal (kept for consistency, not "fixed").
+- **`.claude/settings.local.json`** was modified before this session; left unstaged (not mine).
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now folds 031 + 032) → TD37.
+
+### ROADMAP entry I would have written (did NOT edit ROADMAP.md)
+
+> **Phase 2.1a — Tournament admin hardening (DONE 2026-07-25, branch `tournament`).** Fixed silent mutation failures (all Tournament-tab mutations now surface errors), `endTournament`'s pre-start end date, and redesigned day setup: creating a tournament auto-creates the three standard days (Greensomes/Four-ball/Singles) on consecutive dates; days are editable (date changes move the round, with distinct copy for league-round vs sibling-day collisions); amber warning when a session has no round. Migration 032 (session UNIQUE + FK CASCADE + relaxed ended-on CHECK) committed verbatim. Day # field removed.
+
+### Tomorrow's priority
+
+- Phase 2.2: pairings builder + `tournament_matches` creation, then the match-play scorecard (consumes `matchplay.ts`).
+
+---
+
+## 2026-07-24 (Tournament Phase 2.1 — data layer + admin setup tab; branch `tournament`)
+
+### Where we left off
+
+Tournament track, Phase 2.1 — the data layer and admin setup surface. Pure logic + one admin tab; NO scorecard, pairings builder, or dashboard (those are 2.2+).
+
+- **New data layer.** `src/lib/tournament/queries.ts` (getActiveTournament, getTournamentById, getTournamentPlayers [TD2 `players` embed], getTournamentSessions, getTournamentWithSessions [batched], getSessionRoundStatus) + `src/lib/tournament/mutations.ts` (createTournament, updateTournament, endTournament [soft: `ended_on` + `is_active=false`, NO row delete → no `ON DELETE SET NULL` cascade], setPlayerSide [upsert on `(tournament_id,player_id)`; null removes], createSession, updateSession, deleteSession, **ensureTournamentRound**).
+- **`ensureTournamentRound` is NOT `ensureRoundShell`** (which is league-scoped + throws `TournamentOwnsDateError`). It find-or-creates a round with `tournament_id` set, `season_id`/`format` NULL, `format_config {}`, and **no primary flight**. On the `rounds_played_on_unique` collision (a league round owns the date) → typed **`LeagueRoundOwnsDateError`** (`code "league_round_owns_date"`); the tab renders friendly copy. (`buy_in` defaults to 10 from the column — harmless, every payout loader filters `tournament_id IS NULL`.)
+- **New admin Tournament tab** (`src/app/admin/tabs/Tournament.tsx`, registered in `admin/page.tsx`). Empty state → Create (name default `"{year} GOBS Ryder Cup"`, USA/Canada, holder defaults to **B**). Active view: header + End Tournament (DangerModal); Sides — every active player (∪ assigned-but-inactive via the TD2 embed) as ≥44px tap-target rows with HI, live counter, amber uneven-sides **warning (never blocks)**; Days — cards + Add Day (Greensomes/Four-ball/Singles), Pairings link disabled ("coming next").
+- **§5.1 session delete (locked decision).** "Empty" is judged on `scores` AND `team_scores` ONLY — **not `round_players`** (pairings are rebuildable the night before; `round_players.round_id` is `ON DELETE CASCADE`). Delete-if-empty removes the session then the round (round delete scoped `.eq("tournament_id")` — never a league round); **blocks** once real scores exist. DangerModal names the loss ("…and its pairings.").
+
+### DB changes
+
+- **None.** Migration 031 (already in prod, committed earlier today) is the substrate; this session adds no migrations. `supabase/schema.sql` still lags (carryover TD37 `db:backup` will fold 027/028/030/031).
+
+### Tests / verification
+
+- **1071/1071 vitest** (+15), **tsc clean**, **51/51 Playwright** (+1).
+- New: `tests/lib/tournament/dataLayer.test.ts` (create→assign→add-day flow; round is tournament-owned), `ensureTournamentRound.test.ts` (existing/create/collision→`LeagueRoundOwnsDateError` + concurrent-insert negative control), `isolation.test.ts` (a FINALIZED tournament round stays off `loadRoundsList` + homepage, with negative control — proves Phase 1.1 holds under real tournament data), `tournamentRoundsReads.test.ts` (documentation-as-test: the tournament `rounds` touches are intentionally `.eq("tournament_id", …)`-filtered), `admin-tournament.test.tsx` (side write + uneven warn + friendly collision copy), `e2e/tournament.spec.ts`.
+- **`roundsQueryGuard`: NO allowlist entries added** — the scanner treats any `from("rounds")` statement mentioning `tournament_id` as guarded, so every tournament touch is auto-guarded (adding entries would trip the stale-entry test). The `.is`-vs-`.eq` imprecision is accepted and logged as in-code tech debt (NOT tightened this session, per decision).
+- **Test-infra (additive, backward-compatible):** `FakeSupabase.failWrite` may now return a coded error `{ code, message }` (to exercise 23505) + a `tournament_players→players` embed + `tournament_*` `FakeData` keys; e2e `supabaseMock` learned the three tournament tables.
+
+### Considered but not changed (confession)
+
+- **No allowlist edits to `roundsQueryGuard`** and the scanner's rule is unweakened — deliberate (see above).
+- **Tournament hard-delete / teardown path** is unbuilt (out of scope). `endTournament` only soft-ends, so the dangerous `ON DELETE SET NULL` → "tournament round becomes a league round" cascade cannot fire this phase.
+- **Greensomes 60/40** still pending Dad — one-line switch behind `GREENSOMES_TEAM_HANDICAP_METHOD` in `matchplay.ts`.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now also folds 031) → TD37.
+
+### Tomorrow's priority
+
+- Phase 2.2: pairings builder + `tournament_matches` creation, then the match-play scorecard (which consumes `matchplay.ts`).
+
+---
+
+## 2026-07-24 (Tournament match-play engine — pure logic; branch `tournament`)
+
+### Where we left off
+
+Pure match-play scoring engine, no UI/queries. `src/lib/tournament/matchplay.ts` + `types.ts`.
+
+- **Match strokes (§2.1):** everyone plays off the LOWEST playing handicap among the match's **units** (players for singles/four-ball, collapsed sides for greensomes), clamped at 0.
+- **Per-hole side value:** greensomes = teamGross − team strokes (team handicap via `greensomesTeamHandicap`, gated by `GREENSOMES_TEAM_HANDICAP_METHOD`, reusing `computeTeamHandicap`'s alternate_shot path); four-ball = best `matchNet` of the side's two players (100% CH — deliberate league departure from USGA 90%); singles = the player's `matchNet` (100% CH — USGA-prescribed, not a departure). Derived value named **`matchNet`**, never `net`.
+- **`computeMatchState`:** holeOutcomes, per-hole points, holesUp, `thru` (consecutive from hole 1 — a gap stops the count), firstUnresolvedHole, status/result/margin/closedOutHole.
+- **Closeout freeze (commit `67ee0c1`, ambiguity-#2 follow-up):** scans holes 1..`thru` for the EARLIEST hole where the lead strictly exceeds holes remaining (dormie does NOT close) and **freezes all state at that hole** — a match decided 5&4 at 14 with 15-18 also filled still records 5&4, not "1 UP". Added `scoredBeyondCloseout` to the state so an admin surface can flag extra scores.
+- **Admin override precedence:** an admin-sourced non-null result wins unconditionally over the engine; `engineResult` returned alongside.
+- **Standings:** banked / in-play / projected, adjustments folded in; nothing stored, always derived.
+- Golden tests: `tests/lib/tournament/matchplay.test.ts` — the §2.1 example, per-format stroke-flips, all five closeout boundaries (dormie must NOT close), the gap case + fill-the-gap negative control, the scored-beyond-closeout freeze case, admin override beating a contradicting engine and an empty scorecard, standings.
+
+---
+
+## 2026-07-24 (Tournament round isolation; migration 031 committed after-the-fact; branch `tournament`)
+
+### Where we left off
+
+Tournament track, foundation layer. `rounds.tournament_id` (nullable bigint) exists in prod: NULL = ordinary league round, non-NULL = belongs to a Ryder Cup tournament. This session (a) committed the migration file, and (b) made tournament rounds invisible to every league surface.
+
+- **Migration 031 committed verbatim.** `supabase/migrations/031_tournament_foundation.sql` was applied to prod 2026-07-24 from the planning chat via Supabase MCP (so the branch had no file). Committed as the EXACT deployed body — NOT re-applied, NOT modified. Adds `tournaments`, `tournament_players`, `tournament_sessions`, `tournament_matches`, `tournament_point_adjustments`, and `rounds.tournament_id`. `rounds_played_on_unique` deliberately LEFT INTACT (a tournament day = ONE round, groups as teams inside it; no league rounds during tournament week — confirmed with product owner).
+
+- **`tournament_id IS NULL` added to every LEAGUE read of `rounds`:**
+  - Top-level: homepage today/yesterday (`page.tsx`), `/leaderboard`, `/round/active`, season stats (`season/page.tsx`), History finalized list (`loadRoundsList.ts`), admin History in-progress (`History.tsx`), admin Played-With today (`PlayedWith.tsx`), RoundSetup `loadRoundForDate` + create pre-check (`RoundSetup.tsx`), season gates (`seasons/queries.ts` — both `getRoundCountForSeason` + `getInProgressRoundsForSeason`, structural even though tournament rounds keep `season_id` NULL), HI-cascade (`Players.tsx`).
+  - Embedded (`.is("rounds.tournament_id", null)`): `playerStats.ts`, `playedWith/compute.ts` (both `fetchPlayedWithRows` + `fetchPairRounds`), `payouts/loadWinnings.ts`, `payouts/loadPlayerWinnings.ts`, player profile round-history (`player/[id]/page.tsx`).
+
+- **PRESERVED (must still see tournament rounds):** all by-id surfaces — `results.ts` (shared engine reused by `/round/[id]/summary`), scorecard, team-card, `EditModeBanner`, `finalizeRoundAdmin`, `reopenRound`. And `ensureRoundShell` / `ensureSeasonAndRoundShell` still CREATE league rounds with `tournament_id` left NULL.
+
+- **New sentinel `TournamentOwnsDateError`** (`ensureRoundShell.ts`, `.code = "tournament_owns_date"`). The find-or-create lookup AND the 23505 re-fetch both filter `tournament_id IS NULL`; when the re-fetch is empty (a tournament round owns the date), it throws this typed error instead of the raw "concurrent insert race" string. NO UI built this session (both callers — homepage team-formation, RoundSetup — already catch; RoundSetup surfaces it via its existing `alert`). Deferred: a friendly UI message for this case.
+
+### DB changes
+
+- **Migration 031 committed (already in prod).** DO NOT re-apply. `supabase/schema.sql` still lags — a `db:backup` catch-up will fold 027/028/030/031 (carryover TD37).
+
+### Tests / verification
+
+- **1029/1029 vitest** (116 files; +2 new). **tsc --noEmit** clean.
+- **NEW `tests/lib/round/tournamentFilter.test.ts`** — loader-level: `loadRoundsList`, `loadWinningsHistory`, `loadPlayerWinnings`, `fetchPlayedWithRows`/`fetchPairRounds`, season gates — each asserts a `tournament_id`-bearing round is ABSENT and the league round PRESENT, each with a **negative control** running the same query shape sans filter to prove the tournament round WOULD appear (non-vacuous).
+- **NEW `tests/lib/round/roundsQueryGuard.test.ts`** — source-scanning invariant: walks `src/` for every `from("rounds")` / `rounds!inner` and asserts each is either guarded by a `tournament_id` filter OR in an explicit by-id/write ALLOWLIST (each entry commented with why). Catches any FUTURE unfiltered league read. Two negative controls: stripping the filter from `loadRoundsList` is caught, and a synthetic new unfiltered read is caught. Plus a stale-allowlist-entry guard.
+- **Existing mocks updated for the new `.is()` chains:** `FakeSupabase.is(col,null)` now matches null-or-undefined (faithful `IS NULL`) + defaults seed `rounds.tournament_id` to null; seven purpose-built test mocks gained `.is()` (played-with, profile ×2, winnings ×2, crossSurface, playerStats-teamcard, ensureRoundShell chain). Sentinel test added to `ensureRoundShell.test.ts`.
+- **Playwright: 50/50 green** (after installing the chromium + chrome-headless-shell binaries). The top-level `rounds` reads e2e drives (homepage/history/RoundSetup/active) keep their seeded rounds (mock's is.null matches a missing col); embedded-filter surfaces are not e2e-driven.
+
+### Considered but not changed (confession)
+
+- **No UI for `TournamentOwnsDateError`** — per instruction, sentinel made available and named only.
+- **Season-gate filter is belt-and-suspenders** — tournament rounds keep `season_id` NULL by convention, so they'd already be excluded by `season_id`; the added `tournament_id IS NULL` makes it structural (a future writer setting `season_id` can't break End Season). Intentional, per decision.
+- **Did NOT touch** any by-id surface, the scoring engine, or `ensureRoundShell`'s insert payload. No unrelated refactors.
+- **Branch:** committed to `tournament` (NOT master) — this is tournament-track work on that branch.
+- **Carryover unchanged:** relay migrations 027 → 028 → 030, then `npm run db:backup` (now also folds 031) → TD37.
 
 ---
 

@@ -19,11 +19,31 @@ import { resolveBuyIn } from "@/lib/payouts/winningsMoney";
 // invariant total for rounds created after migration 022.
 //
 // UI concerns (setSaving, loadRoundForDate, alert) belong to callers.
+//
+// Tournament interaction (031): `rounds_played_on_unique` is deliberately left
+// intact — a tournament day is ONE round per date (each group a team inside
+// it), and no league rounds are played during tournament week. So a
+// tournament round can legitimately own a date. The find-or-create flow is
+// league-scoped: every lookup filters `tournament_id IS NULL`, so it never
+// binds to a tournament round. When the INSERT then hard-fails 23505 because a
+// tournament round already owns the date, the league-scoped re-fetch comes
+// back empty and we throw the typed `TournamentOwnsDateError` (a distinct,
+// named sentinel) instead of the raw "concurrent insert race" string, so a
+// caller can special-case it later. No UI for it this session.
+export class TournamentOwnsDateError extends Error {
+  readonly code = "tournament_owns_date";
+  constructor(public readonly date: string) {
+    super(`ensureRoundShell: a tournament round owns ${date}; no league round can be created`);
+    this.name = "TournamentOwnsDateError";
+  }
+}
+
 export async function ensureRoundShell(date: string): Promise<number> {
   const { data: existing } = await supabase
     .from("rounds")
     .select("id")
     .eq("played_on", date)
+    .is("tournament_id", null)
     .order("played_on", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -62,6 +82,7 @@ export async function ensureRoundShell(date: string): Promise<number> {
         .from("rounds")
         .select("id")
         .eq("played_on", date)
+        .is("tournament_id", null)
         .order("played_on", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -69,7 +90,10 @@ export async function ensureRoundShell(date: string): Promise<number> {
         await ensurePrimaryFlight(refetched.id);
         return refetched.id;
       }
-      throw new Error("ensureRoundShell: concurrent insert race could not be resolved");
+      // League-scoped re-fetch is empty even though the date is taken → the
+      // owner is a tournament round (filtered out above), not a racing league
+      // insert. Surface a typed sentinel rather than the raw race string.
+      throw new TournamentOwnsDateError(date);
     }
     throw new Error("ensureRoundShell: " + error.message);
   }

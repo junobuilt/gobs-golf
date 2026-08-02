@@ -34,6 +34,20 @@ export interface FakeData {
   // multi-flight / flight_teams routing.
   flights?: any[];
   flight_teams?: any[];
+  // Tournament tables (migration 031). Optional; seed as [] to exercise the
+  // tournament data layer (inserts need the array present to push into).
+  tournaments?: any[];
+  tournament_players?: any[];
+  tournament_sessions?: any[];
+  tournament_matches?: any[];
+  // Phase 4 — Level-3 override (direct country-points). Seed [] to exercise the
+  // adjustments reader/writer; absent → a select returns [] and an insert is a
+  // no-op (execute short-circuits on an unknown table).
+  tournament_point_adjustments?: any[];
+  // Migration 038 — sparse per-day side overrides ("alternates"). Seed [] to
+  // exercise the resolver + setPlayerDaySide; absent → a select returns [] and an
+  // insert/upsert short-circuits (unknown table).
+  tournament_day_sides?: any[];
 }
 
 export type WriteOp =
@@ -44,9 +58,14 @@ export type WriteOp =
 export interface FakeOptions {
   // Artificial delay applied to every insert/update before it resolves.
   writeDelayMs?: number;
-  // If set, the supplied function decides whether a given write should fail
-  // (and reject the promise). Called once per insert/update, in order.
-  failWrite?: (op: WriteOp, callIndex: number) => boolean;
+  // If set, the supplied function decides whether a given write should fail.
+  // Called once per insert/update, in order. Return `true` for a generic
+  // failure, or an error object (e.g. `{ code: "23505", message: "…" }`) to
+  // surface a specific Postgres error — needed to exercise code that branches on
+  // `error.code` (e.g. ensureTournamentRound's 23505 → LeagueRoundOwnsDateError).
+  // Returning `false`/`undefined` lets the write succeed. Backward-compatible:
+  // existing boolean-returning callers are unchanged.
+  failWrite?: (op: WriteOp, callIndex: number) => boolean | { code?: string; message?: string };
   // D.1: response for supabase.rpc('finalize_round_with_blind_draws', ...).
   // Defaults to { data: 'finalized', error: null } so legacy tests that
   // walked the End-Round flow continue to redirect to /summary.
@@ -93,6 +112,15 @@ export class FakeSupabase {
     }
     if (!anySeed.flight_teams) anySeed.flight_teams = [];
 
+    // Migration 031: `rounds.tournament_id` is a nullable column — NULL on every
+    // ordinary league round. Seeds written before the column existed omit it;
+    // default it to null here (mirrors the migration's backfill) so league reads
+    // that filter `.is("tournament_id", null)` still see them. Tests exercising
+    // tournament isolation set tournament_id explicitly and are unaffected.
+    for (const r of (this.data.rounds ?? [])) {
+      if (r.tournament_id === undefined) r.tournament_id = null;
+    }
+
     for (const t of Object.keys(this.data)) {
       const rows = (this.data as any)[t] as any[];
       const maxId = rows.reduce((m, r) => (typeof r.id === "number" && r.id > m ? r.id : m), 0);
@@ -108,9 +136,16 @@ export class FakeSupabase {
     this.writes = [];
     this.rpcCalls = [];
     this.writeCallCounter = 0;
+    this.fromCalls = [];
   }
 
+  // Every from(table) is logged (reads AND writes) so tests can assert batching —
+  // e.g. that loadSessionMatches issues ONE `scores` read regardless of match
+  // count. Additive; existing tests ignore it.
+  fromCalls: string[] = [];
+
   from(table: string) {
+    this.fromCalls.push(table);
     return new QueryBuilder(this, table);
   }
 
@@ -123,8 +158,52 @@ export class FakeSupabase {
    * rpcFinalizeResult }) when you want to exercise pool_too_small /
    * not_yet branches. Every call is recorded in rpcCalls.
    */
-  async rpc(name: string, args: any): Promise<{ data: string | null; error: unknown }> {
+  async rpc(name: string, args: any): Promise<{ data: any; error: unknown }> {
     this.rpcCalls.push({ name, args });
+
+    // Phase 4 — model the 035 delete_tournament_cascade SECURITY DEFINER RPC's
+    // leak-safe cascade in memory (the fake has no real FKs). Deletes the
+    // tournament's ROUNDS first — cascading round_players -> scores, team_scores,
+    // and tournament_sessions -> tournament_matches — then the tournament row
+    // (cascading tournament_players + point_adjustments). Every predicate is
+    // scoped to this tournament id, so a league round (tournament_id null or a
+    // different tournament) is untouched. Returns the RPC's jsonb counts. A live
+    // smoke against a throwaway confirms the real Postgres FK behavior.
+    if (name === "delete_tournament_cascade") {
+      const tid = args?.p_tournament_id;
+      const eq = (a: any, b: any) => a === b || String(a) === String(b);
+      const d: any = this.data;
+      const del = (table: string, pred: (r: any) => boolean) => {
+        const arr = d[table];
+        if (!Array.isArray(arr)) return;
+        for (let i = arr.length - 1; i >= 0; i--) if (pred(arr[i])) arr.splice(i, 1);
+      };
+      const doomedRounds = (d.rounds ?? []).filter((r: any) => eq(r.tournament_id, tid));
+      const roundIds = new Set(doomedRounds.map((r: any) => r.id));
+      const doomedRpIds = new Set(
+        (d.round_players ?? []).filter((rp: any) => roundIds.has(rp.round_id)).map((rp: any) => rp.id),
+      );
+      const doomedSessionIds = new Set(
+        (d.tournament_sessions ?? [])
+          .filter((s: any) => s.round_id != null && roundIds.has(s.round_id))
+          .map((s: any) => s.id),
+      );
+      const roundsDeleted = doomedRounds.length;
+      // Children first (mirror the FK cascade), then rounds.
+      del("scores", (s) => doomedRpIds.has(s.round_player_id));
+      del("round_players", (rp) => roundIds.has(rp.round_id));
+      del("team_scores", (ts) => roundIds.has(ts.round_id));
+      del("tournament_matches", (m) => doomedSessionIds.has(m.session_id) || eq(m.tournament_id, tid));
+      del("tournament_sessions", (s) => (s.round_id != null && roundIds.has(s.round_id)) || eq(s.tournament_id, tid));
+      del("rounds", (r) => roundIds.has(r.id));
+      // Then the tournament + its remaining children.
+      del("tournament_players", (tp) => eq(tp.tournament_id, tid));
+      del("tournament_point_adjustments", (a) => eq(a.tournament_id, tid));
+      const hadTournament = (d.tournaments ?? []).some((t: any) => eq(t.id, tid));
+      del("tournaments", (t) => eq(t.id, tid));
+      return { data: { rounds_deleted: roundsDeleted, tournament_deleted: hadTournament }, error: null };
+    }
+
     if (this.options.rpcFinalizeResult) return this.options.rpcFinalizeResult;
     return { data: "finalized", error: null };
   }
@@ -250,7 +329,10 @@ class QueryBuilder<Row = any> {
     }
     if (this.isFilter) {
       const [c, v] = this.isFilter;
-      out = out.filter(r => r[c] === v);
+      // Real Postgres `col IS NULL` is true for a NULL column. Rows inserted
+      // mid-test (or seeds) may simply omit a nullable column, leaving it
+      // `undefined`; treat that as NULL so `.is(col, null)` matches it.
+      out = v === null ? out.filter(r => r[c] == null) : out.filter(r => r[c] === v);
     }
     for (const [c, v] of this.gtFilters) out = out.filter(r => r[c] > v);
     return out;
@@ -272,8 +354,9 @@ class QueryBuilder<Row = any> {
       const op: WriteOp = { type: "insert", table: this.table, payload: created };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       tableRows.push(...created);
       return { data: this.terminal === "list" ? created : created[0], error: null };
@@ -290,8 +373,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const updated: any[] = [];
       for (const r of filtered) {
@@ -314,8 +398,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const removeSet = new Set(toRemove);
       // Cascade: child rows referencing a deleted flight by flight_id go too,
@@ -345,8 +430,9 @@ class QueryBuilder<Row = any> {
       };
       const idx = this.fake._nextWriteCall();
       this.fake.writes.push(op);
-      if (this.fake.options.failWrite?.(op, idx)) {
-        return { data: null, error: { message: "fake write failure" } };
+      const fw = this.fake.options.failWrite?.(op, idx);
+      if (fw) {
+        return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const resultRows: any[] = [];
       const cols = this.upsertConflictCols;
@@ -394,6 +480,15 @@ class QueryBuilder<Row = any> {
       rows = rows.map(rp => {
         const player = this.fake.data.players.find(p => p.id === rp.player_id);
         return { ...rp, players: player ?? null };
+      });
+    }
+
+    // tournament_players -> players (TD2 embed). Mirrors the round_players
+    // branch so getTournamentPlayers resolves the joined player record.
+    if (this.table === "tournament_players" && /players\s*\(/.test(this.selectStr)) {
+      rows = rows.map(tp => {
+        const player = this.fake.data.players.find(p => p.id === tp.player_id);
+        return { ...tp, players: player ?? null };
       });
     }
 

@@ -70,7 +70,11 @@ export default function Players({ players, onRefresh }: Props) {
     const { data: activeRounds } = await supabase
       .from("rounds")
       .select("id")
-      .eq("is_complete", false);
+      .eq("is_complete", false)
+      // A league-wide HI edit must NOT rewrite handicaps inside a live
+      // tournament match (match strokes derive from the HI snapshot). Dad's
+      // targeted D2.6 per-round "Edit HI" affordance stays the precise tool.
+      .is("tournament_id", null);
     if (activeRounds && activeRounds.length > 0) {
       await supabase
         .from("round_players")

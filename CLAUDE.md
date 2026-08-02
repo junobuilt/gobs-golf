@@ -27,6 +27,10 @@ Consult these at the start of any session:
 - **[GOBS_Game_Rules_v1.pdf](./GOBS_Game_Rules_v1.pdf)** — source of truth for
   *how* scoring works. Game formats, handicap application, blind draw,
   money allocation. Read before changing scoring logic or display.
+- **[DATA_PROTECTION.md](./DATA_PROTECTION.md)** — standing register of what
+  protects GOBS data from loss (PREVENT/RECOVER items R1–R10), created after
+  the 2026-07-27 round-loss incident. Update it whenever a data-protection item
+  changes status (`⬜`/`🟡`/`✅`/`🔵`/`❌`) or a new decision is logged.
 
 ---
 
@@ -37,7 +41,20 @@ Consult these at the start of any session:
 **Ask ALL clarifying questions through the chat reply path. Do NOT use
 `AskUserQuestion` or any interactive desktop prompt.** Those open a blocking
 modal on the desktop that freezes a mobile session. Use a plain text reply
-with the question instead.
+with the question instead. This is a standing rule: Claude Code never uses
+interactive desktop prompts while Jonathan may be on mobile — route every
+question to chat.
+
+### Deletion gate (iron-clad)
+
+**No deletion of any data — rounds, round_players, scores, tournament
+matches, DB rows, or files — may be executed via MCP, SQL, or any tool
+without Jonathan's explicit prior review and written go-ahead.** Always
+surface exactly what will be deleted (IDs, counts, scope) and wait for
+approval before proceeding. This applies to cleanup/test-data sweeps and to
+any drop/delete migration. When in doubt, treat it as a deletion and ask.
+(Added 2026-07-28, after the 2026-07-27 round-loss incident; see
+[DATA_PROTECTION.md](./DATA_PROTECTION.md).)
 
 ### Plan-first protocol
 For any code change beyond a one-line typo fix:
@@ -531,6 +548,40 @@ output **can only match or beat** the old engine.
   is guarded in `tests/lib/teamRecommend/recommend.test.ts` (§6.4).
 - **Band default stays 2.5** (`DEFAULT_TOL` in the modal); the backtest band is
   3.0 but the user-facing default is unchanged.
+
+---
+
+### Tournament cup verdict = `cupOutcome()` (SSOT)
+
+The win/retain/in-progress verdict is owned by ONE pure helper,
+`cupOutcome()` in `src/lib/tournament/cup.ts`. Every surface's cup-state
+caption/banner reads it — never a positional or static label (the go-live P0
+bug was a static "holder retains" caption in `PointsBar` that ignored the
+points). Inputs: points per side, **live `holder_side` from the DB** (never
+assume Canada; may be null), `total` (current match count), `decided`.
+**Dynamic thresholds** off the current count — `winLine = total/2 + 0.5`,
+`retainLine = total/2`; never hardcode 8 / 4.5 / 4. **Evaluation order:**
+`CHALLENGER_WINS` (challenger ≥ winLine) → `HOLDER_WINS` (holder ≥ winLine =
+outright majority) → `HOLDER_RETAINS` (challenger's max-reachable
+`challenger + remaining×1 < winLine`; a live match can still yield a full
+point) → else `IN_PROGRESS`. It can decide EARLY (clinch with dead rubbers
+live) — do NOT lock scoring on decision. Null holder = outright win only, a tie
+stays undecided. Guarded by the acceptance table in `cup.test.ts` and the
+cross-surface verdict-equality test in `tournament-cup-surfaces.test.tsx`.
+
+### Greensomes team handicap = 60/40
+
+Greensomes (tournament alternate-shot) team handicap = **60% of the LOWER
+course handicap + 40% of the higher**, rounded to a whole number
+(`Math.round`). It is `greensomesTeamHandicap()` in `matchplay.ts` — the sole
+path (the old half-of-combined convention was removed). Both the engine and
+every display/preview read this one function; never reimplement it.
+
+### CC routes ALL questions to chat (mobile)
+
+Standing rule (restated): Claude Code never uses `AskUserQuestion` or any
+interactive desktop prompt — those block a mobile session and never reach
+Jonathan. Route every clarifying question to the chat / Dispatch reply path.
 
 ---
 

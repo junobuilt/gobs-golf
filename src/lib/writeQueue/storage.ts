@@ -7,36 +7,36 @@
 // SSR). Falls back to an in-memory map and reports isPersistent() = false
 // so the consumer can warn the user.
 
-import type { QueueItem } from "./types";
+import type { QueueItem, ScorePayload } from "./types";
 
-export interface QueueStorage {
-  load(): QueueItem[];
-  save(items: QueueItem[]): void;
+export interface QueueStorage<P = ScorePayload> {
+  load(): QueueItem<P>[];
+  save(items: QueueItem<P>[]): void;
   isPersistent(): boolean;
 }
 
 export const DEFAULT_STORAGE_KEY = "gobs:write-queue:v1";
 
-export interface CreateStorageOptions {
+export interface CreateStorageOptions<P = ScorePayload> {
   /** Override the storage key (mostly for tests). */
   key?: string;
   /** Inject a Storage implementation (mostly for tests). */
   storage?: Storage;
   /** Called once per item evicted to satisfy a QuotaExceededError. */
-  onEvict?: (item: QueueItem, reason: "quota_evict_terminal" | "quota_evict_pending") => void;
+  onEvict?: (item: QueueItem<P>, reason: "quota_evict_terminal" | "quota_evict_pending") => void;
 }
 
-export function createStorage(opts: CreateStorageOptions = {}): QueueStorage {
+export function createStorage<P = ScorePayload>(opts: CreateStorageOptions<P> = {}): QueueStorage<P> {
   const key = opts.key ?? DEFAULT_STORAGE_KEY;
   const onEvict = opts.onEvict ?? (() => {});
   const candidate = opts.storage ?? defaultLocalStorage();
   const ls = candidate && probeWritable(candidate, key) ? candidate : null;
 
   if (!ls) {
-    let mem: QueueItem[] = [];
+    let mem: QueueItem<P>[] = [];
     return {
       load: () => [...mem],
-      save: (items: QueueItem[]) => {
+      save: (items: QueueItem<P>[]) => {
         mem = [...items];
       },
       isPersistent: () => false,
@@ -44,18 +44,18 @@ export function createStorage(opts: CreateStorageOptions = {}): QueueStorage {
   }
 
   return {
-    load(): QueueItem[] {
+    load(): QueueItem<P>[] {
       try {
         const raw = ls.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? (parsed as QueueItem[]) : [];
+        return Array.isArray(parsed) ? (parsed as QueueItem<P>[]) : [];
       } catch {
         return [];
       }
     },
-    save(items: QueueItem[]): void {
-      const tryWrite = (snapshot: QueueItem[]): boolean => {
+    save(items: QueueItem<P>[]): void {
+      const tryWrite = (snapshot: QueueItem<P>[]): boolean => {
         try {
           ls.setItem(key, JSON.stringify(snapshot));
           return true;

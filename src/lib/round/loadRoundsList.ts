@@ -58,6 +58,7 @@ export async function loadRoundsList(): Promise<RoundListItem[]> {
     .from("rounds")
     .select("id, played_on, is_complete")
     .eq("is_complete", true)
+    .is("tournament_id", null) // History finalized list excludes tournament rounds
     .order("played_on", { ascending: false });
 
   const finalized = (rounds ?? []) as Array<{ id: number; played_on: string }>;

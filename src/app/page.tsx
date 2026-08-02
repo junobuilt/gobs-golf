@@ -10,6 +10,7 @@ import { getWriteQueue } from "@/lib/writeQueue";
 import type { QueueItem } from "@/lib/writeQueue";
 import StaleFailureDialog from "@/components/scorecard/StaleFailureDialog";
 import { formatStaleItemsForClipboard } from "@/components/scorecard/stuckItemsClipboard";
+import TournamentHero from "@/components/tournament/TournamentHero";
 import { ensureSeasonAndRoundShell, defaultSeasonName } from "@/lib/round/ensureSeasonAndRoundShell";
 import { scorecardHref } from "@/lib/round/scorecardHref";
 import { getPrimaryFlightByRound, getTeamFlightMap } from "@/lib/flights/resolve";
@@ -172,6 +173,9 @@ export default function HomePage() {
       .from("rounds")
       .select("id, played_on, is_complete")
       .or(`played_on.eq.${today},and(played_on.eq.${yesterday},is_complete.eq.false)`)
+      // Tournament rounds (tournament_id NOT NULL) never surface on league
+      // screens; chains as AND with the .or() date predicate.
+      .is("tournament_id", null)
       .order("played_on", { ascending: false });
 
     if (rounds) {
@@ -592,6 +596,11 @@ export default function HomePage() {
           </Link>
         </div>
       </div>
+
+      {/* Tournament hero — self-contained; renders NULL (homepage byte-identical)
+          unless tournament mode is on. Sits BELOW the GOBS card (spec 2, item 3).
+          Taps through to /tournament. */}
+      <TournamentHero />
 
       <h3 style={{ color: "#0c3057", fontSize: "1rem", marginBottom: "14px", fontWeight: 700 }}>Today's Scorecards / Teams</h3>
 

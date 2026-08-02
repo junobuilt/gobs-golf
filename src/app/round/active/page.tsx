@@ -19,6 +19,7 @@ export default function ActiveRoundPage() {
         .select("id")
         .eq("played_on", today)
         .eq("is_complete", false)
+        .is("tournament_id", null) // "resume today's round" resolves league rounds only
         .order("played_on", { ascending: false })
         .limit(1);
 

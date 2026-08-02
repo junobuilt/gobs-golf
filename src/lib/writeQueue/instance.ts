@@ -6,9 +6,21 @@
 import * as Sentry from "@sentry/nextjs";
 import { supabase } from "@/lib/supabase";
 import { WriteQueue } from "./WriteQueue";
-import type { QueueItem, SentryReporter, TerminalReason, WriteResult } from "./types";
+import type {
+  QueueItem,
+  ScorePayload,
+  SentryReporter,
+  TeamScorePayload,
+  TerminalReason,
+  WriteResult,
+} from "./types";
 
-let instance: WriteQueue | null = null;
+let instance: WriteQueue<ScorePayload> | null = null;
+let teamInstance: WriteQueue<TeamScorePayload> | null = null;
+
+// Distinct localStorage namespace so a stuck greensomes team item never shares
+// state with — or blocks the drain of — individual scores.
+const TEAM_STORAGE_KEY = "gobs:team-write-queue:v1";
 
 /**
  * Return the singleton WriteQueue. Constructs and starts the queue on
@@ -16,12 +28,12 @@ let instance: WriteQueue | null = null;
  * server — components must guard with `typeof window !== "undefined"` or
  * call this only from useEffect.
  */
-export function getWriteQueue(): WriteQueue {
+export function getWriteQueue(): WriteQueue<ScorePayload> {
   if (typeof window === "undefined") {
     throw new Error("getWriteQueue() called during SSR");
   }
   if (instance === null) {
-    instance = new WriteQueue({
+    instance = new WriteQueue<ScorePayload>({
       writer: supabaseUpsertWriter,
       sentry: sentryReporter,
     });
@@ -31,18 +43,44 @@ export function getWriteQueue(): WriteQueue {
 }
 
 /**
- * Test-only: tear down the singleton so the next getWriteQueue() call
- * builds a fresh one. Combined with localStorage.clear() in beforeEach,
- * this gives each test a clean slate.
+ * Return the singleton team-score WriteQueue (tournament greensomes). Same
+ * durability/retry/backoff as the individual score queue, but writes to
+ * `team_scores` and keeps its own localStorage namespace. Constructs + starts
+ * on first call. Throws on the server, like getWriteQueue().
+ */
+export function getTeamWriteQueue(): WriteQueue<TeamScorePayload> {
+  if (typeof window === "undefined") {
+    throw new Error("getTeamWriteQueue() called during SSR");
+  }
+  if (teamInstance === null) {
+    teamInstance = new WriteQueue<TeamScorePayload>({
+      writer: teamScoreUpsertWriter,
+      kind: "team_score_upsert",
+      storageKey: TEAM_STORAGE_KEY,
+      sentry: sentryReporter,
+    });
+    teamInstance.start();
+  }
+  return teamInstance;
+}
+
+/**
+ * Test-only: tear down the singletons so the next getWriteQueue() /
+ * getTeamWriteQueue() call builds a fresh one. Combined with
+ * localStorage.clear() in beforeEach, this gives each test a clean slate.
  */
 export function resetWriteQueueForTesting(): void {
   if (instance) {
     instance.stop();
     instance = null;
   }
+  if (teamInstance) {
+    teamInstance.stop();
+    teamInstance = null;
+  }
 }
 
-const supabaseUpsertWriter = async (item: QueueItem): Promise<WriteResult> => {
+const supabaseUpsertWriter = async (item: QueueItem<ScorePayload>): Promise<WriteResult> => {
   try {
     const { error } = await supabase
       .from("scores")
@@ -63,6 +101,36 @@ const supabaseUpsertWriter = async (item: QueueItem): Promise<WriteResult> => {
     };
   } catch (err) {
     // Thrown errors (network failure before HTTP response) are retryable.
+    return { success: false, classification: "retry", error: err };
+  }
+};
+
+// Greensomes alternate shot: one collapsed team score per (round, team, hole)
+// at ball_index = 1. onConflict matches team_scores_round_team_hole_ball_key so
+// re-entering a box overwrites in place (last-write-wins), same contract as the
+// direct team-card upsert — but now durable/retrying under the queue.
+const teamScoreUpsertWriter = async (item: QueueItem<TeamScorePayload>): Promise<WriteResult> => {
+  try {
+    const { error } = await supabase
+      .from("team_scores")
+      .upsert(
+        {
+          round_id: item.payload.round_id,
+          team_number: item.payload.team_number,
+          hole_number: item.payload.hole_number,
+          ball_index: item.payload.ball_index,
+          strokes: item.payload.strokes,
+        },
+        { onConflict: "round_id,team_number,hole_number,ball_index" },
+      );
+    if (!error) return { success: true };
+    return {
+      success: false,
+      classification: classifySupabaseError(error),
+      terminalReason: getTerminalReason(error),
+      error,
+    };
+  } catch (err) {
     return { success: false, classification: "retry", error: err };
   }
 };

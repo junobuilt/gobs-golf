@@ -42,7 +42,11 @@ export async function getRoundCountForSeason(seasonId: number): Promise<number> 
   const { data } = await supabase
     .from("rounds")
     .select("id")
-    .eq("season_id", seasonId);
+    .eq("season_id", seasonId)
+    // Tournament rounds keep season_id NULL by convention (season lives on
+    // tournaments.season_id); this filter makes the exclusion structural so a
+    // future writer setting season_id can't inflate the count / break End Season.
+    .is("tournament_id", null);
   return data?.length ?? 0;
 }
 
@@ -54,6 +58,9 @@ export async function getInProgressRoundsForSeason(seasonId: number): Promise<Se
     .select("id, played_on, is_complete")
     .eq("season_id", seasonId)
     .eq("is_complete", false)
+    // Structural exclusion (see getRoundCountForSeason): a stray tournament
+    // round must never keep End Season blocked.
+    .is("tournament_id", null)
     .order("played_on", { ascending: false });
   return (data as SeasonRound[] | null) ?? [];
 }

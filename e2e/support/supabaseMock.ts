@@ -46,6 +46,16 @@ export interface SeedData {
   // so a backup-PIN status can be rendered without minting first.
   admin_backup_pin?: Row[];
   admin_backup_audit?: Row[];
+  // Tournament tables (migration 031).
+  tournaments?: Row[];
+  tournament_players?: Row[];
+  tournament_sessions?: Row[];
+  tournament_matches?: Row[];
+  // Phase 4 — Level-3 country-point adjustments (the dashboard reads these).
+  tournament_point_adjustments?: Row[];
+  // Migration 038 — sparse per-day side overrides ("alternates"). The pairings
+  // panel reads these (getDaySideAssignments) and writes via setPlayerDaySide.
+  tournament_day_sides?: Row[];
 }
 
 const KNOWN_TABLES = [
@@ -68,6 +78,15 @@ const KNOWN_TABLES = [
   // Backup Admin PIN (migration 028).
   "admin_backup_pin",
   "admin_backup_audit",
+  // Tournament tables (migration 031/033).
+  "tournaments",
+  "tournament_players",
+  "tournament_sessions",
+  "tournament_matches",
+  // Phase 4 — Level-3 country-point adjustments.
+  "tournament_point_adjustments",
+  // Migration 038 — sparse per-day side overrides ("alternates").
+  "tournament_day_sides",
 ] as const;
 
 /** An RPC log entry so tests can assert "the RPC fired with these args". */
@@ -109,6 +128,15 @@ export class MockDb {
       });
     }
     if (!effective.flight_teams) effective.flight_teams = [];
+
+    // Migration 034: tournaments.is_published NOT NULL DEFAULT false. Default it
+    // on seeded rows that omit it so mock rows match the prod column semantics.
+    if (effective.tournaments) {
+      effective.tournaments = effective.tournaments.map((t) => ({
+        is_published: false,
+        ...t,
+      }));
+    }
 
     for (const t of KNOWN_TABLES) {
       const rows = (effective as any)[t] ?? [];
@@ -173,6 +201,13 @@ function applyEmbeds(table: string, select: string, rows: Row[], db: MockDb): Ro
     return rows.map((rp) => {
       const player = db.tables.players?.find((p) => looseEq(p.id, rp.player_id)) ?? null;
       return { ...rp, players: player };
+    });
+  }
+  // tournament_players embeds players (TD2) — the pairings roster reads names/HI here.
+  if (table === "tournament_players" && /players\s*\(/.test(select)) {
+    return rows.map((tp) => {
+      const player = db.tables.players?.find((p) => looseEq(p.id, tp.player_id)) ?? null;
+      return { ...tp, players: player };
     });
   }
   return rows;

@@ -300,6 +300,7 @@ function TodaysGroupSection({
           .from("rounds")
           .select("id")
           .eq("played_on", today)
+          .is("tournament_id", null) // today's league round only, never a tournament round
           .order("played_on", { ascending: false })
           .limit(1);
         if (!rounds || rounds.length === 0) {

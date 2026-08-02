@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import ScoreMark from "./ScoreMark";
 
 // A1.7 — reusable per-player hole-by-hole grid.
 // Used inline under each player row on the live scorecard (with
@@ -63,50 +64,8 @@ function sumPlayed(values: (number | null)[]): number | null {
   return any ? total : null;
 }
 
-// Traditional golf scorecard notation. Delta = score − par.
-// Negative deltas → concentric circle(s); positive deltas → concentric
-// square(s). Par (delta 0) renders bare. Stroke uses currentColor so the
-// notation inherits the cell's text color and renders on top of the
-// current-hole highlight background.
-function ScoreMark({ delta, score }: { delta: number; score: number }) {
-  if (delta === 0) {
-    return <>{score}</>;
-  }
-
-  const isCircle = delta < 0;
-  const tier = Math.min(Math.abs(delta), 3); // cap at triple
-  // Bug #1 (Wave 1A): concentric rings nested with a CONSISTENT 3px gap on
-  // every side at each tier (each ring is centered in its parent, so the gap is
-  // (outer − inner) / 2). The prior triple [28,22,18] gave uneven 3px/2px gaps,
-  // which read as cramped. Even steps now: double 26→20, triple 28→22→16.
-  const sizes =
-    tier === 1 ? [22] : tier === 2 ? [26, 20] : [28, 22, 16];
-
-  const borderRadius = isCircle ? "50%" : "0";
-
-  let content: React.ReactNode = <span>{score}</span>;
-  for (let i = sizes.length - 1; i >= 0; i--) {
-    const size = sizes[i];
-    content = (
-      <div
-        key={i}
-        style={{
-          width: size,
-          height: size,
-          borderRadius,
-          border: "1px solid currentColor",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxSizing: "border-box",
-        }}
-      >
-        {content}
-      </div>
-    );
-  }
-  return <>{content}</>;
-}
+// Traditional golf scorecard notation (ScoreMark) now lives in ./ScoreMark so
+// the tournament match card can reuse it. Behaviour is unchanged.
 
 function NineGrid({
   scores,

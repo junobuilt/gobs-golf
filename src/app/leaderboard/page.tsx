@@ -61,6 +61,7 @@ export default function LeaderboardPage() {
       .from("rounds")
       .select("id")
       .eq("played_on", today)
+      .is("tournament_id", null) // tournament rounds never show on the league leaderboard
       .order("played_on", { ascending: false })
       .limit(1);
 

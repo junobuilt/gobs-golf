@@ -15,14 +15,12 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { loadRoundsList, type RoundListItem } from "@/lib/round/loadRoundsList";
 import HistoryRoundList from "@/components/history/HistoryRoundList";
+import { formatDisplayDate } from "@/lib/date";
 
 type InProgressRound = { id: number; played_on: string };
 
-function formatDate(d: string) {
-  return new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-    weekday: "short", month: "short", day: "numeric", year: "numeric",
-  });
-}
+// Single source: the "Sat Jul 25, 2026" formatter now lives in @/lib/date.
+const formatDate = formatDisplayDate;
 
 export default function History() {
   const [rounds, setRounds] = useState<RoundListItem[]>([]);
@@ -38,6 +36,7 @@ export default function History() {
           .from("rounds")
           .select("id, played_on")
           .eq("is_complete", false)
+          .is("tournament_id", null) // in-progress list excludes tournament rounds
           .order("played_on", { ascending: false }),
       ]);
       if (cancelled) return;

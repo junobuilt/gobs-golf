@@ -8,6 +8,7 @@ import PlayedWith from "./tabs/PlayedWith";
 import History from "./tabs/History";
 import Money from "./tabs/Money";
 import Settings from "./tabs/Settings";
+import Tournament from "./tabs/Tournament";
 
 export type Player = {
   id: number;
@@ -20,7 +21,7 @@ export type Player = {
 
 export type LeagueSettings = Record<string, string>;
 
-const TABS = ["Round Setup", "Players", "Played-with", "History", "Money", "Settings"] as const;
+const TABS = ["Round Setup", "Players", "Played-with", "History", "Money", "Settings", "Tournament"] as const;
 type Tab = typeof TABS[number];
 
 const C = {
@@ -161,6 +162,9 @@ export default function AdminPage() {
         )}
         {activeTab === "Settings" && (
           <Settings settings={settings} onRefresh={refreshSettings} />
+        )}
+        {activeTab === "Tournament" && (
+          <Tournament allPlayers={players.filter(p => p.is_active)} onRefresh={refreshPlayers} />
         )}
       </div>
     </div>

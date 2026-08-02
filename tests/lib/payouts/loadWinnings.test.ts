@@ -16,6 +16,7 @@ vi.mock("@/lib/supabase", () => {
     private eqs: Array<[string, any]> = [];
     private ins: [string, any[]] | null = null;
     private gts: Array<[string, any]> = [];
+    private iss: Array<[string, any]> = [];
     private ord: { col: string; asc: boolean } | null = null;
     private lim: number | null = null;
     constructor(private table: string) {}
@@ -23,6 +24,7 @@ vi.mock("@/lib/supabase", () => {
     eq(col: string, val: any) { this.eqs.push([col, val]); return this; }
     in(col: string, vals: any[]) { this.ins = [col, vals]; return this; }
     gt(col: string, val: any) { this.gts.push([col, val]); return this; }
+    is(col: string, val: any) { this.iss.push([col, val]); return this; }
     order(col: string, opts?: any) { this.ord = { col, asc: opts?.ascending ?? true }; return this; }
     limit(n: number) { this.lim = n; return this; }
     private run() {
@@ -30,6 +32,9 @@ vi.mock("@/lib/supabase", () => {
       for (const [c, v] of this.eqs) rows = rows.filter((r) => get(r, c) === v);
       if (this.ins) rows = rows.filter((r) => this.ins![1].includes(get(r, this.ins![0])));
       for (const [c, v] of this.gts) rows = rows.filter((r) => get(r, c) > v);
+      // `.is(col, null)` matches NULL — and, for a nullable column omitted in
+      // the seed, also `undefined`.
+      for (const [c, v] of this.iss) rows = rows.filter((r) => (v === null ? get(r, c) == null : get(r, c) === v));
       if (this.ord) {
         const { col, asc } = this.ord;
         rows.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (asc ? 1 : -1));
