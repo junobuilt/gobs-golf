@@ -31,6 +31,7 @@ import {
   updateTournament,
 } from "@/lib/tournament/mutations";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { formatPoints } from "@/lib/tournament/matchScorecard";
 import Toggle from "@/components/admin/Toggle";
 import type {
@@ -100,11 +101,6 @@ const C = {
 };
 const FONT = "system-ui, sans-serif";
 
-const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
 const FORMAT_OPTIONS: SessionFormat[] = ["greensomes", "four_ball_match", "singles_match"];
 
 // Side A = blue, Side B = red (from the shared team palette).

@@ -18,14 +18,10 @@ import { deriveCupBar } from "@/lib/tournament/cup";
 import { matchStatus, matchSidePoints, type StatusTone } from "@/lib/tournament/matchStatus";
 import { CupHero } from "@/components/tournament/CupHero";
 import { HoleStrip } from "@/components/tournament/HoleStrip";
-import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS } from "@/lib/tournament/tokens";
-import type { LoadedMatch, SessionFormat, Tournament } from "@/lib/tournament/types";
-
-const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
+import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS, DAY_TAG_STYLE } from "@/lib/tournament/tokens";
+import { dayTag } from "@/lib/tournament/completion";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
+import type { LoadedMatch, Tournament } from "@/lib/tournament/types";
 
 type State =
   | { kind: "loading" }
@@ -101,9 +97,11 @@ function DaySection({ day, isToday }: { day: DashboardDay; isToday: boolean }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "2px 2px 8px" }}>
         <span style={{ fontWeight: 800, fontSize: 14, color: T.ink }}>
           {session.name} — {FORMAT_LABEL[session.format]}
-          {isToday && (
-            <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: T.can, background: "#fdecec", borderRadius: 6, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Live</span>
-          )}
+          {(() => {
+            const tag = dayTag(matches, isToday);
+            const ts = DAY_TAG_STYLE[tag];
+            return <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: ts.color, background: ts.bg, borderRadius: 6, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{tag}</span>;
+          })()}
         </span>
         <span style={{ fontSize: 10.5, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
           {formatDisplayDate(session.played_on ?? "")} · {matches.length} match{matches.length === 1 ? "" : "es"}

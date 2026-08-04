@@ -18,13 +18,8 @@ import {
 } from "@/lib/tournament/loadMatch";
 import type { LoadedMatch } from "@/lib/tournament/types";
 import { initOptimisticScores } from "@/lib/tournament/matchScorecard";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import MatchReviewGrid from "../MatchReviewGrid";
-
-const FORMAT_LABEL: Record<LoadedMatch["session"]["format"], string> = {
-  greensomes: "Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
 
 type LoadState =
   | { kind: "loading" }
