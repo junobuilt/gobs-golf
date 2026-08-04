@@ -30,6 +30,8 @@ import {
   marginWithSide,
   thruDisplay,
   unitNet,
+  deriveGroupLabel,
+  groupLabelFor,
 } from "@/lib/tournament/matchScorecard";
 
 function holes(): HoleMeta[] {
@@ -415,5 +417,33 @@ describe("matchScorecard — unitNet display", () => {
     expect(unitNet(20, 1, 5)).toBe(3); // 20 strokes → 2 on SI 1 → 5−2
     expect(unitNet(0, 1, 4)).toBe(4);
     expect(unitNet(18, 1, null)).toBeNull();
+  });
+});
+
+describe("matchScorecard — group label capped at A/B (S3 Change 4)", () => {
+  it("deriveGroupLabel is odd→A / even→B and NEVER yields C or beyond", () => {
+    expect(deriveGroupLabel(1)).toBe("A");
+    expect(deriveGroupLabel(2)).toBe("B");
+    // The 3rd+ foursome reuses A/B (tee-off order at its start hole), never "C".
+    expect(deriveGroupLabel(3)).toBe("A");
+    expect(deriveGroupLabel(4)).toBe("B");
+    expect(deriveGroupLabel(8)).toBe("B");
+    for (let n = 1; n <= 30; n++) {
+      expect(["A", "B"]).toContain(deriveGroupLabel(n));
+    }
+  });
+
+  it("deriveGroupLabel is empty for null / non-positive group numbers", () => {
+    expect(deriveGroupLabel(null)).toBe("");
+    expect(deriveGroupLabel(undefined)).toBe("");
+    expect(deriveGroupLabel(0)).toBe("");
+  });
+
+  it("groupLabelFor honors an explicit A/B override, else falls back to the capped derived letter", () => {
+    expect(groupLabelFor(3, "B")).toBe("B"); // override wins over derived "A"
+    expect(groupLabelFor(4, "A")).toBe("A"); // override wins over derived "B"
+    expect(groupLabelFor(3, null)).toBe("A"); // fallback = capped derive
+    expect(groupLabelFor(4, "")).toBe("B"); // blank override → derive
+    expect(groupLabelFor(4, "  ")).toBe("B"); // whitespace-only → derive
   });
 });

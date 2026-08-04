@@ -255,8 +255,6 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
   const groupedCount = groupedIds.size;
   const unassigned = assignedCount - groupedCount;
   const groupCount = groups.length;
-  // Next foursome number → its auto-derived label placeholder in the builder.
-  const nextGroupNumber = groups.reduce((m, g) => Math.max(m, g.groupNumber ?? 0), 0) + 1;
 
   const teeLabel = (teeId: number | null) => tees.find((t) => t.id === teeId)?.color ?? "Tee";
 
@@ -414,7 +412,6 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
           tees={tees}
           sideAName={tournament.side_a_name}
           sideBName={tournament.side_b_name}
-          nextGroupLabel={deriveGroupLabel(nextGroupNumber)}
           onCancel={() => setAddOpen(false)}
           onSubmit={async (draft) => {
             try {
@@ -784,6 +781,43 @@ function incompleteReason(group: GroupView, sideAName: string, sideBName: string
   return `Waiting on ${parts.join(" and ")} player${aMissing + bMissing > 1 ? "s" : ""}.`;
 }
 
+// Shotgun tee-off order, capped at TWO — "A" tees off first, "B" second. A start
+// hole holds at most two matches and A/B are REUSED at every start hole, so the
+// picker never offers "C"+ (S3 Change 4). group_label is display-only; it never
+// feeds team assignment or the scoring engine.
+function GroupLabelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ display: "flex", gap: 8 }} role="group" aria-label="Group (tee-off order)">
+      {(["A", "B"] as const).map((L) => {
+        const active = value === L;
+        return (
+          <button
+            key={L}
+            type="button"
+            data-testid={`group-label-${L}`}
+            aria-pressed={active}
+            onClick={() => onChange(L)}
+            style={{
+              flex: 1,
+              minHeight: 44,
+              borderRadius: 8,
+              border: `1.5px solid ${active ? C.navy : C.border}`,
+              background: active ? C.navy : "white",
+              color: active ? "white" : C.muted,
+              fontFamily: FONT,
+              fontSize: "0.95rem",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {L}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Builder (Add) ───────────────────────────────────────────────────────────
 interface Draft {
   aIds: Array<number | null>;
@@ -800,7 +834,6 @@ function GroupBuilder({
   tees,
   sideAName,
   sideBName,
-  nextGroupLabel,
   onCancel,
   onSubmit,
 }: {
@@ -811,7 +844,6 @@ function GroupBuilder({
   tees: TeeRow[];
   sideAName: string;
   sideBName: string;
-  nextGroupLabel: string; // derived letter placeholder for this new group
   onCancel: () => void;
   onSubmit: (draft: Draft) => void;
 }) {
@@ -820,7 +852,7 @@ function GroupBuilder({
   const [bIds, setBIds] = useState<Array<number | null>>(Array(slots).fill(null));
   const [teeId, setTeeId] = useState<number>(DEFAULT_TEE_ID);
   const [startHole, setStartHole] = useState<number | null>(null); // null = hole 1
-  const [groupLabel, setGroupLabel] = useState<string>("");
+  const [groupLabel, setGroupLabel] = useState<string>("A"); // tee-off order (A/B)
   const [saving, setSaving] = useState(false);
 
   const tee = tees.find((t) => t.id === teeId) ?? null;
@@ -950,15 +982,8 @@ function GroupBuilder({
           </select>
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group label</div>
-          <input
-            data-testid="group-label"
-            value={groupLabel}
-            onChange={(e) => setGroupLabel(e.target.value)}
-            placeholder={nextGroupLabel}
-            maxLength={12}
-            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44, boxSizing: "border-box" }}
-          />
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group (tee-off order)</div>
+          <GroupLabelPicker value={groupLabel} onChange={setGroupLabel} />
         </div>
       </div>
 
@@ -1022,7 +1047,11 @@ function EditGroup({
   const [desired, setDesired] = useState<Record<string, number | null>>({});
   const [teeId, setTeeId] = useState<number>(group.matches[0]?.teeId ?? DEFAULT_TEE_ID);
   const [startHole, setStartHole] = useState<number | null>(group.matches[0]?.match.start_hole ?? null);
-  const [groupLabel, setGroupLabel] = useState<string>(group.matches[0]?.match.group_label ?? "");
+  // The picker only offers A/B; seed it with the effective letter (stored override,
+  // else the capped derived letter) so a legacy NULL row opens on its shown value.
+  const [groupLabel, setGroupLabel] = useState<string>(
+    group.matches[0]?.match.group_label?.trim() || deriveGroupLabel(group.groupNumber) || "A"
+  );
   const [saving, setSaving] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
@@ -1044,6 +1073,8 @@ function EditGroup({
 
   const currentStartHole = liveGroup.matches[0]?.match.start_hole ?? null;
   const currentLabel = liveGroup.matches[0]?.match.group_label ?? "";
+  // Effective displayed letter: the stored override, else the capped derived A/B.
+  const effectiveLabel = currentLabel.trim() || deriveGroupLabel(groupNumber) || "A";
 
   // Reset the working copy whenever the live group changes (mount + reload).
   useEffect(() => {
@@ -1052,7 +1083,7 @@ function EditGroup({
     setDesired(init);
     setTeeId(currentTee);
     setStartHole(currentStartHole);
-    setGroupLabel(currentLabel);
+    setGroupLabel(effectiveLabel);
   }, [liveGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const picked = new Set<number>(Object.values(desired).filter((x): x is number => x != null));
@@ -1078,10 +1109,16 @@ function EditGroup({
     setInlineError(null);
     try {
       if (teeId !== currentTee) await updateGroup({ sessionId, groupNumber, teeId });
-      // Shotgun (039): persist start-hole / label changes across the group.
-      const labelNorm = groupLabel.trim() || null;
-      if (startHole !== currentStartHole || labelNorm !== (currentLabel.trim() || null)) {
-        await setGroupShotgun(sessionId, groupNumber, { startHole, groupLabel: labelNorm });
+      // Shotgun (039): persist start-hole / label changes across the group. The
+      // label picker is A/B only; write it only when it differs from the effective
+      // shown letter so an unrelated (tee-only) save never rewrites a NULL row.
+      const startChanged = startHole !== currentStartHole;
+      const labelChanged = groupLabel !== effectiveLabel;
+      if (startChanged || labelChanged) {
+        const patch: { startHole?: number | null; groupLabel?: string | null } = {};
+        if (startChanged) patch.startHole = startHole;
+        if (labelChanged) patch.groupLabel = groupLabel;
+        await setGroupShotgun(sessionId, groupNumber, patch);
       }
       // clear → fill → swap (approved ordering).
       for (const s of seats) {
@@ -1182,15 +1219,8 @@ function EditGroup({
           </select>
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group label</div>
-          <input
-            data-testid="edit-group-label"
-            value={groupLabel}
-            onChange={(e) => setGroupLabel(e.target.value)}
-            placeholder={deriveGroupLabel(groupNumber)}
-            maxLength={12}
-            style={{ width: "100%", padding: "11px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: "0.95rem", fontFamily: FONT, minHeight: 44, boxSizing: "border-box" }}
-          />
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "0 0 4px" }}>Group (tee-off order)</div>
+          <GroupLabelPicker value={groupLabel} onChange={setGroupLabel} />
         </div>
       </div>
 

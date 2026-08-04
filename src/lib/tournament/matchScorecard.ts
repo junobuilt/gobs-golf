@@ -242,19 +242,15 @@ export function countingMarks(
 }
 
 // ── Shotgun group label (migration 039) ─────────────────────────────────────
-// The foursome tag auto-derived from group_number: 1→"A", 2→"B", … 26→"Z",
-// 27→"AA". An admin's explicit group_label OVERRIDES this (null column = derive).
+// The foursome tag is CAPPED AT TWO — "A" tees off first, "B" tees off second —
+// because a shotgun start hole holds at most two matches and A/B are REUSED at
+// every start hole (they are tee-off ORDER, not a unique per-day counter). The
+// derivation therefore never yields "C" or beyond: odd group_number → "A", even
+// → "B". An admin's explicit group_label OVERRIDES this (null column = derive).
 // SSOT for the derivation; the admin panel + any future match-header read it.
 export function deriveGroupLabel(groupNumber: number | null | undefined): string {
   if (groupNumber == null || groupNumber < 1) return "";
-  let n = Math.trunc(groupNumber);
-  let s = "";
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    s = String.fromCharCode(65 + r) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
+  return Math.trunc(groupNumber) % 2 === 1 ? "A" : "B";
 }
 
 // The label to SHOW for a group: the admin override if set, else the derived

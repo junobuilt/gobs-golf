@@ -235,6 +235,29 @@ describe("PairingsPanel — builder", () => {
     expect(within(row).getByText("1")).toBeTruthy();
   });
 
+  it("group label is an A/B picker only — no C+ option, no free text (S3 Change 4)", async () => {
+    render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add Group" }));
+
+    // Exactly two label choices, A and B; nothing beyond B, and no text input.
+    expect(screen.getByTestId("group-label-A")).toBeTruthy();
+    expect(screen.getByTestId("group-label-B")).toBeTruthy();
+    expect(screen.queryByTestId("group-label-C")).toBeNull();
+    expect(screen.queryByTestId("group-label")).toBeNull(); // old free-text input gone
+
+    // Default is A (pressed); the picker persists the chosen letter on save.
+    expect(screen.getByTestId("group-label-A").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByTestId("group-label-B"));
+    expect(screen.getByTestId("group-label-B").getAttribute("aria-pressed")).toBe("true");
+
+    pick("USA slot 1", "Al");
+    pick("Canada slot 1", "Bo");
+    fireEvent.click(screen.getByRole("button", { name: "Save group" }));
+
+    await waitFor(() => expect((fakeRef.current.data.tournament_matches as any[]).length).toBe(1));
+    expect((fakeRef.current.data.tournament_matches as any[])[0].group_label).toBe("B");
+  });
+
   it("surfaces the SPECIFIC failure when the create mutation fails (no opaque banner)", async () => {
     fakeRef.current.setOptions({ failWrite: (op: any) => (op.table === "tournament_matches" ? { message: "boom" } : false) });
     render(<PairingsPanel session={session("four_ball_match")} tournament={TOURN} onClose={() => {}} />);
