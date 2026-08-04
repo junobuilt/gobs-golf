@@ -14,7 +14,7 @@ import { marginWithSide, thruDisplay } from "./matchScorecard";
 export interface MatchStatusLine {
   decided: boolean;
   adminForced: boolean; // resolved via admin override (source === "admin")
-  text: string; // "USA wins 3&2" | "Halved" | "USA 1 UP · thru 7" | "Not started"
+  text: string; // "USA wins 3&2" | "Halved" | "USA 1 UP · thru 7 holes" | "Not started"
 }
 
 export function matchStatusLine(m: LoadedMatch): MatchStatusLine {
@@ -37,5 +37,5 @@ export function matchStatusLine(m: LoadedMatch): MatchStatusLine {
   // closedOutHole ?? thru (null closeout while live, so just thru).
   const margin = marginWithSide(m.state, m);
   if (m.state.thru === 0 && !margin) return { decided: false, adminForced, text: "Not started" };
-  return { decided: false, adminForced, text: `${margin || "Tied"} · thru ${thruDisplay(m.state)}` };
+  return { decided: false, adminForced, text: `${margin || "Tied"} · thru ${thruDisplay(m.state)} holes` };
 }
