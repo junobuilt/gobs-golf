@@ -16,6 +16,7 @@ import {
   overrideMatchResult,
   revertMatchResult,
   setMatchHoleScore,
+  setMatchTeamHoleScore,
 } from "@/lib/tournament/mutations";
 import type { LoadedMatch, MatchResult, Tournament, TournamentSession } from "@/lib/tournament/types";
 
@@ -195,11 +196,11 @@ function MatchCard({
         </button>
       )}
 
-      {/* Level 1 — correct a hole (individual formats). */}
+      {/* Level 1 — correct a hole. Greensomes plays one ball per side, so the
+          correctable value is the SIDE's team score (team_scores), not a player's;
+          individual formats correct a player's strokes (scores). */}
       {isGreensomes ? (
-        <div style={{ marginTop: 12, fontSize: "0.76rem", color: C.muted }}>
-          Alternate-shot scores are per-team — correct a wrong greensomes hole on the scorecard, or force the result above.
-        </div>
+        <GreensomesHoleCorrection m={m} busy={busy} run={run} />
       ) : (
         <HoleCorrection m={m} busy={busy} run={run} />
       )}
@@ -250,6 +251,76 @@ function HoleCorrection({
           data-testid={`hole-save-${m.match.id}`}
           disabled={busy || !canSave}
           onClick={() => run(() => setMatchHoleScore(rpId, hole, Number(strokes)), "Couldn’t save that score.")}
+          style={{ minHeight: 40, padding: "0 14px", borderRadius: 8, border: "none", background: canSave ? C.green : "#e5e7eb", color: canSave ? "white" : "#9ca3af", fontWeight: 700, fontSize: "0.82rem", cursor: canSave && !busy ? "pointer" : "default", fontFamily: FONT }}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Greensomes (Day 1, alternate shot) hole correction. One ball per side → the
+// admin picks a SIDE (not a player), a hole, and the corrected team strokes. The
+// strokes input PREFILLS the current team score for the chosen side/hole so Dad
+// sees the value he's changing. Writes through setMatchTeamHoleScore → the SAME
+// team_scores upsert (ball_index 1) the live Day-1 scorecard uses, so the engine
+// recomputes the greensomes outcome canonically on the panel's reload.
+function GreensomesHoleCorrection({
+  m,
+  busy,
+  run,
+}: {
+  m: LoadedMatch;
+  busy: boolean;
+  run: (fn: () => Promise<void>, failMsg: string) => Promise<void>;
+}) {
+  const sides = [
+    { teamNumber: m.sideA.teamNumber, label: m.sideA.players.map((p) => p.displayName).join(" / ") || m.sideA.displayName, teamGross: m.sideA.teamGross },
+    { teamNumber: m.sideB.teamNumber, label: m.sideB.players.map((p) => p.displayName).join(" / ") || m.sideB.displayName, teamGross: m.sideB.teamGross },
+  ];
+  const [teamNumber, setTeamNumber] = useState<number>(sides[0]?.teamNumber ?? 0);
+  const [hole, setHole] = useState<number>(1);
+  const [strokes, setStrokes] = useState<string>("");
+
+  // Prefill the current team score for the selected side + hole (blank when none
+  // entered yet). Re-syncs when the side/hole changes and when `m` reloads after a
+  // save, so the input always mirrors the stored value.
+  const currentStrokes = sides.find((s) => s.teamNumber === teamNumber)?.teamGross?.[hole - 1] ?? null;
+  useEffect(() => {
+    setStrokes(currentStrokes == null ? "" : String(currentStrokes));
+  }, [currentStrokes]);
+
+  const roundId = m.session.roundId;
+  const canSave = roundId != null && teamNumber > 0 && Number.isInteger(Number(strokes)) && Number(strokes) >= 1;
+
+  return (
+    <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+      <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Correct a hole</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select data-testid={`gs-hole-team-${m.match.id}`} value={teamNumber} onChange={(e) => setTeamNumber(Number(e.target.value))} style={{ ...inputStyle, flex: "1 1 130px" }}>
+          {sides.map((s) => (
+            <option key={s.teamNumber} value={s.teamNumber}>{s.label}</option>
+          ))}
+        </select>
+        <select data-testid={`gs-hole-number-${m.match.id}`} value={hole} onChange={(e) => setHole(Number(e.target.value))} style={{ ...inputStyle, flex: "0 0 90px" }}>
+          {Array.from({ length: 18 }, (_, i) => i + 1).map((h) => (
+            <option key={h} value={h}>Hole {h}</option>
+          ))}
+        </select>
+        <input
+          data-testid={`gs-hole-strokes-${m.match.id}`}
+          type="number"
+          min={1}
+          value={strokes}
+          onChange={(e) => setStrokes(e.target.value)}
+          placeholder="Strokes"
+          style={{ ...inputStyle, flex: "0 0 80px" }}
+        />
+        <button
+          data-testid={`gs-hole-save-${m.match.id}`}
+          disabled={busy || !canSave}
+          onClick={() => run(() => setMatchTeamHoleScore(roundId as number, teamNumber, hole, Number(strokes)), "Couldn’t save that score.")}
           style={{ minHeight: 40, padding: "0 14px", borderRadius: 8, border: "none", background: canSave ? C.green : "#e5e7eb", color: canSave ? "white" : "#9ca3af", fontWeight: 700, fontSize: "0.82rem", cursor: canSave && !busy ? "pointer" : "default", fontFamily: FONT }}
         >
           Save

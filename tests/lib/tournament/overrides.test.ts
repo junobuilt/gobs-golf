@@ -25,6 +25,7 @@ import {
   overrideMatchResult,
   revertMatchResult,
   setMatchHoleScore,
+  setMatchTeamHoleScore,
 } from "@/lib/tournament/mutations";
 
 function holes(teeId = 1) {
@@ -117,6 +118,85 @@ describe("Level 1 — hole correction (engine recomputes)", () => {
     await expect(setMatchHoleScore(102, 0, 4)).rejects.toBeInstanceOf(InvalidHoleScoreError);
     await expect(setMatchHoleScore(102, 19, 4)).rejects.toBeInstanceOf(InvalidHoleScoreError);
     await expect(setMatchHoleScore(102, 5, 0)).rejects.toBeInstanceOf(InvalidHoleScoreError);
+  });
+});
+
+// Greensomes day (alternate shot): one match, side A (team 1) v side B (team 2),
+// two players per side, all CH 0 (strokes cancel → net = team gross). Team scores
+// live on team_scores at ball_index 1. All holes gross 4 both sides → engine
+// "halved". Correcting one team's hole flips the greensomes outcome.
+function teamAll(teamNumber: number, g: number, startId: number) {
+  return Array.from({ length: 18 }, (_, i) => ({ id: startId + i, round_id: 60, team_number: teamNumber, hole_number: i + 1, ball_index: 1, strokes: g }));
+}
+function seedGreensomes(): FakeData {
+  return {
+    rounds: [{ id: 60, played_on: "2026-08-01", course_id: 1, tournament_id: 1, season_id: null }],
+    tees: [],
+    holes: holes(1),
+    players: [
+      { id: 1, full_name: "Al", display_name: "Al", handicap_index: 0, is_active: true },
+      { id: 2, full_name: "Bo", display_name: "Bo", handicap_index: 0, is_active: true },
+      { id: 3, full_name: "Cy", display_name: "Cy", handicap_index: 0, is_active: true },
+      { id: 4, full_name: "Di", display_name: "Di", handicap_index: 0, is_active: true },
+    ],
+    round_players: [
+      { id: 201, round_id: 60, player_id: 1, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 202, round_id: 60, player_id: 2, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 203, round_id: 60, player_id: 3, team_number: 2, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 204, round_id: 60, player_id: 4, team_number: 2, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+    ],
+    scores: [],
+    team_scores: [...teamAll(1, 4, 3000), ...teamAll(2, 4, 4000)],
+    tournaments: [TOURN],
+    tournament_players: [],
+    tournament_sessions: [{ id: 8, tournament_id: 1, round_id: 60, day_number: 1, name: "Day 1", format: "greensomes", played_on: "2026-08-01", is_locked: false }],
+    tournament_matches: [{ id: 600, tournament_id: 1, session_id: 8, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_holes: [], admin_note: null }],
+    tournament_point_adjustments: [],
+  };
+}
+
+describe("Level 1 — greensomes hole correction (team_scores; engine recomputes)", () => {
+  beforeEach(() => {
+    fakeRef.current = new FakeSupabase(seedGreensomes());
+  });
+
+  it("setMatchTeamHoleScore upserts team_scores at ball_index 1 and flips the recomputed outcome", async () => {
+    // Baseline: every hole halved → match halved.
+    const before = await loadMatch(600);
+    expect(before.state.result).toBe("halved");
+    expect(before.resolved.result).toBe("halved");
+
+    // Correct side B's (team 2) hole 1 to a 6 → side A wins hole 1, rest halved → side_a.
+    await setMatchTeamHoleScore(60, 2, 1, 6);
+
+    const write = fakeRef.current.writes.find((w: any) => w.table === "team_scores" && w.type === "upsert");
+    expect(write.onConflict).toEqual(["round_id", "team_number", "hole_number", "ball_index"]);
+    expect(write.payload[0]).toMatchObject({ round_id: 60, team_number: 2, hole_number: 1, ball_index: 1, strokes: 6 });
+
+    const after = await loadMatch(600);
+    expect(after.state.result).toBe("side_a"); // engine recomputed from the corrected team score
+    expect(after.resolved.result).toBe("side_a");
+  });
+
+  it("the corrected greensomes result folds into the dashboard banked total (dashboard === engine)", async () => {
+    let d = await loadDashboard(1);
+    expect(d.standings.banked).toEqual({ a: 0.5, b: 0.5 }); // halved
+
+    await setMatchTeamHoleScore(60, 2, 1, 6); // side A now wins the match
+    d = await loadDashboard(1);
+    expect(d.standings.banked).toEqual({ a: 1, b: 0 });
+
+    // Independent SSOT sum still equals banked.
+    let sumA = 0;
+    let sumB = 0;
+    for (const day of d.days) for (const m of day.matches) { sumA += m.resolved.pointsA; sumB += m.resolved.pointsB; }
+    expect(d.standings.banked).toEqual({ a: sumA, b: sumB });
+  });
+
+  it("validates hole and strokes", async () => {
+    await expect(setMatchTeamHoleScore(60, 2, 0, 4)).rejects.toBeInstanceOf(InvalidHoleScoreError);
+    await expect(setMatchTeamHoleScore(60, 2, 19, 4)).rejects.toBeInstanceOf(InvalidHoleScoreError);
+    await expect(setMatchTeamHoleScore(60, 2, 5, 0)).rejects.toBeInstanceOf(InvalidHoleScoreError);
   });
 });
 

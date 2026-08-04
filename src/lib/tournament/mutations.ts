@@ -9,6 +9,7 @@
 import { supabase } from "@/lib/supabase";
 import { addDaysISO, todayLocal } from "@/lib/date";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
+import { upsertTeamScore } from "@/lib/round/teamScoresIo";
 import { DEFAULT_TEE_ID } from "@/lib/tees";
 import { getDaySideAssignments, getSessionRoundStatus } from "./queries";
 import type { MatchResult, Side, SessionFormat, Tournament, TournamentMatch, TournamentSession } from "./types";
@@ -998,6 +999,29 @@ export async function setMatchHoleScore(
       { onConflict: "round_player_id,hole_number" },
     );
   if (error) throw new Error("setMatchHoleScore: " + error.message);
+}
+
+// LEVEL 1 (greensomes) — the alternate-shot twin of setMatchHoleScore. Greensomes
+// plays ONE ball per side, so the correctable value is the SIDE's team score for a
+// hole (there is no per-player score). Scoped by (round_id, team_number,
+// hole_number) at ball_index = 1 — the SAME table + conflict key the live Day-1
+// scorecard writes through (getTeamWriteQueue → team_scores upsert), so the engine
+// recomputes the greensomes outcome canonically on the next load (loadMatch reads
+// team_scores at ball_index = 1). A SEPARATE, additive write path from the scorer
+// surface's write queue; never a second scoring path.
+export async function setMatchTeamHoleScore(
+  roundId: number,
+  teamNumber: number,
+  holeNumber: number,
+  strokes: number,
+): Promise<void> {
+  if (!Number.isInteger(holeNumber) || holeNumber < 1 || holeNumber > 18) {
+    throw new InvalidHoleScoreError(`hole must be 1–18, got ${holeNumber}`);
+  }
+  if (!Number.isInteger(strokes) || strokes < 1) {
+    throw new InvalidHoleScoreError(`strokes must be a positive integer, got ${strokes}`);
+  }
+  await upsertTeamScore({ round_id: roundId, team_number: teamNumber, hole_number: holeNumber, ball_index: 1, strokes });
 }
 
 // LEVEL 2 — match result: force a winner/half, even with zero scores (the
