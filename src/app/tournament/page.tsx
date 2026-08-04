@@ -39,7 +39,7 @@ async function loadLanding(): Promise<LandingState> {
   const tournament = await getActiveTournament();
   // Player-facing gate: only a Live (published) tournament is shown.
   if (!tournament || !tournament.is_published) return { kind: "empty" };
-  const data = await loadDashboard(tournament.id);
+  const data = await loadDashboard(tournament.id, tournament);
   return { kind: "ready", tournament, data };
 }
 

@@ -46,7 +46,7 @@ export default function TournamentHero() {
       try {
         const tournament = await getTournamentMode();
         if (cancelled || !tournament) return;
-        const data = await loadDashboard(tournament.id);
+        const data = await loadDashboard(tournament.id, tournament);
         if (!cancelled) setReady({ tournament, data });
       } catch {
         /* homepage must not break on a tournament-read failure */

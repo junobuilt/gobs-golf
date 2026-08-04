@@ -35,7 +35,7 @@ type State =
 async function load(): Promise<State> {
   const tournament = await getActiveTournament();
   if (!tournament || !tournament.is_published) return { kind: "empty" };
-  const data = await loadDashboard(tournament.id);
+  const data = await loadDashboard(tournament.id, tournament);
   return { kind: "ready", tournament, data };
 }
 

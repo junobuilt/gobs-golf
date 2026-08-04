@@ -855,3 +855,245 @@ export async function loadRoundResults(
     },
   };
 }
+
+// ── S4 perf: teamsOnly projection for the History LIST ──────────────────────
+// A SEPARATE, lightweight path. It reuses the EXACT SSOT total + rank helpers
+// loadRoundResults uses (buildEnginePerTeam / individualTeamTotal /
+// teamCardScalars / rankAndFormatTeams), so every team's rank / total /
+// totalLabel / placeLabel is identical to the full path BY CONSTRUCTION — proven
+// by tests/lib/round/teamsOnly.test.ts. It SKIPS all per-player detail the
+// mini-leaderboard never renders (adjusted scores, stroke dots, per-player nets,
+// Individual Rankings, blind-draw value recompute), and it accepts the round-
+// INVARIANT roster + holes so the list fetches those ONCE, not once per round.
+// The full loadRoundResults above is untouched (goldens + loadRoundsList parity
+// stay byte-identical).
+
+export type TeamsOnlyTeamLine = {
+  teamNumber: number; // team_number
+  name: string; // "Team N"
+  rosterDisplay: string; // disambiguated short names, " · "-joined
+  playerIds: number[]; // players.id on this team — drives the player filter
+  rank: number; // PER FLIGHT (same as loadRoundResults)
+  total: number;
+  totalLabel: string; // "−4" / "E" / "12 pts" — identical to the detail headline
+  placeLabel: string; // "6th of 8" / "T2 of 8"
+};
+
+export type TeamsOnlyFlightSection = {
+  flightId: number;
+  flightName: string;
+  format: Format;
+  teams: TeamsOnlyTeamLine[]; // ranked within the flight, ascending rank
+};
+
+export type LoadedRoundTeamsOnly = {
+  playedOn: string;
+  format: Format; // PRIMARY flight format
+  hasBlindDraws: boolean;
+  teams: TeamsOnlyTeamLine[]; // flat, section-ordered
+  sections: TeamsOnlyFlightSection[];
+};
+
+export type LoadRoundTeamsOnlyOutcome =
+  | { status: "ok"; data: LoadedRoundTeamsOnly }
+  | { status: "missing_round" }
+  | { status: "missing_format" };
+
+// Round-INVARIANT reads the History list hoists and injects once. Omitted (e.g.
+// the parity test, which calls by roundId) → each is fetched here.
+export interface TeamsOnlyInjected {
+  activeRoster?: PlayerLike[];
+  holesByTee?: Record<number, HoleInfo[]>;
+}
+
+export async function loadRoundTeamsOnly(
+  roundId: number,
+  injected?: TeamsOnlyInjected,
+): Promise<LoadRoundTeamsOnlyOutcome> {
+  const { data: round } = await supabase
+    .from("rounds")
+    .select("id, played_on, is_complete")
+    .eq("id", roundId)
+    .single();
+  if (!round) return { status: "missing_round" };
+
+  const flights = await getFlightsForRound(roundId); // sort_order ascending
+  const primary = flights[0] ?? null;
+  const format = (primary?.format ?? null) as Format | null;
+  const formatConfig = (primary?.format_config ?? null) as FormatConfig | null;
+  if (!format || !formatConfig) return { status: "missing_format" };
+
+  const { data: rps } = await supabase
+    .from("round_players")
+    .select(`
+      id, player_id, team_number, tee_id, course_handicap, dropped_after_hole,
+      players ( display_name, full_name )
+    `)
+    .eq("round_id", roundId)
+    .gt("team_number", 0)
+    .order("team_number");
+  const rpsRows = (rps ?? []) as any[];
+  if (rpsRows.length === 0) {
+    return {
+      status: "ok",
+      data: { playedOn: round.played_on, format, hasBlindDraws: false, teams: [], sections: [] },
+    };
+  }
+
+  // Round-invariant roster (for disambiguated display names): injected by the
+  // list, else fetched here. Same shape/filter as the full path's roster read.
+  let activeRoster = injected?.activeRoster;
+  if (!activeRoster) {
+    const { data: activePlayerRows } = await supabase
+      .from("players")
+      .select("id, full_name, is_active")
+      .eq("is_active", true);
+    activeRoster = (activePlayerRows ?? []) as PlayerLike[];
+  }
+  const roster = activeRoster;
+  const nameFor = (playerId: number, fullName: string | null | undefined): string => {
+    const fn = fullName ?? "";
+    if (!fn) return "?";
+    return getDisplayName({ id: playerId, full_name: fn }, roster);
+  };
+
+  // blind_draws — fetched because they FEED team totals (buildEnginePerTeam) and
+  // drive hasBlindDraws. The expensive per-fill drawnPlayerNetValue recompute the
+  // full path does is NOT needed here (the list shows no per-player detail).
+  const { data: blindDrawRows } = await supabase
+    .from("blind_draws")
+    .select("short_team_number, drawn_player_id, hole_range_start, hole_range_end")
+    .eq("round_id", roundId)
+    .order("id");
+
+  const playerLookup: Record<number, {
+    rpId: number; teamNumber: number; teeId: number; displayName: string;
+  }> = {};
+  rpsRows.forEach((rp) => {
+    const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+    playerLookup[rp.player_id as number] = {
+      rpId: rp.id as number,
+      teamNumber: rp.team_number as number,
+      teeId: rp.tee_id as number,
+      displayName: nameFor(rp.player_id as number, playerRow?.full_name),
+    };
+  });
+
+  const rpIds = rpsRows.map((r) => r.id as number);
+  const { data: allScores } = await supabase
+    .from("scores")
+    .select("round_player_id, hole_number, strokes")
+    .in("round_player_id", rpIds);
+  const scoresByRpId: Record<number, Record<number, number>> = {};
+  allScores?.forEach((s: any) => {
+    if (!scoresByRpId[s.round_player_id]) scoresByRpId[s.round_player_id] = {};
+    scoresByRpId[s.round_player_id][s.hole_number] = s.strokes;
+  });
+
+  // Holes: injected (every tee, once for the list) or fetched per this round's tees.
+  let holesByTee = injected?.holesByTee;
+  if (!holesByTee) {
+    holesByTee = {};
+    const teeIds = [...new Set(rpsRows.map((r) => r.tee_id).filter(Boolean))] as number[];
+    for (const teeId of teeIds) {
+      const { data: h } = await supabase
+        .from("holes")
+        .select("hole_number, par, stroke_index")
+        .eq("tee_id", teeId)
+        .order("hole_number");
+      holesByTee[teeId] = (h || []).map((row: any) => ({
+        holeNumber: row.hole_number, par: row.par, strokeIndex: row.stroke_index,
+      }));
+    }
+  }
+  const holes = holesByTee;
+
+  const teamMap: Record<number, any[]> = {};
+  rpsRows.forEach((rp) => {
+    const tn = rp.team_number as number;
+    (teamMap[tn] ??= []).push(rp);
+  });
+
+  const teamFlightMap = await getTeamFlightMap(roundId);
+  const teamAllowanceOverrides = await getTeamAllowanceOverrides(roundId);
+
+  const anyTeamCard = flights.some((f) => f.format && isTeamCardFormat(f.format as Format));
+  const tsMap = anyTeamCard ? buildTeamScoreMap(await loadTeamScores(roundId)) : null;
+
+  const rosterDisplayFor = (teamPlayers: any[]): string =>
+    teamPlayers.map((rp) => {
+      const playerRow = Array.isArray(rp.players) ? rp.players[0] : rp.players;
+      return nameFor(rp.player_id as number, playerRow?.full_name);
+    }).join(" · ");
+
+  // Lite row: only `.total` (from the SSOT helper) + the list fields. Ranking
+  // reads nothing else (rankTeams sorts by `.total`), so this ranks identically.
+  type LiteRow = {
+    id: number; name: string; rosterDisplay: string; playerIds: number[]; total: number;
+  };
+
+  const sections: TeamsOnlyFlightSection[] = [];
+  for (const flight of flights) {
+    const fFmt = (flight.format ?? null) as Format | null;
+    const fCfg = (flight.format_config ?? null) as FormatConfig | null;
+    if (!fFmt || !fCfg) continue;
+
+    const subset: Record<number, any[]> = {};
+    for (const [tnStr, players] of Object.entries(teamMap)) {
+      const tn = parseInt(tnStr);
+      if (teamFlightMap.get(tn)?.id === flight.id) subset[tn] = players;
+    }
+    if (Object.keys(subset).length === 0) continue;
+
+    let rows: LiteRow[];
+    if (isTeamCardFormat(fFmt)) {
+      rows = Object.entries(subset).map(([tnStr, teamPlayers]) => {
+        const teamNum = parseInt(tnStr);
+        const firstTeeId = (teamPlayers as any[])[0]?.tee_id as number;
+        const teamHoles = holes[firstTeeId] || [];
+        const { total } = teamCardScalars({ format: fFmt, teamNum, teamPlayers, teamHoles, tsMap: tsMap! });
+        return {
+          id: teamNum, name: `Team ${teamNum}`, rosterDisplay: rosterDisplayFor(teamPlayers),
+          playerIds: (teamPlayers as any[]).map((rp) => rp.player_id as number), total,
+        };
+      });
+    } else {
+      const enginePerTeam = buildEnginePerTeam({
+        format: fFmt, formatConfig: fCfg, teamMap: subset, holesByTee: holes,
+        scoresByRpId, blindDrawRows: blindDrawRows ?? null, rps: rpsRows,
+        playerLookup, teamAllowanceOverrides,
+      });
+      rows = Object.entries(subset).map(([tnStr, teamPlayers]) => {
+        const teamNum = parseInt(tnStr);
+        const { total } = individualTeamTotal(enginePerTeam[teamNum]);
+        return {
+          id: teamNum, name: `Team ${teamNum}`, rosterDisplay: rosterDisplayFor(teamPlayers),
+          playerIds: (teamPlayers as any[]).map((rp) => rp.player_id as number), total,
+        };
+      });
+    }
+
+    const ranked = rankAndFormatTeams(rows, fFmt);
+    sections.push({
+      flightId: flight.id,
+      flightName: flight.name,
+      format: fFmt,
+      teams: ranked.map((t) => ({
+        teamNumber: t.id, name: t.name, rosterDisplay: t.rosterDisplay, playerIds: t.playerIds,
+        rank: t.rank, total: t.total, totalLabel: t.totalLabel, placeLabel: t.placeLabel,
+      })),
+    });
+  }
+
+  const teams = sections.flatMap((s) => s.teams);
+  return {
+    status: "ok",
+    data: {
+      playedOn: round.played_on,
+      format,
+      hasBlindDraws: (blindDrawRows ?? []).length > 0,
+      teams,
+      sections,
+    },
+  };
+}
