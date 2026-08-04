@@ -19,7 +19,7 @@ export interface MatchStatusView {
   tone: StatusTone; // color selector (usa=blue A up, canada=red C up, square=neutral, pre=muted)
   leaderSide: Side | null;
   decided: boolean;
-  thruText: string; // right-column context: "thru 13" | "Final" | "Not started"
+  thruText: string; // right-column context: "thru 13 holes" | "Final" | "Not started"
   winnerSentence: string | null; // full form for aria / any sentence surface: "USA wins 3 & 2" | "Halved"
 }
 
@@ -60,7 +60,7 @@ export function matchStatus(m: LoadedMatch): MatchStatusView {
     return { text: "Not started", tone: "pre", leaderSide: null, decided: false, thruText: "Not started", winnerSentence: null };
   }
   if (st.holesUp === 0) {
-    return { text: "All Square", tone: "square", leaderSide: null, decided: false, thruText: `thru ${st.thru}`, winnerSentence: null };
+    return { text: "All Square", tone: "square", leaderSide: null, decided: false, thruText: `thru ${st.thru} holes`, winnerSentence: null };
   }
   const leader: Side = st.holesUp > 0 ? "a" : "b";
   const lead = Math.abs(st.holesUp);
@@ -74,7 +74,7 @@ export function matchStatus(m: LoadedMatch): MatchStatusView {
     tone: leader === "a" ? "usa" : "canada",
     leaderSide: leader,
     decided: false,
-    thruText: `thru ${st.thru}`,
+    thruText: `thru ${st.thru} holes`,
     winnerSentence: null,
   };
 }

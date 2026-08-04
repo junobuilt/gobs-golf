@@ -20,6 +20,7 @@ import { loadMatch, loadSessionMatches } from "@/lib/tournament/loadMatch";
 import { createGroup, deleteGroup, setGroupShotgun, setPlayerDaySide, updateGroup } from "@/lib/tournament/mutations";
 import { getDaySideAssignments, getTournamentPlayers } from "@/lib/tournament/queries";
 import { deriveGroupLabel, groupLabelFor } from "@/lib/tournament/matchScorecard";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { loaderMessage, mutationMessage } from "./pairingsCopy";
 import type {
   LoadedMatch,
@@ -42,12 +43,6 @@ const C = {
   muted: "#6b7280",
 };
 const FONT = "system-ui, sans-serif";
-
-const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
 
 const SIDE_COLOR: Record<Side, { border: string; bg: string; text: string }> = {
   a: { border: getTeamColor(4).border, bg: getTeamColor(4).pillBg, text: getTeamColor(4).pillText },

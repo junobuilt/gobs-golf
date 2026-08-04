@@ -30,11 +30,11 @@ describe("shotgun cross-surface agreement (039)", () => {
     expect(thruDisplay(m.state)).toBe(2);
 
     // The scorecard header builds "{margin} · thru {thruDisplay}" (page.tsx).
-    const scorecardHeader = `${marginWithSide(m.state, m)} · thru ${thruDisplay(m.state)}`;
+    const scorecardHeader = `${marginWithSide(m.state, m)} · thru ${thruDisplay(m.state)} holes`;
     // The dashboard builds the SAME line from the same state.
     const dashboard = matchStatusLine(m).text;
 
-    expect(scorecardHeader).toBe("USA 1 UP · thru 2");
+    expect(scorecardHeader).toBe("USA 1 UP · thru 2 holes");
     expect(dashboard).toBe(scorecardHeader); // agreement, not just "each renders"
   });
 

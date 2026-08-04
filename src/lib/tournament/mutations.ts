@@ -311,10 +311,13 @@ export async function updateSession(
 
 // The three days this tournament always runs, in order. Auto-created on
 // tournament creation (§3) on consecutive dates from started_on.
+// Day names are bare ("Day 1"/"Day 2"/"Day 3"); the format label is appended at
+// render time from the FORMAT_LABEL SSOT (formatLabels.ts), so the format words
+// live in exactly one place and never double-print against the stored name.
 export const STANDARD_DAYS: ReadonlyArray<{ name: string; format: SessionFormat }> = [
-  { name: "Day 1 — Alternate Shot", format: "greensomes" },
-  { name: "Day 2 — Best Ball", format: "four_ball_match" },
-  { name: "Day 3 — Singles", format: "singles_match" },
+  { name: "Day 1", format: "greensomes" },
+  { name: "Day 2", format: "four_ball_match" },
+  { name: "Day 3", format: "singles_match" },
 ];
 
 export interface FailedStandardDay {

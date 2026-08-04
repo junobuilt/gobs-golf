@@ -22,9 +22,12 @@ test("create tournament → auto-creates the three standard days → assign side
 
   // Active view: header + the three standard days on consecutive dates.
   await expect(page.getByText(/GOBS Ryder Cup/)).toBeVisible();
-  await expect(page.getByText("Day 1 — Alternate Shot")).toBeVisible();
-  await expect(page.getByText("Day 2 — Best Ball")).toBeVisible();
-  await expect(page.getByText("Day 3 — Singles")).toBeVisible();
+  // Day names are bare ("Day 1"…); the format label ("Modified Alternate Shot")
+  // is appended from the FORMAT_LABEL SSOT (S1 Change 1 — no double-print).
+  await expect(page.getByText("Day 1", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Modified Alternate Shot/)).toBeVisible();
+  await expect(page.getByText(/Best Ball/)).toBeVisible();
+  await expect(page.getByText(/Singles/)).toBeVisible();
 
   // Rows are sorted by name: Adam Apple is first, Betty Birch second.
   await page.getByRole("button", { name: "USA" }).first().click(); // Adam → USA

@@ -20,15 +20,11 @@ import { deriveCupBar } from "@/lib/tournament/cup";
 import { matchStatus } from "@/lib/tournament/matchStatus";
 import { CupHero } from "@/components/tournament/CupHero";
 import { TournamentMatchCard } from "@/components/tournament/TournamentMatchCard";
-import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS } from "@/lib/tournament/tokens";
+import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS, DAY_TAG_STYLE } from "@/lib/tournament/tokens";
 import { getStoredPlayerId, getStoredPlayerName, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
-import type { SessionFormat, Tournament } from "@/lib/tournament/types";
-
-const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Modified Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
+import { dayTag } from "@/lib/tournament/completion";
+import type { Tournament } from "@/lib/tournament/types";
 
 type LandingState =
   | { kind: "loading" }
@@ -267,7 +263,11 @@ function DaySection({ day, isToday, defaultOpen }: { day: DashboardDay; isToday:
           <span style={{ display: "block", fontSize: 11, color: T.muted, marginTop: 1 }}>{formatDisplayDate(session.played_on ?? "")} · {matches.length} match{matches.length === 1 ? "" : "es"}</span>
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", borderRadius: 6, padding: "3px 8px", background: isToday ? "#fdecec" : T.soft, color: isToday ? T.can : T.muted }}>{isToday ? "Live" : "Upcoming"}</span>
+          {(() => {
+            const tag = dayTag(matches, isToday);
+            const ts = DAY_TAG_STYLE[tag];
+            return <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", borderRadius: 6, padding: "3px 8px", background: ts.bg, color: ts.color }}>{tag}</span>;
+          })()}
           <span aria-hidden style={{ color: T.muted, fontSize: 15, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>⌄</span>
         </span>
       </button>

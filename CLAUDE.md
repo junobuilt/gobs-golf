@@ -43,7 +43,7 @@ Consult these at the start of any session:
 modal on the desktop that freezes a mobile session. Use a plain text reply
 with the question instead. This is a standing rule: Claude Code never uses
 interactive desktop prompts while Jonathan may be on mobile — route every
-question to chat.
+question to chat / the Dispatch reply path. (Reconfirmed 2026-08-03, S1.)
 
 ### Deletion gate (iron-clad)
 

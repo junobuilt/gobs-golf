@@ -34,7 +34,7 @@ describe("matchStatus vocabulary", () => {
     const s = matchStatus(m(2, flat(4, 5), flat(4, 5)));
     expect(s.text).toBe("All Square");
     expect(s.tone).toBe("square");
-    expect(s.thruText).toBe("thru 5");
+    expect(s.thruText).toBe("thru 5 holes");
   });
 
   it("N UP (live, USA leading)", () => {
@@ -43,7 +43,7 @@ describe("matchStatus vocabulary", () => {
     expect(s.text).toBe("2 UP");
     expect(s.tone).toBe("usa");
     expect(s.leaderSide).toBe("a");
-    expect(s.thruText).toBe("thru 3");
+    expect(s.thruText).toBe("thru 3 holes");
   });
 
   it("Dormie (lead === holes remaining, still live)", () => {

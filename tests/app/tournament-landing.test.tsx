@@ -147,8 +147,9 @@ describe("tournament landing", () => {
     // Player names shown.
     expect(row).toHaveTextContent("P1 / P2");
 
-    // No day marked "Live" (future-dated → all "Upcoming").
-    expect(screen.queryByText("Live")).not.toBeInTheDocument();
+    // No day marked "LIVE" (future-dated, none complete → all "UPCOMING").
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+    expect(screen.getAllByText("UPCOMING").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("tournament-empty")).not.toBeInTheDocument();
   });
 
@@ -172,7 +173,7 @@ describe("tournament landing", () => {
       makeLoaded({ id: 500, format: "greensomes", a: [{ playerId: 1, ch: 5, scored: {} }, { playerId: 2, ch: 15, scored: {} }], b: [{ playerId: 3, ch: 10, scored: {} }, { playerId: 4, ch: 20, scored: {} }] }),
     ]);
     await renderPage();
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
   });
 
   it("device memory: Who-are-you → pick stores identity → Go to your match → Switch resets", async () => {

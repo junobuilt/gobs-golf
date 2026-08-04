@@ -11,6 +11,7 @@ import {
   MatchLoadError,
 } from "@/lib/tournament/loadMatch";
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
 import { getStoredPlayerId } from "@/lib/deviceMemory";
 import { setMatchScorer, setMatchFlags } from "@/lib/tournament/mutations";
@@ -452,15 +453,10 @@ export default function MatchScorecardPage() {
   );
 }
 
-// Hero title format name (mock v4: "Day 1 · Modified Alternate Shot") + the
-// uppercase sub-line under it.
-const FORMAT_TITLE: Record<LoadedMatch["session"]["format"], string> = {
-  greensomes: "Modified Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
+// Hero title format name (mock v4: "Day 1 · Modified Alternate Shot") from the
+// shared FORMAT_LABEL SSOT, + the uppercase sub-line under it.
 const FORMAT_SUB: Record<LoadedMatch["session"]["format"], string> = {
-  greensomes: "Alternate shot · one score per team",
+  greensomes: "Modified alternate shot · one score per team",
   four_ball_match: "Best ball · two scores per side, best net counts",
   singles_match: "Singles · one-on-one match play",
 };
@@ -1046,7 +1042,7 @@ function ScHero({ loaded, startHole: _startHole }: { loaded: LoadedMatch; startH
   return (
     <div style={{ background: CHROME_GRADIENT, color: "#fff", borderRadius: 16, padding: "14px 15px" }}>
       <div style={{ fontWeight: 600, fontSize: "1.05rem", letterSpacing: "0.02em" }}>
-        {loaded.session.name} · {FORMAT_TITLE[loaded.session.format]}
+        {loaded.session.name} · {FORMAT_LABEL[loaded.session.format]}
       </div>
       <div style={{ fontSize: "0.7rem", opacity: 0.72, marginTop: 1, textTransform: "uppercase", letterSpacing: "0.09em" }}>
         {FORMAT_SUB[loaded.session.format]}

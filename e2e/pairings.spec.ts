@@ -27,10 +27,12 @@ test("pairings: create a group → strokes render → change tee → remove", as
   await page.goto("/admin");
   await page.getByRole("button", { name: "Tournament" }).click();
 
-  // Create the tournament — auto-creates Day 1 Alternate Shot / Day 2 Best Ball / Day 3 Singles.
+  // Create the tournament — auto-creates Day 1 (Modified Alternate Shot) / Day 2
+  // (Best Ball) / Day 3 (Singles). Day names are bare; label from FORMAT_LABEL.
   await page.getByRole("button", { name: "+ Create Tournament" }).click();
   await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByText("Day 1 — Alternate Shot")).toBeVisible();
+  await expect(page.getByText("Day 1", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Modified Alternate Shot/)).toBeVisible();
 
   // Sides (rows sorted by name): Adam, Betty, Carl, Dora, Wayne Hill, Wayne Vale.
   await page.getByRole("button", { name: "USA" }).nth(0).click(); // Adam → USA

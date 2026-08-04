@@ -168,7 +168,7 @@ describe("createStandardDays", () => {
     expect(failed).toHaveLength(0);
     expect(created.map((s) => s.format)).toEqual(["greensomes", "four_ball_match", "singles_match"]);
     expect(created.map((s) => s.played_on)).toEqual(["2026-08-01", "2026-08-02", "2026-08-03"]);
-    expect(created.map((s) => s.name)).toEqual(["Day 1 — Alternate Shot", "Day 2 — Best Ball", "Day 3 — Singles"]);
+    expect(created.map((s) => s.name)).toEqual(["Day 1", "Day 2", "Day 3"]);
     expect(created.map((s) => s.day_number)).toEqual([1, 2, 3]);
     created.forEach((s) => expect(s.round_id).toBeTruthy());
     // Each day gets a DISTINCT round (the 032 bug was two days sharing one).
@@ -191,7 +191,7 @@ describe("createStandardDays", () => {
     // Days 1 and 3 created; day 2 skipped but its number is NOT reused.
     expect(created.map((s) => s.played_on)).toEqual(["2026-08-01", "2026-08-03"]);
     expect(created.map((s) => s.day_number)).toEqual([1, 3]);
-    expect(failed).toEqual([{ name: "Day 2 — Best Ball", format: "four_ball_match", date: "2026-08-02" }]);
+    expect(failed).toEqual([{ name: "Day 2", format: "four_ball_match", date: "2026-08-02" }]);
     // Only the two survivors persisted.
     expect((fakeRef.current.data.tournament_sessions as any[]).length).toBe(2);
   });

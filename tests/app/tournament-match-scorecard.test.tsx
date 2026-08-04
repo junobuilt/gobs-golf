@@ -918,11 +918,14 @@ describe("match scorecard — SSOT with the scoreboard (mock v4)", () => {
     const m = twoUp();
     const s = matchStatus(m);
     expect(s.text).toBe("2 UP");
-    expect(s.thruText).toBe("thru 3");
+    expect(s.thruText).toBe("thru 3 holes");
 
-    // Scoreboard card renders matchStatus.text verbatim.
+    // Scoreboard card renders matchStatus.text + thruText verbatim — the SAME
+    // "thru N holes" string the hero shows (Change 7: cross-surface agreement,
+    // "thru N" → "thru N holes" so hole-17 starters don't misread "thru 7").
     const board = render(<TournamentMatchCard m={m} />);
     expect(board.getByTestId("tmatch-status-500")).toHaveTextContent("2 UP");
+    expect(board.getByText("thru 3 holes")).toBeInTheDocument();
     board.unmount();
 
     // Scorecard status line composes {leader} {text} · {thruText} from the SAME
@@ -931,7 +934,7 @@ describe("match scorecard — SSOT with the scoreboard (mock v4)", () => {
     await renderPage();
     const status = screen.getByTestId("sc-status-500");
     expect(status).toHaveTextContent("USA 2 UP");
-    expect(status).toHaveTextContent("thru 3");
+    expect(status).toHaveTextContent("thru 3 holes");
   });
 
   it("adopts 'All Square' — never the shipped 'Tied' wording", async () => {

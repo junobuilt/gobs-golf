@@ -9,7 +9,8 @@ import { deriveCupBar } from "@/lib/tournament/cup";
 import { CupHero } from "./CupHero";
 import { TournamentMatchCard } from "./TournamentMatchCard";
 import { TOURNAMENT_TOKENS as T, FOCUS_CLASS } from "@/lib/tournament/tokens";
-import type { SessionFormat, Tournament } from "@/lib/tournament/types";
+import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
+import type { Tournament } from "@/lib/tournament/types";
 
 // Homepage tournament block (mock v4 "Home"). Self-contained (its own fetch) so
 // the league homepage is byte-identical when there's nothing to show: renders
@@ -17,12 +18,6 @@ import type { SessionFormat, Tournament } from "@/lib/tournament/types";
 // cup hero (PointsBar) + today's tournament match cards — all slaved to the
 // admin Live/Test toggle via getTournamentMode(). SSOT: the bar is deriveCupBar
 // over the same loadDashboard the Scoreboard uses.
-
-const FORMAT_LABEL: Record<SessionFormat, string> = {
-  greensomes: "Modified Alternate Shot",
-  four_ball_match: "Best Ball",
-  singles_match: "Singles",
-};
 
 interface Ready {
   tournament: Tournament;
