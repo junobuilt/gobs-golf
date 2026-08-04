@@ -294,6 +294,7 @@ describe("tournament data layer — setMatchScorer / setMatchFlags (coordination
           scorer_label: null,
           flagged_holes: [],
           admin_note: null,
+          is_voided: false,
         },
       ],
     });

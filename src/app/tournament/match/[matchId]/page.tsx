@@ -445,6 +445,35 @@ export default function MatchScorecardPage() {
   }
 
   const group = state.group;
+  // Voided (migration 040): the match keeps its row but is not scorable — show a
+  // plain banner instead of the scorecard, so no scores can be entered on it.
+  if (group.length > 0 && group.every((m) => m.match.is_voided)) {
+    return (
+      <Shell>
+        <div
+          data-testid="match-voided-banner"
+          style={{
+            background: "#eef2f7",
+            border: "1px solid #cbd5e1",
+            color: "#374151",
+            borderRadius: "10px",
+            padding: "20px",
+            fontSize: "0.95rem",
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>This match was voided</div>
+          It’s no longer part of the tournament and can’t be scored. If this is a
+          mistake, an admin can un-void it.
+          <div style={{ marginTop: 14 }}>
+            <Link href="/tournament" data-testid="voided-back-home" className={FOCUS_CLASS} style={{ color: "#1a5a8c", fontWeight: 600 }}>
+              ← Tournament Home
+            </Link>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
   const startHole = group[0]?.match.start_hole ?? 1; // shotgun (039): nav play order
   return (
     <Shell>

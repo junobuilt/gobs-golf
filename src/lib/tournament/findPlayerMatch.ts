@@ -11,8 +11,10 @@ export function findMatchForPlayer(
 ): LoadedMatch | undefined {
   return matches.find(
     (m) =>
-      m.sideA.players.some((p) => p.playerId === playerId) ||
-      m.sideB.players.some((p) => p.playerId === playerId),
+      // A voided match (migration 040) is never surfaced as a player's match.
+      !m.match.is_voided &&
+      (m.sideA.players.some((p) => p.playerId === playerId) ||
+        m.sideB.players.some((p) => p.playerId === playerId)),
   );
 }
 

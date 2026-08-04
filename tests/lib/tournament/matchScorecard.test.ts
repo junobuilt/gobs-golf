@@ -141,6 +141,7 @@ function makeLoaded(opts: {
       scorer_label: null,
       flagged_holes: [],
       admin_note: null,
+      is_voided: false,
     },
     session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },

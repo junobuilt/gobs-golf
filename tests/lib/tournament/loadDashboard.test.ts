@@ -45,6 +45,7 @@ const TOURN = {
   name: "Cup",
   is_active: true,
   is_published: true,
+  planned_match_total: null,
   started_on: "2026-08-01",
   side_a_name: "USA",
   side_b_name: "Canada",
@@ -70,6 +71,7 @@ function match(id: number, session_id: number, match_number: number, aTeam: numb
     scorer_label: null,
     flagged_holes: [],
     admin_note: null,
+    is_voided: false,
     ...over,
   };
 }
@@ -182,6 +184,24 @@ describe("loadDashboard — country total agreement (headline)", () => {
     expect(d.standings.inPlay.map((e) => e.matchId)).toEqual([503]);
     const decided = total - d.standings.inPlay.length;
     expect(decided).toBe(4);
+  });
+
+  it("a voided match keeps its row but contributes NO points (migration 040)", async () => {
+    // Void M502 (a decided side_a match worth +1 to A). Its row still loads, but
+    // it drops out of the standings roll-up.
+    const data = seed();
+    data.tournament_matches = (data.tournament_matches ?? []).map((m) =>
+      m.id === 502 ? { ...m, is_voided: true } : m,
+    );
+    fakeRef.current = new FakeSupabase(data);
+
+    const d = await loadDashboard(1);
+    // Row still present (createdCount unaffected).
+    const m502 = d.days.flatMap((x) => x.matches).find((m) => m.match.id === 502);
+    expect(m502?.match.is_voided).toBe(true);
+    // But A's banked drops from 3.0 to 2.0 (lost the M502 point).
+    expect(d.standings.banked.a).toBe(2.0);
+    expect(d.standings.banked.b).toBe(1.5);
   });
 });
 

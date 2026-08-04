@@ -28,7 +28,7 @@ import TournamentHero from "@/components/tournament/TournamentHero";
 function tournament(overrides: Partial<Tournament> = {}): Tournament {
   return {
     id: 1, name: "2026 GOBS Ryder Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada",
-    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, notes: null,
+    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, planned_match_total: null, notes: null,
     ...overrides,
   };
 }

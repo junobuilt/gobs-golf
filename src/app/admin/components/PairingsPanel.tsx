@@ -17,7 +17,7 @@ import { supabase } from "@/lib/supabase";
 import { computeCourseHandicap } from "@/lib/scoring/handicap";
 import { computeSideStrokes } from "@/lib/tournament/matchStrokes";
 import { loadMatch, loadSessionMatches } from "@/lib/tournament/loadMatch";
-import { createGroup, deleteGroup, setGroupShotgun, setPlayerDaySide, updateGroup } from "@/lib/tournament/mutations";
+import { createGroup, deleteGroup, setGroupShotgun, setPlayerDaySide, unvoidMatch, updateGroup, voidMatch } from "@/lib/tournament/mutations";
 import { getDaySideAssignments, getTournamentPlayers } from "@/lib/tournament/queries";
 import { deriveGroupLabel, groupLabelFor } from "@/lib/tournament/matchScorecard";
 import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
@@ -1054,6 +1054,8 @@ function EditGroup({
   );
   const [saving, setSaving] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  // Migration 040 — the match pending a void confirm (its id), or null.
+  const [voidConfirm, setVoidConfirm] = useState<number | null>(null);
 
   // Every slot in the group — occupied OR empty — keyed by team_number:index.
   const seats = useMemo(() => {
@@ -1100,6 +1102,25 @@ function EditGroup({
       if (g) setLiveGroup(g);
     } catch {
       /* keep the current copy if the reload itself fails */
+    }
+  };
+
+  // Void / un-void a single match (migration 040). A state flag, NOT a deletion:
+  // the row stays; it just drops out of the decidable pool. onDone closes the
+  // modal AND reloads the parent, so the tournament header's Created count + the
+  // cup thresholds refresh.
+  const applyVoid = async (matchId: number, next: boolean) => {
+    setSaving(true);
+    setInlineError(null);
+    try {
+      if (next) await voidMatch(matchId);
+      else await unvoidMatch(matchId);
+      setVoidConfirm(null);
+      onDone();
+    } catch (err) {
+      setInlineError(mutationMessage(err, sideAName, sideBName));
+      await reloadFromDb();
+      setSaving(false);
     }
   };
 
@@ -1180,8 +1201,48 @@ function EditGroup({
                 </div>
               );
             })}
+          {/* Void / un-void this match (migration 040). Kept as a row (not a
+              delete) — it just drops out of the cup total. */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 2 }}>
+            {m.match.is_voided ? (
+              <>
+                <span style={{ fontSize: "0.72rem", fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: "0.04em" }}>Voided — out of the cup</span>
+                <button
+                  type="button"
+                  data-testid={`unvoid-match-${m.match.id}`}
+                  disabled={saving}
+                  onClick={() => void applyVoid(m.match.id, false)}
+                  style={{ background: "white", color: C.navy, border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "7px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
+                >
+                  Un-void
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid={`void-match-${m.match.id}`}
+                disabled={saving}
+                onClick={() => setVoidConfirm(m.match.id)}
+                style={{ marginLeft: "auto", background: "white", color: C.red, border: `1.5px solid ${C.red}`, borderRadius: 8, padding: "7px 12px", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
+              >
+                Void match
+              </button>
+            )}
+          </div>
         </div>
       ))}
+
+      {voidConfirm != null && (
+        <DangerModal
+          title="Void this match?"
+          description="A voided match keeps its row but drops out of the tournament — it won't count toward the cup total, won't be scored, and won't show as a player's next match. You can un-void it anytime."
+          cannotBeUndone={false}
+          confirmLabel="Void match"
+          zIndex={1100}
+          onConfirm={() => void applyVoid(voidConfirm, true)}
+          onCancel={() => setVoidConfirm(null)}
+        />
+      )}
 
       <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, margin: "8px 0 4px" }}>Tee</div>
       <select

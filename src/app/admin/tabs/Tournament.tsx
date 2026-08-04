@@ -146,6 +146,20 @@ const inputStyle: React.CSSProperties = {
   minHeight: 44,
   boxSizing: "border-box",
 };
+const previewLinkStyle: React.CSSProperties = {
+  minHeight: 40,
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "0 14px",
+  borderRadius: 8,
+  border: `1.5px solid ${C.border}`,
+  background: "white",
+  color: C.navy,
+  fontWeight: 600,
+  fontSize: "0.82rem",
+  textDecoration: "none",
+  fontFamily: FONT,
+};
 
 interface Props {
   allPlayers: Player[]; // active roster (from the admin shell)
@@ -189,6 +203,9 @@ export default function Tournament({ allPlayers }: Props) {
   const [dayCollisions, setDayCollisions] = useState<FailedStandardDay[]>([]);
   // §3 — per-day pairings summaries, keyed by session id.
   const [pairingsBySession, setPairingsBySession] = useState<Record<number, DaySummary>>({});
+  // Migration 040 — created/voided match counts across all days, for the
+  // "Planned: N · Created: M" divergence readout in the header.
+  const [matchCounts, setMatchCounts] = useState<{ created: number; voided: number }>({ created: 0, voided: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -218,11 +235,18 @@ export default function Tournament({ allPlayers }: Props) {
       sesss.map((s) => (s.round_id != null ? loadSessionMatches(s.id) : Promise.resolve([] as LoadedMatch[]))),
     );
     const pmap: Record<number, DaySummary> = {};
+    let created = 0;
+    let voided = 0;
     sesss.forEach((s, i) => {
       const r = results[i];
       pmap[s.id] = r.status === "fulfilled" ? summarizeDay(r.value) : { groups: [], players: 0, error: true };
+      if (r.status === "fulfilled") {
+        created += r.value.length;
+        voided += r.value.filter((m) => m.match.is_voided).length;
+      }
     });
     setPairingsBySession(pmap);
+    setMatchCounts({ created, voided });
   }, []);
 
   // Test/Live flip — optimistic-then-persist, reconcile via load() on failure
@@ -256,6 +280,32 @@ export default function Tournament({ allPlayers }: Props) {
       } catch (e) {
         await load();
         setActionError(e instanceof Error ? e.message : "Couldn't update the cup holder.");
+      }
+    },
+    [tournament, load],
+  );
+
+  // Planned match total (migration 040) — the declared tournament size that
+  // drives the cup thresholds. Optimistic-then-persist, reconcile on failure
+  // (same pattern as setHolder). Blank → null (undeclared). `raw` is the field's
+  // current text; validation mirrors the DB CHECK.
+  const savePlannedTotal = useCallback(
+    async (raw: string) => {
+      setActionError(null);
+      const cur = tournament;
+      if (!cur) return;
+      const parsed = parsePlannedTotal(raw);
+      if (parsed === "invalid") {
+        setActionError("Planned match total must be a whole number between 2 and 50 (or blank).");
+        return;
+      }
+      if ((cur.planned_match_total ?? null) === parsed) return;
+      setTournament((prev) => (prev ? { ...prev, planned_match_total: parsed } : prev));
+      try {
+        await updateTournament(cur.id, { planned_match_total: parsed });
+      } catch (e) {
+        await load();
+        setActionError(e instanceof Error ? e.message : "Couldn't update the planned match total.");
       }
     },
     [tournament, load],
@@ -519,6 +569,31 @@ export default function Tournament({ allPlayers }: Props) {
             >
               None
             </button>
+          </div>
+        </div>
+        {/* Planned match total (migration 040) — the DECLARED size that drives the
+            cup thresholds, shown next to the live Created count so any divergence
+            is visible. Editable anytime. */}
+        <PlannedTotalControl
+          value={tournament.planned_match_total ?? null}
+          created={Math.max(0, matchCounts.created - matchCounts.voided)}
+          voided={matchCounts.voided}
+          onSave={savePlannedTotal}
+        />
+        {/* Admin preview doorway (migration 040) — reach the player-facing
+            tournament surfaces regardless of publish state. Gated by admin auth
+            (this whole /admin tree is middleware-gated); players can't get here. */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, marginBottom: 6 }}>
+            Preview as player
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <a href="/tournament" data-testid="preview-tournament-home" style={previewLinkStyle}>
+              Tournament Home →
+            </a>
+            <a href="/tournament/dashboard" data-testid="preview-scoreboard" style={previewLinkStyle}>
+              Scoreboard →
+            </a>
           </div>
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
@@ -1220,6 +1295,72 @@ function ModalShell({ title, children }: { title: string; children: React.ReactN
   );
 }
 
+// Header control for the declared match total (migration 040). Local text state
+// so the admin can type freely; commits on blur or Enter via onSave (which
+// validates + persists). Shows "Planned: N · Created: M" so a divergence between
+// the declared size and the matches actually created is visible at a glance.
+function PlannedTotalControl({
+  value,
+  created,
+  voided,
+  onSave,
+}: {
+  value: number | null;
+  created: number; // non-voided created matches
+  voided: number;
+  onSave: (raw: string) => void | Promise<void>;
+}) {
+  const [text, setText] = useState(value == null ? "" : String(value));
+  // Re-sync when the persisted value changes (optimistic update or reload).
+  useEffect(() => {
+    setText(value == null ? "" : String(value));
+  }, [value]);
+
+  const plannedLabel = value == null ? "—" : String(value);
+  const diverges = value != null && value !== created;
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: C.muted, marginBottom: 6 }}>
+        Planned match total
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <input
+          data-testid="planned-total-input"
+          style={{ ...inputStyle, width: 120, minHeight: 40 }}
+          type="number"
+          min={2}
+          max={50}
+          inputMode="numeric"
+          placeholder="blank"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => void onSave(text)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void onSave(text);
+          }}
+        />
+        <span data-testid="planned-created-readout" style={{ fontSize: "0.82rem", fontWeight: 600, color: diverges ? C.amber : C.muted }}>
+          Planned: {plannedLabel} · Created: {created}
+          {voided > 0 ? ` (${voided} voided)` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Parse the "Planned match total" field: blank → null (undeclared); a whole
+// number 2–50 → that number; anything else → "invalid" (the caller shows an
+// error). Mirrors the DB CHECK (migration 040).
+function parsePlannedTotal(raw: string): number | null | "invalid" {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (!/^\d+$/.test(trimmed)) return "invalid";
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 2 || n > 50) return "invalid";
+  return n;
+}
+
 function CreateTournamentModal({
   onCancel,
   onCreated,
@@ -1233,14 +1374,20 @@ function CreateTournamentModal({
   const [sideAName, setSideAName] = useState("USA");
   const [sideBName, setSideBName] = useState("Canada");
   const [holderSide, setHolderSide] = useState<Side>("b"); // confirmed tie rule → holder defaults to B
+  const [plannedTotal, setPlannedTotal] = useState<string>("32"); // declared size; blank = undeclared
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = async () => {
+    const planned = parsePlannedTotal(plannedTotal);
+    if (planned === "invalid") {
+      setError("Planned match total must be a whole number between 2 and 50 (or blank).");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const t = await createTournament({ name: name.trim(), startedOn, sideAName: sideAName.trim(), sideBName: sideBName.trim(), holderSide });
+      const t = await createTournament({ name: name.trim(), startedOn, sideAName: sideAName.trim(), sideBName: sideBName.trim(), holderSide, plannedMatchTotal: planned });
       // Auto-create the three standard days (Greensomes / Four-ball / Singles)
       // on consecutive dates. League-round collisions don't abort creation —
       // the survivors are made and the blocked days surface as a banner (§3).
@@ -1291,6 +1438,20 @@ function CreateTournamentModal({
             {s === "a" ? sideAName : sideBName}
           </button>
         ))}
+      </div>
+      <div style={lbl}>Planned match total</div>
+      <input
+        style={inputStyle}
+        type="number"
+        min={2}
+        max={50}
+        inputMode="numeric"
+        placeholder="e.g. 32 (leave blank if undecided)"
+        value={plannedTotal}
+        onChange={(e) => setPlannedTotal(e.target.value)}
+      />
+      <div style={{ fontSize: "0.72rem", color: C.muted, marginTop: 4 }}>
+        The full tournament size — drives “points to win the cup.” Matches are usually created the night before each day; this keeps the scoreboard correct before they exist. Editable anytime.
       </div>
       {error && <div style={{ color: C.red, fontSize: "0.82rem", marginTop: 12 }}>{error}</div>}
       <div style={{ display: "flex", gap: 12, marginTop: 20 }}>

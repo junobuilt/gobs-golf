@@ -6,6 +6,7 @@
 // (guarded by the cross-surface test).
 
 import { isMatchComplete } from "./completion";
+import { cupTotals } from "./cupTotals";
 import type { DashboardData } from "./loadDashboard";
 import type { Side, Tournament } from "./types";
 
@@ -91,9 +92,16 @@ export interface CupBar {
   // Banked (decided-only, ½ per halve) country points — the bar fill values.
   pointsA: number;
   pointsB: number;
-  total: number; // created matches (dynamic)
-  decided: number; // matches with an authoritative result
-  liveNow: number; // undecided matches with at least one resolved hole
+  // Migration 040 — the DECIDABLE total (coalesce(planned, created) − voided).
+  // Drives thresholds + the verdict. Replaces the old "created matches" total.
+  total: number;
+  // Bar geometry denominator (declared size, clamped ≥ non-voided created) — the
+  // bar doesn't resize as matches complete. See cupTotals.
+  barSize: number;
+  createdCount: number; // ALL created matches (incl. voided)
+  voidedCount: number; // voided matches (rendered inactive)
+  decided: number; // NON-VOIDED matches with an authoritative result
+  liveNow: number; // NON-VOIDED undecided matches with at least one resolved hole
   pointsInPlay: number; // total − decided (each undecided match = 1 available point)
   toWin: number;
   toRetain: number;
@@ -105,24 +113,37 @@ export interface CupBar {
 // resolveMatchResult upstream); the counts are read off the same LoadedMatch
 // list the rows render. No parallel fetch, no recompute.
 export function deriveCupBar(data: DashboardData, tournament: Tournament): CupBar {
-  const matches = data.days.flatMap((d) => d.matches);
-  const total = matches.length;
+  const allMatches = data.days.flatMap((d) => d.matches);
+  // Voided matches keep their row (createdCount) but drop out of the decidable
+  // pool: excluded from decided/liveNow here AND from the points roll-up upstream
+  // (loadDashboard filters them before computeTournamentStandings), so the fills
+  // and the total agree.
+  const activeMatches = allMatches.filter((m) => !m.match.is_voided);
+  const createdCount = allMatches.length;
+  const voidedCount = createdCount - activeMatches.length;
+  const { liveTotal, barSize, winLine, retainLine } = cupTotals({
+    createdCount,
+    voidedCount,
+    plannedTotal: tournament.planned_match_total,
+  });
   // SSOT with the day tag: `decided` uses the SAME isMatchComplete predicate the
   // day-status helper reads (completion.ts), so the cup and the tags agree.
-  const decided = matches.filter(isMatchComplete).length;
-  const liveNow = matches.filter((m) => !isMatchComplete(m) && m.state.thru > 0).length;
-  const { toWin, toRetain } = cupThresholds(total);
+  const decided = activeMatches.filter(isMatchComplete).length;
+  const liveNow = activeMatches.filter((m) => !isMatchComplete(m) && m.state.thru > 0).length;
   return {
     sideAName: tournament.side_a_name,
     sideBName: tournament.side_b_name,
     pointsA: data.standings.banked.a,
     pointsB: data.standings.banked.b,
-    total,
+    total: liveTotal,
+    barSize,
+    createdCount,
+    voidedCount,
     decided,
     liveNow,
-    pointsInPlay: total - decided,
-    toWin,
-    toRetain,
+    pointsInPlay: liveTotal - decided,
+    toWin: winLine,
+    toRetain: retainLine,
     holderSide: tournament.holder_side,
   };
 }

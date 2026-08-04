@@ -53,7 +53,7 @@ vi.mock("@/lib/date", async (importOriginal) => {
   return { ...actual, todayLocal: () => "2026-07-15" };
 });
 
-import TournamentLandingPage from "@/app/tournament/page";
+import TournamentLandingPage, { loadLanding } from "@/app/tournament/page";
 
 function tournament(overrides: Partial<Tournament> = {}): Tournament {
   return {
@@ -67,6 +67,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
     ended_on: null,
     is_active: true,
     is_published: true,
+    planned_match_total: null,
     notes: null,
     ...overrides,
   };
@@ -238,6 +239,24 @@ describe("tournament landing", () => {
     expect(screen.queryByTestId("no-match")).not.toBeInTheDocument();
   });
 
+  it("Change 2: a not-started match shows the status ONCE, not 'Not started Not started'", async () => {
+    // Regression: the box concatenated matchStatus().text AND .thruText, which are
+    // BOTH "Not started" for a thru-0 match → the status rendered doubled.
+    window.localStorage.setItem("gobs:tournament-player-id", "1");
+    mocks.getActiveTournament.mockResolvedValue(tournament());
+    mocks.getTournamentSessions.mockResolvedValue([session(9, 1, "singles_match", "2026-08-01")]);
+    mocks.loadSessionMatches.mockResolvedValue([
+      makeLoaded({ id: 700, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] }),
+    ]);
+    await renderPage();
+    const link = screen.getByTestId("go-to-your-match");
+    expect(link).toHaveTextContent("Not started");
+    expect(link).not.toHaveTextContent("Not started Not started");
+    // Exactly one occurrence of the phrase in the CTA.
+    const occurrences = (link.textContent ?? "").match(/Not started/g) ?? [];
+    expect(occurrences.length).toBe(1);
+  });
+
   it("Fix 1: picks the SOONEST today-or-later day when a player is matched on several", async () => {
     window.localStorage.setItem("gobs:tournament-player-id", "1");
     mocks.getActiveTournament.mockResolvedValue(tournament());
@@ -350,5 +369,39 @@ describe("tournament landing", () => {
     await renderPage();
     expect(screen.getByText(/Couldn’t load this day’s pairings/)).toBeInTheDocument();
     expect(screen.getByTestId("tmatch-card-600")).toBeInTheDocument();
+  });
+});
+
+// Migration 040 — the admin preview gate. loadLanding takes an isAdmin flag; the
+// server action isAdminSession() supplies it in the page. A player is never
+// admin, so the publish gate is unchanged for them.
+describe("admin preview gate (loadLanding)", () => {
+  beforeEach(() => {
+    mocks.getActiveTournament.mockReset();
+    mocks.getTournamentSessions.mockReset();
+    mocks.getTournamentSessions.mockResolvedValue([]); // loadDashboard → no days
+    mocks.getPointAdjustments.mockReset();
+    mocks.getPointAdjustments.mockResolvedValue([]);
+  });
+
+  it("unpublished + NOT admin → empty (player can't reach it)", async () => {
+    mocks.getActiveTournament.mockResolvedValue(tournament({ is_published: false }));
+    const state = await loadLanding(false);
+    expect(state.kind).toBe("empty");
+    expect(mocks.getTournamentSessions).not.toHaveBeenCalled();
+  });
+
+  it("unpublished + admin → ready in preview mode", async () => {
+    mocks.getActiveTournament.mockResolvedValue(tournament({ is_published: false }));
+    const state = await loadLanding(true);
+    expect(state.kind).toBe("ready");
+    if (state.kind === "ready") expect(state.preview).toBe(true);
+  });
+
+  it("published → ready, not preview, regardless of admin", async () => {
+    mocks.getActiveTournament.mockResolvedValue(tournament({ is_published: true }));
+    const asPlayer = await loadLanding(false);
+    expect(asPlayer.kind).toBe("ready");
+    if (asPlayer.kind === "ready") expect(asPlayer.preview).toBe(false);
   });
 });
