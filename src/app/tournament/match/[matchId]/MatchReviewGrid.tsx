@@ -2,8 +2,11 @@
 
 import React from "react";
 import PlayerHoleGrid from "@/components/scorecard/PlayerHoleGrid";
+import { HoleStrip } from "@/components/tournament/HoleStrip";
 import { getTeamColor } from "@/lib/teamColors";
 import { strokeDots } from "@/lib/tournament/matchScorecard";
+import { holePlayOrder } from "@/lib/tournament/matchplay";
+import { TOURNAMENT_TOKENS as T } from "@/lib/tournament/tokens";
 import type { LoadedMatch, MatchState, Side } from "@/lib/tournament/types";
 import type { OptimisticScores } from "@/lib/tournament/matchScorecard";
 
@@ -87,9 +90,11 @@ export default function MatchReviewGrid({
   );
 }
 
-// The 18-hole result strip: each hole tinted by who won it on net (blue A / red B
-// / grey halved / blank unresolved), read straight from MatchState.holeOutcomes.
-// A flagged hole shows a ⚑ above its cell.
+// The 18-hole result strip: each hole tinted by who won it on net, read straight
+// from the canonical MatchState.holeOutcomes via the SHARED HoleStrip component —
+// the SAME renderer the scoreboard uses (A = USA/side_a blue, C = Canada/side_b
+// red, ½ halved, · unplayed). Holes run in PLAY ORDER (shotgun start hole first);
+// a flagged hole shows a ⚑ above its cell. NO second who-won computation here.
 function OutcomeStrip({
   outcomes,
   loaded,
@@ -99,71 +104,30 @@ function OutcomeStrip({
   loaded: LoadedMatch;
   flaggedHoles: number[];
 }) {
-  const cell = (i: number) => {
-    const holeNo = i + 1;
-    const o = outcomes[i];
-    const bg =
-      o === "side_a" ? SIDE_COLOR.a.bg : o === "side_b" ? SIDE_COLOR.b.bg : o === "halved" ? "#eef0f2" : "transparent";
-    const border =
-      o === "side_a" ? SIDE_COLOR.a.border : o === "side_b" ? SIDE_COLOR.b.border : o === "halved" ? "#cbd5e1" : "#e5e7eb";
-    const mark = o === "side_a" ? "A" : o === "side_b" ? "B" : o === "halved" ? "½" : "";
-    return (
-      <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1px" }}>
-        <div style={{ height: "10px", fontSize: "9px", color: "#b45309", lineHeight: 1 }}>
-          {flaggedHoles.includes(holeNo) ? "⚑" : ""}
-        </div>
-        <div style={{ fontSize: "9px", color: "#64748b" }}>{holeNo}</div>
-        <div
-          data-testid={`review-outcome-${holeNo}`}
-          style={{
-            width: "100%",
-            minHeight: "18px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "10px",
-            fontWeight: 800,
-            color: "#334155",
-            background: bg,
-            border: `1px solid ${border}`,
-            borderRadius: "4px",
-          }}
-        >
-          {mark}
-        </div>
-      </div>
-    );
-  };
-  const nine = (start: number) => (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(9, 1fr)", gap: "2px" }}>
-      {Array.from({ length: 9 }, (_, k) => cell(start + k))}
-    </div>
-  );
+  const order = holePlayOrder(loaded.match.start_hole ?? 1);
   return (
     <div>
       <div style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "#64748b", marginBottom: "4px" }}>
         Hole results
       </div>
-      {/* D11 — legend keying the compact A/B cell marks to the real side names
+      {/* D11 — legend keying the A / C cell marks to the real side names
           (tournaments.side_a_name / side_b_name) so the strip is readable
-          without prior knowledge of which letter is which side. */}
+          without prior knowledge of which letter is which side. Colors match
+          the strip cells (shared TOURNAMENT_TOKENS livery). */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "6px", fontSize: "0.68rem", fontWeight: 700, color: "#475569" }}>
-        <LegendKey bg={SIDE_COLOR.a.bg} border={SIDE_COLOR.a.border} label={`A = ${loaded.sideA.displayName}`} />
-        <LegendKey bg={SIDE_COLOR.b.bg} border={SIDE_COLOR.b.border} label={`B = ${loaded.sideB.displayName}`} />
-        <LegendKey bg="#eef0f2" border="#cbd5e1" label="½ = Halved" />
+        <LegendKey bg={T.usa} label={`A = ${loaded.sideA.displayName}`} />
+        <LegendKey bg={T.can} label={`C = ${loaded.sideB.displayName}`} />
+        <LegendKey bg={`linear-gradient(135deg, ${T.usa} 0 50%, ${T.can} 50% 100%)`} label="½ = Halved" />
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-        {nine(0)}
-        {nine(9)}
-      </div>
+      <HoleStrip outcomes={outcomes} holeOrder={order} flaggedHoles={flaggedHoles} />
     </div>
   );
 }
 
-function LegendKey({ bg, border, label }: { bg: string; border: string; label: string }) {
+function LegendKey({ bg, label }: { bg: string; label: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
-      <span style={{ width: "12px", height: "12px", borderRadius: "3px", background: bg, border: `1px solid ${border}` }} />
+      <span style={{ width: "12px", height: "12px", borderRadius: "3px", background: bg }} />
       {label}
     </span>
   );
