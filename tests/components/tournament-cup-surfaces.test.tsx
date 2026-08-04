@@ -17,6 +17,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, act } from "@testing-library/react";
 import { makeLoaded } from "../support/matchFixture";
 import { matchSidePoints } from "@/lib/tournament/matchStatus";
+import { cupTotals } from "@/lib/tournament/cupTotals";
+import { formatCupPoints } from "@/lib/tournament/cup";
 import type { LoadedMatch, Tournament, TournamentSession } from "@/lib/tournament/types";
 
 const mocks = vi.hoisted(() => ({
@@ -50,7 +52,7 @@ import TournamentDashboardPage from "@/app/tournament/dashboard/page";
 function tournament(overrides: Partial<Tournament> = {}): Tournament {
   return {
     id: 1, name: "2026 GOBS Ryder Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada",
-    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, notes: null,
+    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, planned_match_total: null, notes: null,
     ...overrides,
   };
 }
@@ -177,6 +179,37 @@ describe("(c) the cup VERDICT is identical across the three surfaces (SSOT)", ()
 
     expect(home).toContain("USA WINS THE CUP.");
     // Identical string on all three surfaces (from the one cupOutcome()).
+    expect(thome).toBe(home);
+    expect(board).toBe(home);
+  });
+});
+
+describe("(d) the DECLARED total drives the threshold identically across surfaces (SSOT, migration 040)", () => {
+  it("planned 32 with only 3 created → all three show the accessor's 16½-to-win line", async () => {
+    // 3 matches created (default seed), but the admin declared 32. The win line
+    // must come from the accessor's liveTotal (32 → 16.5), NOT the created count.
+    mocks.getActiveTournament.mockResolvedValue(tournament({ planned_match_total: 32 }));
+
+    // The accessor is the single source; the caption must match its winLine.
+    const expected = cupTotals({ createdCount: 3, voidedCount: 0, plannedTotal: 32 });
+    expect(expected.winLine).toBe(16.5);
+    const wantCaption = `${formatCupPoints(expected.winLine)} to win the cup`; // "16½ to win the cup"
+
+    const read = () => screen.getByTestId("pointsbar-cap-a").textContent; // USA = challenger
+
+    await renderSurface(<TournamentHero />);
+    const home = read();
+    cleanup();
+
+    await renderSurface(<TournamentLandingPage />);
+    const thome = read();
+    cleanup();
+
+    await renderSurface(<TournamentDashboardPage />);
+    const board = read();
+    cleanup();
+
+    expect(home).toContain(wantCaption);
     expect(thome).toBe(home);
     expect(board).toBe(home);
   });

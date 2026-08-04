@@ -91,11 +91,25 @@ test("published: /tournament/dashboard shows the cup PointsBar + decided status"
   await expect(page.getByTestId("dash-holes-500").getByTestId("hole-strip")).toBeVisible();
 });
 
-test("Test (unpublished): /tournament/dashboard shows the empty state", async ({ page, db }) => {
+// A PLAYER (no admin cookie) hits the publish gate: unpublished → empty state.
+test.describe("as a player (no admin session)", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("Test (unpublished): /tournament/dashboard shows the empty state", async ({ page, db }) => {
+    seed(db, seedTournament(false));
+    await page.goto("/tournament/dashboard");
+    await expect(page.getByTestId("dashboard-empty")).toBeVisible();
+    await expect(page.getByTestId("cup-hero")).toHaveCount(0);
+  });
+});
+
+// An ADMIN (default e2e storage) gets the preview doorway (migration 040).
+test("Admin preview: unpublished /tournament/dashboard renders with the preview banner", async ({ page, db }) => {
   seed(db, seedTournament(false));
   await page.goto("/tournament/dashboard");
-  await expect(page.getByTestId("dashboard-empty")).toBeVisible();
-  await expect(page.getByTestId("cup-hero")).toHaveCount(0);
+  await expect(page.getByTestId("preview-banner")).toBeVisible();
+  await expect(page.getByTestId("cup-hero")).toBeVisible();
+  await expect(page.getByTestId("dashboard-empty")).toHaveCount(0);
 });
 
 test("Tournament Home links to the dashboard", async ({ page, db }) => {

@@ -13,7 +13,7 @@ import type { LoadedMatch, Tournament, TournamentSession } from "@/lib/tournamen
 function tournament(overrides: Partial<Tournament> = {}): Tournament {
   return {
     id: 1, name: "2026 GOBS Ryder Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada",
-    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, notes: null,
+    holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: true, planned_match_total: null, notes: null,
     ...overrides,
   };
 }
@@ -34,6 +34,10 @@ function live(id: number): LoadedMatch {
 // A not-started match — no scores (thru 0).
 function pending(id: number): LoadedMatch {
   return makeLoaded({ id, format: "singles_match", a: [{ playerId: id * 10 + 1, ch: 0, scored: {} }], b: [{ playerId: id * 10 + 2, ch: 0, scored: {} }] });
+}
+// A voided match (migration 040) — kept as a row, out of the decidable pool.
+function voided(id: number): LoadedMatch {
+  return makeLoaded({ id, isVoided: true, format: "singles_match", a: [{ playerId: id * 10 + 1, ch: 0, scored: {} }], b: [{ playerId: id * 10 + 2, ch: 0, scored: {} }] });
 }
 
 function dashboard(matches: LoadedMatch[], banked: { a: number; b: number }): DashboardData {
@@ -94,6 +98,52 @@ describe("deriveCupBar", () => {
   it("honors the holder side for the retain line (holder a)", () => {
     const bar = deriveCupBar(dashboard([decidedUSA(1)], { a: 1, b: 0 }), tournament({ holder_side: "a" }));
     expect(bar.holderSide).toBe("a");
+  });
+});
+
+describe("deriveCupBar — declared total + void (migration 040)", () => {
+  it("planned_match_total drives the total even when few matches are created (TD45)", () => {
+    // 8 created, all pending, but the admin declared a 32-match tournament.
+    const matches = Array.from({ length: 8 }, (_, i) => pending(i + 1));
+    const bar = deriveCupBar(dashboard(matches, { a: 0, b: 0 }), tournament({ planned_match_total: 32 }));
+    expect(bar.total).toBe(32); // liveTotal, NOT the created count
+    expect(bar.barSize).toBe(32);
+    expect(bar.createdCount).toBe(8);
+    expect(bar.toWin).toBe(16.5);
+    expect(bar.toRetain).toBe(16);
+  });
+
+  it("voiding a match drops liveTotal by 1 and shifts the thresholds; un-void restores", () => {
+    const active = [decidedUSA(1), decidedUSA(2), pending(3), pending(4)];
+    const withVoid = [...active, voided(5)];
+
+    const t = tournament({ planned_match_total: null });
+    // 4 non-voided created (planned NULL) → liveTotal 4, win 2.5 / retain 2.
+    const before = deriveCupBar(dashboard(active, { a: 2, b: 0 }), t);
+    expect(before.total).toBe(4);
+    expect(before.toWin).toBe(2.5);
+    expect(before.toRetain).toBe(2);
+    expect(before.voidedCount).toBe(0);
+
+    // Add a 5th match that is VOIDED: createdCount 5, but the pool stays 4.
+    const voidedBar = deriveCupBar(dashboard(withVoid, { a: 2, b: 0 }), t);
+    expect(voidedBar.createdCount).toBe(5);
+    expect(voidedBar.voidedCount).toBe(1);
+    expect(voidedBar.total).toBe(4); // liveTotal unchanged (voided excluded)
+    expect(voidedBar.decided).toBe(2); // voided (pending) not counted
+
+    // Now with planned declared at 5, that same void drops liveTotal 5 → 4.
+    const tPlanned5 = tournament({ planned_match_total: 5 });
+    const declaredNoVoid = deriveCupBar(dashboard(active, { a: 2, b: 0 }), tPlanned5); // 4 created, planned 5
+    expect(declaredNoVoid.total).toBe(5);
+    expect(declaredNoVoid.toWin).toBe(3);
+    const declaredWithVoid = deriveCupBar(dashboard(withVoid, { a: 2, b: 0 }), tPlanned5);
+    expect(declaredWithVoid.total).toBe(4); // 5 − 1 voided
+    expect(declaredWithVoid.toWin).toBe(2.5);
+    // Un-void = the same data without the voided row → back to 5.
+    const restored = deriveCupBar(dashboard(active, { a: 2, b: 0 }), tPlanned5);
+    expect(restored.total).toBe(5);
+    expect(restored.toWin).toBe(3);
   });
 });
 

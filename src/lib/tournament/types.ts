@@ -28,6 +28,10 @@ export interface Tournament {
   // shown on the homepage hero + the public /tournament landing. The player-
   // facing gate; `is_active` still identifies the one live tournament.
   is_published: boolean;
+  // Migration 040. The admin's DECLARED tournament size (2–50). null =
+  // undeclared → the cup total falls back to the created-match count (preserves
+  // pre-040 behavior). Drives `liveTotal`/thresholds via cupTotals — see cup.ts.
+  planned_match_total: number | null;
   notes: string | null;
   created_at?: string;
   updated_at?: string;
@@ -131,6 +135,10 @@ export interface TournamentMatch {
   // omit them, and the engine/display default (start_hole ?? 1, group_label ?? derived).
   start_hole?: number | null;
   group_label?: string | null;
+  // Migration 040. A voided match keeps its row but drops out of the decidable
+  // pool: not counted toward `liveTotal`, not scored, not surfaced as a player's
+  // next match. Reversible (un-void). NOT a deletion. Defaults false.
+  is_voided: boolean;
   created_at?: string;
   updated_at?: string;
 }

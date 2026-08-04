@@ -75,9 +75,25 @@ test("published tournament: /tournament lists all 3 days + pairings, each match 
   await expect(page.getByTestId("match-card-500")).toBeVisible();
 });
 
-test("Test (unpublished) tournament: /tournament shows the empty state", async ({ page, db }) => {
+// A PLAYER (no admin cookie) still hits the publish gate: an unpublished
+// tournament shows the empty state and never leaks its name.
+test.describe("as a player (no admin session)", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("Test (unpublished) tournament: /tournament shows the empty state", async ({ page, db }) => {
+    seed(db, seedTournament(false));
+    await page.goto("/tournament");
+    await expect(page.getByTestId("tournament-empty")).toBeVisible();
+    await expect(page.getByText("2026 GOBS Ryder Cup")).toHaveCount(0);
+  });
+});
+
+// An ADMIN (the default e2e storage state) gets the preview doorway: the
+// unpublished tournament renders, flagged with the preview banner. Migration 040.
+test("Admin preview: an unpublished tournament renders with the preview banner", async ({ page, db }) => {
   seed(db, seedTournament(false));
   await page.goto("/tournament");
-  await expect(page.getByTestId("tournament-empty")).toBeVisible();
-  await expect(page.getByText("2026 GOBS Ryder Cup")).toHaveCount(0);
+  await expect(page.getByTestId("preview-banner")).toBeVisible();
+  await expect(page.getByText("2026 GOBS Ryder Cup")).toBeVisible();
+  await expect(page.getByTestId("tournament-empty")).toHaveCount(0);
 });

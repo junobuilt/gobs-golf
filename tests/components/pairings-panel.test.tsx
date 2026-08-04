@@ -44,7 +44,7 @@ const PLAYERS = [
   { id: 6, full_name: "Ben Bay", display_name: "Ben", handicap_index: 9, is_active: true, preferred_tee_id: 1 },
 ];
 
-const TOURN: Tournament = { id: 1, name: "Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada", holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: false, notes: null };
+const TOURN: Tournament = { id: 1, name: "Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada", holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: false, planned_match_total: null, notes: null };
 
 function session(format: "greensomes" | "four_ball_match" | "singles_match"): TournamentSession {
   return { id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1 — Test", format, played_on: "2026-08-01", is_locked: false };

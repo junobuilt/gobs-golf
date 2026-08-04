@@ -80,7 +80,12 @@ export async function loadDashboard(
       : { session, matches: [], error: true };
   });
 
-  const inputs: StandingsMatchInput[] = days.flatMap((d) => d.matches.map(toStandingsInput));
+  // Migration 040 — a voided match keeps its row (so createdCount still sees it)
+  // but contributes NO country points: exclude it before the roll-up so the bar
+  // fills agree with the void-aware liveTotal (cup.ts).
+  const inputs: StandingsMatchInput[] = days.flatMap((d) =>
+    d.matches.filter((m) => !m.match.is_voided).map(toStandingsInput),
+  );
   const standings = computeTournamentStandings(inputs, adjustments);
 
   return { standings, days, adjustments };

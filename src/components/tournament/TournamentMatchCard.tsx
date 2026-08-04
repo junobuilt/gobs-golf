@@ -31,25 +31,48 @@ export function TournamentMatchCard({ m }: { m: LoadedMatch }) {
   const aNames = m.sideA.players.map((p) => p.displayName).join(" / ") || m.sideA.displayName;
   const bNames = m.sideB.players.map((p) => p.displayName).join(" / ") || m.sideB.displayName;
 
-  return (
-    <Link
-      href={`/tournament/match/${m.match.id}`}
-      data-testid={`tmatch-card-${m.match.id}`}
-      className={FOCUS_CLASS}
-      style={{ display: "flex", borderRadius: 13, overflow: "hidden", marginBottom: 9, border: `1px solid ${T.line}`, background: T.card, textDecoration: "none", color: "inherit" }}
-    >
-      <div aria-hidden style={{ width: 6, flexShrink: 0, background: stripeColor(status.tone) }} />
-      <div style={{ flex: 1, padding: "11px 13px", display: "flex", alignItems: "center", gap: 12 }}>
+  // Voided (migration 040): the row stays visible for context but reads inactive
+  // — neutral stripe, greyed text, a "Voided" chip, no leader tone, not tappable
+  // to score.
+  const voided = m.match.is_voided;
+
+  const inner = (
+    <>
+      <div aria-hidden style={{ width: 6, flexShrink: 0, background: voided ? T.line : stripeColor(status.tone) }} />
+      <div style={{ flex: 1, padding: "11px 13px", display: "flex", alignItems: "center", gap: 12, opacity: voided ? 0.6 : 1 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: SIDE_TOKENS.a.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{aNames}</div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: SIDE_TOKENS.b.ink, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bNames}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: voided ? T.muted : SIDE_TOKENS.a.ink, textDecoration: voided ? "line-through" : "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{aNames}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: voided ? T.muted : SIDE_TOKENS.b.ink, textDecoration: voided ? "line-through" : "none", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bNames}</div>
         </div>
         <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, minWidth: 66 }}>
-          <span data-testid={`tmatch-status-${m.match.id}`} style={{ fontWeight: 700, fontSize: 15, letterSpacing: "0.01em", lineHeight: 1, color: statusColor(status.tone) }}>{status.text}</span>
-          <span style={{ fontSize: 10, color: T.muted, letterSpacing: "0.02em", lineHeight: 1 }}>{status.thruText}</span>
+          {voided ? (
+            <span data-testid={`tmatch-status-${m.match.id}`} style={{ fontWeight: 700, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1, color: T.muted }}>Voided</span>
+          ) : (
+            <>
+              <span data-testid={`tmatch-status-${m.match.id}`} style={{ fontWeight: 700, fontSize: 15, letterSpacing: "0.01em", lineHeight: 1, color: statusColor(status.tone) }}>{status.text}</span>
+              <span style={{ fontSize: 10, color: T.muted, letterSpacing: "0.02em", lineHeight: 1 }}>{status.thruText}</span>
+            </>
+          )}
         </div>
-        <span aria-hidden style={{ color: T.muted, fontSize: 17, flexShrink: 0 }}>›</span>
+        {!voided && <span aria-hidden style={{ color: T.muted, fontSize: 17, flexShrink: 0 }}>›</span>}
       </div>
+    </>
+  );
+
+  const frame: React.CSSProperties = { display: "flex", borderRadius: 13, overflow: "hidden", marginBottom: 9, border: `1px solid ${T.line}`, background: voided ? T.soft : T.card, textDecoration: "none", color: "inherit" };
+
+  // A voided match isn't scorable, so it isn't a link — just a static card.
+  if (voided) {
+    return (
+      <div data-testid={`tmatch-card-${m.match.id}`} style={frame}>
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <Link href={`/tournament/match/${m.match.id}`} data-testid={`tmatch-card-${m.match.id}`} className={FOCUS_CLASS} style={frame}>
+      {inner}
     </Link>
   );
 }

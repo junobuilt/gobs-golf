@@ -50,6 +50,7 @@ export function makeLoaded(opts: {
   flaggedHoles?: number[];
   startHole?: number; // shotgun (039): the play order rotates from here
   groupLabel?: string | null;
+  isVoided?: boolean; // migration 040 — drops out of the decidable pool
 }): LoadedMatch {
   const H = holes();
   const { format } = opts;
@@ -139,6 +140,7 @@ export function makeLoaded(opts: {
       admin_note: null,
       start_hole: opts.startHole ?? null,
       group_label: opts.groupLabel ?? null,
+      is_voided: opts.isVoided ?? false,
     },
     session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50 },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },

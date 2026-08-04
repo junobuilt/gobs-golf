@@ -24,19 +24,25 @@ import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS, DAY_TAG_STYLE } from 
 import { getStoredPlayerId, getStoredPlayerName, setStoredPlayerId, clearStoredPlayerId } from "@/lib/deviceMemory";
 import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { dayTag } from "@/lib/tournament/completion";
+import { isAdminSession } from "./adminPreview";
 import type { Tournament } from "@/lib/tournament/types";
 
 type LandingState =
   | { kind: "loading" }
   | { kind: "empty" }
-  | { kind: "ready"; tournament: Tournament; data: DashboardData };
+  | { kind: "ready"; tournament: Tournament; data: DashboardData; preview: boolean };
 
-async function loadLanding(): Promise<LandingState> {
+// `isAdmin` lets an admin PREVIEW an unpublished tournament (migration 040). A
+// player is never admin, so the publish gate is unchanged for them.
+export async function loadLanding(isAdmin: boolean): Promise<LandingState> {
   const tournament = await getActiveTournament();
-  // Player-facing gate: only a Live (published) tournament is shown.
-  if (!tournament || !tournament.is_published) return { kind: "empty" };
+  if (!tournament) return { kind: "empty" };
+  // Player-facing gate: only a Live (published) tournament is shown — UNLESS an
+  // admin is previewing.
+  const preview = !tournament.is_published;
+  if (preview && !isAdmin) return { kind: "empty" };
   const data = await loadDashboard(tournament.id, tournament);
-  return { kind: "ready", tournament, data };
+  return { kind: "ready", tournament, data, preview };
 }
 
 function currentDayNumber(days: DashboardDay[], today: string): number {
@@ -55,7 +61,8 @@ export default function TournamentLandingPage() {
   const doLoad = useCallback(async () => {
     setStoredId(getStoredPlayerId());
     setStoredName(getStoredPlayerName());
-    setState(await loadLanding());
+    const isAdmin = await isAdminSession();
+    setState(await loadLanding(isAdmin));
   }, []);
 
   useEffect(() => { void doLoad(); }, [doLoad]);
@@ -85,7 +92,7 @@ export default function TournamentLandingPage() {
     );
   }
 
-  const { tournament, data } = state;
+  const { tournament, data, preview } = state;
   const today = todayLocal();
   const bar = deriveCupBar(data, tournament);
   const dayNo = currentDayNumber(data.days, today);
@@ -96,6 +103,7 @@ export default function TournamentLandingPage() {
 
   return (
     <Shell>
+      {preview && <PreviewBanner />}
       <CupHero
         eyebrow={`🏁 Tournament Home · Day ${dayNo} of ${data.days.length}`}
         title={tournament.name}
@@ -115,6 +123,19 @@ export default function TournamentLandingPage() {
         <DaySection key={day.session.id} day={day} isToday={day.session.played_on === today} defaultOpen={day.session.played_on === today || !anyToday} />
       ))}
     </Shell>
+  );
+}
+
+// Admin-only preview badge (migration 040): shown when an admin is viewing an
+// unpublished tournament. Players never see it — they never reach this state.
+function PreviewBanner() {
+  return (
+    <div
+      data-testid="preview-banner"
+      style={{ background: "#fef3c7", border: "1px solid #92400e", color: "#92400e", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", fontWeight: 700 }}
+    >
+      👁️ Admin preview — this tournament is not published. Players can’t see it yet.
+    </div>
   );
 }
 
@@ -233,8 +254,14 @@ function DeviceMemoryPanel({
               <span style={{ color: SIDE_TOKENS.b.dark, fontWeight: 600 }}>{nearest.match.sideB.players.map((p) => p.displayName).join(" / ") || nearest.match.sideB.displayName}</span>
             </span>
             <span style={{ display: "block", opacity: 0.72, fontSize: 11, marginTop: 2 }}>
-              Your Day {nearest.day.session.day_number} match · {matchStatus(nearest.match).text}
-              {matchStatus(nearest.match).decided ? "" : ` ${matchStatus(nearest.match).thruText}`} — tap to score
+              {(() => {
+                // Render the status ONCE. matchStatus exposes both `text` and
+                // `thruText`; for a not-started match both are "Not started", so
+                // append `thruText` only when it adds info (live: "thru N holes").
+                const s = matchStatus(nearest.match);
+                const detail = !s.decided && s.thruText !== s.text ? ` ${s.thruText}` : "";
+                return `Your Day ${nearest.day.session.day_number} match · ${s.text}${detail} — tap to score`;
+              })()}
             </span>
           </span>
           <span aria-hidden style={{ fontSize: 18, flexShrink: 0 }}>→</span>

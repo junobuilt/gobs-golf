@@ -21,18 +21,23 @@ import { HoleStrip } from "@/components/tournament/HoleStrip";
 import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS, DAY_TAG_STYLE } from "@/lib/tournament/tokens";
 import { dayTag } from "@/lib/tournament/completion";
 import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
+import { isAdminSession } from "../adminPreview";
 import type { LoadedMatch, Tournament } from "@/lib/tournament/types";
 
 type State =
   | { kind: "loading" }
   | { kind: "empty" }
-  | { kind: "ready"; tournament: Tournament; data: DashboardData };
+  | { kind: "ready"; tournament: Tournament; data: DashboardData; preview: boolean };
 
-async function load(): Promise<State> {
+// `isAdmin` lets an admin PREVIEW an unpublished tournament (migration 040);
+// players are never admin, so the publish gate is unchanged for them.
+export async function load(isAdmin: boolean): Promise<State> {
   const tournament = await getActiveTournament();
-  if (!tournament || !tournament.is_published) return { kind: "empty" };
+  if (!tournament) return { kind: "empty" };
+  const preview = !tournament.is_published;
+  if (preview && !isAdmin) return { kind: "empty" };
   const data = await loadDashboard(tournament.id, tournament);
-  return { kind: "ready", tournament, data };
+  return { kind: "ready", tournament, data, preview };
 }
 
 function currentDayNumber(days: DashboardDay[], today: string): number {
@@ -45,7 +50,10 @@ function currentDayNumber(days: DashboardDay[], today: string): number {
 
 export default function TournamentDashboardPage() {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const doLoad = useCallback(async () => setState(await load()), []);
+  const doLoad = useCallback(async () => {
+    const isAdmin = await isAdminSession();
+    setState(await load(isAdmin));
+  }, []);
   useEffect(() => { void doLoad(); }, [doLoad]);
 
   if (state.kind === "loading") {
@@ -62,13 +70,21 @@ export default function TournamentDashboardPage() {
     );
   }
 
-  const { tournament, data } = state;
+  const { tournament, data, preview } = state;
   const today = todayLocal();
   const bar = deriveCupBar(data, tournament);
   const dayNo = currentDayNumber(data.days, today);
 
   return (
     <Shell>
+      {preview && (
+        <div
+          data-testid="preview-banner"
+          style={{ background: "#fef3c7", border: "1px solid #92400e", color: "#92400e", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", fontWeight: 700 }}
+        >
+          👁️ Admin preview — this tournament is not published. Players can’t see it yet.
+        </div>
+      )}
       <CupHero
         eyebrow={`🏆 Scoreboard · Day ${dayNo} of ${data.days.length}`}
         title={tournament.name}
@@ -131,6 +147,20 @@ function ScoreboardRow({ m }: { m: LoadedMatch }) {
   const pts = matchSidePoints(m);
   const aNames = m.sideA.players.map((p) => p.displayName).join(" / ") || m.sideA.displayName;
   const bNames = m.sideB.players.map((p) => p.displayName).join(" / ") || m.sideB.displayName;
+
+  // Voided (migration 040): a static, greyed row — no points, no leader tint, no
+  // hole strip. It stays visible so the scoreboard accounts for every pairing.
+  if (m.match.is_voided) {
+    return (
+      <div data-testid={`dash-match-${m.match.id}`} style={{ border: `1px solid ${T.line}`, borderRadius: 13, marginBottom: 8, overflow: "hidden", background: T.soft, opacity: 0.6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, padding: "11px 12px" }}>
+          <div style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: T.muted, textDecoration: "line-through" }}>{aNames}</div>
+          <div data-testid={`dash-status-${m.match.id}`} style={{ textAlign: "center", minWidth: 76, fontWeight: 700, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", color: T.muted }}>Voided</div>
+          <div style={{ minWidth: 0, fontSize: 12.5, fontWeight: 600, color: T.muted, textAlign: "right", textDecoration: "line-through" }}>{bNames}</div>
+        </div>
+      </div>
+    );
+  }
 
   // Leader tint (mock `.row.lead-u` / `.lead-c`) — a soft directional wash.
   const rowBg =

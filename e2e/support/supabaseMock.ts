@@ -129,12 +129,22 @@ export class MockDb {
     }
     if (!effective.flight_teams) effective.flight_teams = [];
 
-    // Migration 034: tournaments.is_published NOT NULL DEFAULT false. Default it
-    // on seeded rows that omit it so mock rows match the prod column semantics.
+    // Migration 034: tournaments.is_published NOT NULL DEFAULT false. Migration
+    // 040: tournaments.planned_match_total NULL default. Default them on seeded
+    // rows that omit them so mock rows match the prod column semantics.
     if (effective.tournaments) {
       effective.tournaments = effective.tournaments.map((t) => ({
         is_published: false,
+        planned_match_total: null,
         ...t,
+      }));
+    }
+
+    // Migration 040: tournament_matches.is_voided NOT NULL DEFAULT false.
+    if (effective.tournament_matches) {
+      effective.tournament_matches = effective.tournament_matches.map((m) => ({
+        is_voided: false,
+        ...m,
       }));
     }
 

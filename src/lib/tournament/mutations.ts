@@ -101,6 +101,7 @@ export async function createTournament(input: {
   sideAName: string;
   sideBName: string;
   holderSide: Side | null;
+  plannedMatchTotal?: number | null; // migration 040 — declared size (2–50), or null
 }): Promise<Tournament> {
   const { data, error } = await supabase
     .from("tournaments")
@@ -110,6 +111,7 @@ export async function createTournament(input: {
       side_a_name: input.sideAName,
       side_b_name: input.sideBName,
       holder_side: input.holderSide,
+      planned_match_total: input.plannedMatchTotal ?? null,
       is_active: true,
       is_published: false, // default Test — not shown to players until Dad goes Live
     })
@@ -122,7 +124,17 @@ export async function createTournament(input: {
 export async function updateTournament(
   id: number,
   patch: Partial<
-    Pick<Tournament, "name" | "side_a_name" | "side_b_name" | "holder_side" | "started_on" | "ended_on" | "is_published">
+    Pick<
+      Tournament,
+      | "name"
+      | "side_a_name"
+      | "side_b_name"
+      | "holder_side"
+      | "started_on"
+      | "ended_on"
+      | "is_published"
+      | "planned_match_total"
+    >
   >,
 ): Promise<void> {
   const { error } = await supabase.from("tournaments").update(patch).eq("id", id);
@@ -1052,6 +1064,27 @@ export async function revertMatchResult(matchId: number): Promise<void> {
     .update({ result: null, result_source: "engine", admin_note: null })
     .eq("id", matchId);
   if (error) throw new Error("revertMatchResult: " + error.message);
+}
+
+// Migration 040 — VOID a match: it keeps its row but drops out of the decidable
+// pool (liveTotal), isn't scored, and isn't surfaced as a player's next match.
+// A state flag, NOT a deletion — reversible via unvoidMatch. Does not touch the
+// deletion gate.
+export async function voidMatch(matchId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ is_voided: true })
+    .eq("id", matchId);
+  if (error) throw new Error("voidMatch: " + error.message);
+}
+
+// Un-void: return the match to the decidable pool.
+export async function unvoidMatch(matchId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_matches")
+    .update({ is_voided: false })
+    .eq("id", matchId);
+  if (error) throw new Error("unvoidMatch: " + error.message);
 }
 
 // LEVEL 3 — country points: a direct adjustment on `tournament_point_adjustments`
