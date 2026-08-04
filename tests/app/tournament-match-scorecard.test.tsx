@@ -825,14 +825,15 @@ describe("match scorecard — 18-hole review grid (C)", () => {
     expect(within(grid).getByTestId("review-side-a")).toHaveTextContent("P2");
     expect(within(grid).getByTestId("review-side-b")).toHaveTextContent("P3");
 
-    // Hole outcomes are READ from the engine, not recomputed here.
-    expect(within(grid).getByTestId("review-outcome-1")).toHaveTextContent("A");
-    expect(within(grid).getByTestId("review-outcome-2")).toHaveTextContent("B");
-    expect(within(grid).getByTestId("review-outcome-3")).toHaveTextContent(""); // unresolved
+    // Hole outcomes are READ from the engine (canonical HoleStrip), not
+    // recomputed here. A = USA/side_a, C = Canada/side_b, · = unresolved.
+    expect(within(grid).getByTestId("hole-cell-1")).toHaveTextContent("A");
+    expect(within(grid).getByTestId("hole-cell-2")).toHaveTextContent("C");
+    expect(within(grid).getByTestId("hole-cell-3")).toHaveTextContent("·"); // unresolved
 
-    // D11 — legend keys the compact A/B marks to the real side names.
+    // D11 — legend keys the A / C marks to the real side names.
     expect(grid).toHaveTextContent("A = USA");
-    expect(grid).toHaveTextContent("B = CANADA");
+    expect(grid).toHaveTextContent("C = CANADA");
     expect(grid).toHaveTextContent("½ = Halved");
 
     // Read-only: no steppers anywhere in the grid.
@@ -948,21 +949,24 @@ describe("match scorecard — SSOT with the scoreboard (mock v4)", () => {
     expect(status).not.toHaveTextContent("Tied");
   });
 
-  it("per-team HoleStrip uses the SAME shared component + outcomes as the scoreboard", async () => {
+  it("review 'Hole results' strip uses the SAME shared HoleStrip + canonical outcomes as the scoreboard", async () => {
     const m = twoUp();
-    // The canonical strip the scoreboard renders off m.state.holeOutcomes.
+    // The canonical strip the scoreboard renders off m.state.holeOutcomes — the
+    // SAME source the hero status + points bar read.
     const board = render(<HoleStrip outcomes={m.state.holeOutcomes} />);
     const boardStrip = board.getByTestId("hole-strip").textContent;
     board.unmount();
 
     mocks.loadMatch.mockResolvedValue(m);
     await renderPage();
-    // Expand the first team block ("All 18 holes") → its HoleStrip.
+    // The per-block "All 18 holes" chevron was removed (S5 Change 8); the colored
+    // strip now lives once under "Hole results" in the "Review 18 holes" section.
     await act(async () => {
-      fireEvent.click(screen.getAllByText(/All 18 holes/)[0]);
+      fireEvent.click(screen.getByTestId("review-toggle-500"));
       await flush();
     });
-    const cardStrip = screen.getByTestId("hole-strip").textContent;
+    const grid = screen.getByTestId("review-grid-500");
+    const cardStrip = within(grid).getByTestId("hole-strip").textContent;
     // Same outcomes + (natural, start=1) order → byte-identical strip content.
     expect(cardStrip).toBe(boardStrip);
   });

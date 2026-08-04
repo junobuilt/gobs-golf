@@ -30,9 +30,8 @@ import {
 } from "@/lib/tournament/matchScorecard";
 import { matchStatus, type StatusTone } from "@/lib/tournament/matchStatus";
 import { groupLabelFor } from "@/lib/tournament/matchScorecard";
-import { holePlayOrder, resolveMatchResult } from "@/lib/tournament/matchplay";
+import { resolveMatchResult } from "@/lib/tournament/matchplay";
 import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, CHROME_GRADIENT, FOCUS_CLASS } from "@/lib/tournament/tokens";
-import { HoleStrip } from "@/components/tournament/HoleStrip";
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
 import MatchReviewGrid from "./MatchReviewGrid";
@@ -751,10 +750,11 @@ function MatchCard({
       {/* Per-team entry blocks (mock .tblock). Format decides the entry area:
           greensomes = one team box; four-ball = two player boxes + counting mark;
           singles = one player box. The "USA wins the hole" line was removed — the
-          nav circle + the per-block HoleStrip already show who won. */}
+          nav circle (and the "Hole results" strip in the review section) show who
+          won each hole. */}
       {loaded.session.format === "greensomes"
-        ? renderGreensomes(loaded, scores, hole, holeMeta, state, startHole, onSetTeam, !iAmScorer)
-        : renderIndividual(loaded, scores, hole, holeMeta, state, startHole, onSetPlayer, !iAmScorer)}
+        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam, !iAmScorer)
+        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer, !iAmScorer)}
 
       {/* §C — read-only 18-hole review grid (paper verification: gross + dots per
           unit, which the win/loss HoleStrip doesn't show). Collapsed by default. */}
@@ -797,12 +797,9 @@ function renderGreensomes(
   scores: OptimisticScores,
   hole: number,
   holeMeta: { par: number; strokeIndex: number },
-  state: ReturnType<typeof recomputeState>,
-  startHole: number,
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void,
   readOnly: boolean,
 ) {
-  const order = holePlayOrder(startHole);
   const row = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
     const gross = scores.teamGross[side][hole];
@@ -812,7 +809,7 @@ function renderGreensomes(
     // Strokes label (approved): the collapsed 60/40 team handicap.
     const sub = `${ls.displayName} · Strokes ${ls.collapsedHandicap ?? "—"}`;
     return (
-      <TeamBlock key={side} side={side} title={names} sub={sub} outcomes={state.holeOutcomes} playOrder={order}>
+      <TeamBlock key={side} side={side} title={names} sub={sub}>
         <EntryRow
           testid={`greensomes-${side}`}
           gross={gross ?? undefined}
@@ -841,11 +838,9 @@ function renderIndividual(
   hole: number,
   holeMeta: { par: number; strokeIndex: number },
   state: ReturnType<typeof recomputeState>,
-  startHole: number,
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void,
   readOnly: boolean,
 ) {
-  const order = holePlayOrder(startHole);
   const sideRow = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
     const present = ls.players.map((p) => scores.byPlayer[p.playerId]?.[hole] != null);
@@ -855,7 +850,7 @@ function renderIndividual(
       present,
     );
     return (
-      <TeamBlock key={side} side={side} title={ls.displayName} outcomes={state.holeOutcomes} playOrder={order}>
+      <TeamBlock key={side} side={side} title={ls.displayName}>
         {ls.players.map((p, i) => {
           const gross = scores.byPlayer[p.playerId]?.[hole];
           const net = unitNet(p.matchStrokes, holeMeta.strokeIndex, gross ?? null);
@@ -911,25 +906,22 @@ function netTerm(net: number, par: number): string {
   return `+${d}`;
 }
 
-// Mock v4 .tblock: country-gradient block, name/strokes top, entry, and a
-// chevron that expands the SHARED colorized HoleStrip (same outcomes + play
-// order the scoreboard/nav read). `sub` is the small right-aligned meta.
+// Mock v4 .tblock: country-gradient block, name/strokes top, entry. The old
+// per-block "All 18 holes" chevron (which expanded a HoleStrip) was removed in
+// S5 Change 8 — the colorized per-hole strip now lives once, under "Hole results"
+// in the "Review 18 holes" section (MatchReviewGrid), reading the same canonical
+// outcomes. `sub` is the small right-aligned meta.
 function TeamBlock({
   side,
   title,
   sub,
-  outcomes,
-  playOrder,
   children,
 }: {
   side: Side;
   title: string;
   sub?: string;
-  outcomes: ReadonlyArray<import("@/lib/tournament/types").HoleOutcome>;
-  playOrder: number[];
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   const c = SIDE_TOKENS[side];
   const grad =
     side === "a"
@@ -941,21 +933,7 @@ function TeamBlock({
         <span style={{ fontSize: "0.8rem", fontWeight: 600, color: c.ink }}>{title}</span>
         {sub && <span style={{ fontSize: "0.66rem", color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{sub}</span>}
       </div>
-      <div style={{ padding: "0 12px 8px" }}>{children}</div>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className={FOCUS_CLASS}
-        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderTop: `1px solid ${T.line}`, padding: 8, fontSize: "0.7rem", fontWeight: 600, color: T.muted, cursor: "pointer", background: "rgba(255,255,255,0.5)", border: "none", borderTopStyle: "solid" }}
-      >
-        All 18 holes <span style={{ transform: open ? "rotate(180deg)" : "none", transition: ".2s" }}>⌄</span>
-      </button>
-      {open && (
-        <div style={{ padding: "9px 10px 11px", background: T.soft, borderTop: `1px solid ${T.line}` }}>
-          <HoleStrip outcomes={outcomes} holeOrder={playOrder} />
-        </div>
-      )}
+      <div style={{ padding: "0 12px 10px" }}>{children}</div>
     </div>
   );
 }
