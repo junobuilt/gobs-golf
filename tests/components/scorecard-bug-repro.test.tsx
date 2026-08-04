@@ -241,13 +241,11 @@ describe("Scorecard — Phase 3 bug repro", () => {
     utils.unmount();
 
     // Re-render with the SAME fake instance — DB state is preserved.
+    // Resume-to-spot: hole 3 was the last-viewed hole before unmount (persisted
+    // to localStorage), so the remount reopens on hole 3 directly — no manual
+    // navigation. This also exercises DB hydration for hole 3's value below.
     render(<ScorecardPage />);
-    await screen.findByText("Hole 1");
-
-    // The reloaded scorecard should pull scores from DB. Navigate to hole 3.
-    await tapNextHole();
-    await tapNextHole();
-    expect(screen.getByText("Hole 3")).toBeInTheDocument();
+    await screen.findByText("Hole 3");
 
     // Alice's hole-3 score should still show in DOM.
     const plusButtons = screen.getAllByRole("button", { name: "+" });

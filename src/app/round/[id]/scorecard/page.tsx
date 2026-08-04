@@ -29,6 +29,8 @@ import ChPh from "@/components/handicap/ChPh";
 import type { Player } from "@/app/admin/page";
 import ManageTeamSheet from "@/components/teamFormation/ManageTeamSheet";
 import { getDisplayName, type PlayerLike } from "@/lib/players/displayName";
+import { pickInitialHole } from "@/lib/scorecard/resumeHole";
+import { getSavedHole, setSavedHole } from "@/lib/scorecard/holeMemory";
 
 // --- TYPES ---
 interface RoundPlayer {
@@ -586,6 +588,21 @@ export default function ScorecardPage() {
 
         setScores(scoreMap);
 
+        // Resume-to-spot: land on the remembered last-viewed hole if one was
+        // saved for THIS scorecard (round + team), else the first unscored hole.
+        // The regular league has no shotgun start, so play order is numeric
+        // 1→18 (startHole=1). "Scored" = any player on the team has a score on
+        // that hole. Keyed by the URL team param (not state) to avoid a stale
+        // read, with "all" for the teamless admin overview.
+        const resumeKey = `round:${roundId}:team:${team ?? "all"}`;
+        setCurrentHole(
+          pickInitialHole({
+            savedHole: getSavedHole(resumeKey),
+            startHole: 1,
+            isScored: h => playersData.some(rp => scoreMap[rp.id]?.[h] != null),
+          }),
+        );
+
         const uniqueTeeIds = [...new Set(playersData.map(p => p.tee_id).filter(Boolean))] as number[];
         const holesMap: Record<number, HoleInfo[]> = {};
         for (const teeId of uniqueTeeIds) {
@@ -609,6 +626,15 @@ export default function ScorecardPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roundId]);
+
+  // Resume-to-spot: persist the current hole on every change so returning to
+  // this scorecard reopens here. Gated on !loading so the transient default and
+  // the initial resolved hole (set during load) aren't written back before the
+  // user navigates. Key mirrors the read in load() (round + team).
+  useEffect(() => {
+    if (loading) return;
+    setSavedHole(`round:${roundId}:team:${teamFilter ?? "all"}`, currentHole);
+  }, [currentHole, loading, roundId, teamFilter]);
 
   const updatePlayerTee = async (rpId: number, teeId: number) => {
     const player = roundPlayers.find(p => p.id === rpId);

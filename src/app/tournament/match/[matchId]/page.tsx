@@ -32,6 +32,8 @@ import {
 import { matchStatus, type StatusTone } from "@/lib/tournament/matchStatus";
 import { groupLabelFor } from "@/lib/tournament/matchScorecard";
 import { resolveMatchResult } from "@/lib/tournament/matchplay";
+import { pickInitialHole } from "@/lib/scorecard/resumeHole";
+import { getSavedHole, setSavedHole } from "@/lib/scorecard/holeMemory";
 import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, CHROME_GRADIENT, FOCUS_CLASS } from "@/lib/tournament/tokens";
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
@@ -43,6 +45,28 @@ function statusColor(tone: StatusTone): string {
   if (tone === "usa") return SIDE_TOKENS.a.base;
   if (tone === "canada") return SIDE_TOKENS.b.base;
   return T.ink;
+}
+
+// Resume-to-spot: a hole counts as "scored" for the group when ANY score is
+// present on it — any player's gross (byPlayer) or either side's team gross
+// (teamGross), across every match in the group. Drives the first-unscored
+// fallback when no last-viewed hole was remembered.
+function groupHoleHasScore(
+  group: LoadedMatch[],
+  scores: Record<number, OptimisticScores>,
+  hole: number,
+): boolean {
+  for (const m of group) {
+    const s = scores[m.match.id];
+    if (!s) continue;
+    for (const byHole of Object.values(s.byPlayer)) {
+      if (byHole?.[hole] != null) return true;
+    }
+    for (const byHole of Object.values(s.teamGross)) {
+      if (byHole?.[hole] != null) return true;
+    }
+  }
+  return false;
 }
 
 type LoadState =
@@ -127,6 +151,10 @@ export default function MatchScorecardPage() {
   useEffect(() => {
     flagRef.current = flagByMatch;
   }, [flagByMatch]);
+  // Resume-to-spot: flips true once the initial hole is resolved (in
+  // initialLoad), gating the persist effect so the transient default hole and
+  // the initial resolution aren't written before the scorer navigates.
+  const hydratedRef = React.useRef(false);
 
   // Reconcile = load-then-overlay: server truth (initOptimisticScores) as the
   // base, overlaid with each match's still-pending/in-flight queue items — so a
@@ -157,15 +185,34 @@ export default function MatchScorecardPage() {
     const next = await loadGroup(matchId);
     setState(next);
     if (next.kind === "ready") {
-      setScoresByMatch(reconcileScores(next.group));
+      const reconciled = reconcileScores(next.group);
+      setScoresByMatch(reconciled);
       setScorerByMatch(seedScorers(next.group));
       setFlagByMatch(seedFlags(next.group));
-      // Shotgun (039): open on the group's tee-off hole. INITIAL load only — a
-      // background refresh must never yank the scorer off their current hole.
+      // Resume-to-spot (shotgun-aware). INITIAL load only — a background refresh
+      // must never yank the scorer off their current hole. Honor the remembered
+      // last-viewed hole for THIS match, else the first unscored hole walked in
+      // PLAY ORDER from the group's tee-off hole (start_hole), wrapping 18→1: a
+      // group starting on 12 that scored 12–15 resumes on 16, never numeric 1.
       const startHole = next.group[0]?.match.start_hole ?? 1;
-      setCurrentHole(startHole);
+      setCurrentHole(
+        pickInitialHole({
+          savedHole: getSavedHole(`tournament:match:${matchId}`),
+          startHole,
+          isScored: h => groupHoleHasScore(next.group, reconciled, h),
+        }),
+      );
+      hydratedRef.current = true;
     }
   }, [matchId, reconcileScores]);
+
+  // Resume-to-spot: persist the current hole per match once the initial hole is
+  // resolved (hydratedRef). Background refresh never touches currentHole, so
+  // this only fires on real user navigation (rail / prev-next).
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    setSavedHole(`tournament:match:${matchId}`, currentHole);
+  }, [currentHole, matchId]);
 
   // BEST-EFFORT background refresh — never routes to the error UI, never clears a
   // live card. On a failed (non-ready) load it swallows and leaves the current

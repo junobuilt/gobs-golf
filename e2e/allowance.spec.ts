@@ -26,6 +26,10 @@ test("scorecard scales strokes + net AND shows CH (raw) · PH (scaled) explicitl
   await expect(page.getByText("Adam A")).toBeVisible();
   await expect(page.getByText("Tee Selection")).toHaveCount(0);
 
+  // Resume-to-spot opens on the first UNSCORED hole (2 — the fixture seeds hole
+  // 1); this test asserts hole-1 content, so navigate to the hole-1 nav dot.
+  await page.getByRole("button", { name: "1", exact: true }).click();
+
   // 1. Reduced stroke dots — hole 1 shows the SCALED 1 stroke, not the raw 2.
   await expect(strokeDots(page)).toHaveCount(1);
 
@@ -48,6 +52,10 @@ test("GHIN-adjusted score is computed at 100% and does NOT scale with the allowa
   await page.goto("/round/701/scorecard?team=1");
 
   await expect(page.getByText("Adam A")).toBeVisible();
+
+  // Resume-to-spot opens on the first unscored hole (2); this test asserts
+  // hole-1 net, so navigate to the hole-1 nav dot.
+  await page.getByRole("button", { name: "1", exact: true }).click();
 
   // Expand the player's hole-by-hole grid to reveal the GHIN-adjusted column.
   await page.getByRole("button", { name: "Expand hole-by-hole" }).click();
