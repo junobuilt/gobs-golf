@@ -68,6 +68,13 @@ import { HoleStrip } from "@/components/tournament/HoleStrip";
 async function flush() {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
+// Resume-to-spot: pin the last-viewed hole for match 500 so a test that seeds
+// scores on a specific hole still opens THERE (the pre-resume default was
+// always hole 1). Simulates "the scorer was last viewing hole `h`". Call BEFORE
+// renderPage. Tests that seed no scores resume to the start hole (1) on their
+// own and don't need this.
+import { setSavedHole } from "@/lib/scorecard/holeMemory";
+const pinHole = (h: number) => setSavedHole("tournament:match:500", h);
 async function renderPage() {
   render(<MatchScorecardPage />);
   await act(async () => {
@@ -77,6 +84,10 @@ async function renderPage() {
 
 beforeEach(() => {
   cleanup();
+  // Resume-to-spot persists the viewed hole to localStorage keyed by matchId
+  // (constant "500" here). Clear it so a hole written by one test doesn't leak
+  // into the next test's mount resolution.
+  try { window.localStorage.clear(); } catch { /* jsdom always has it */ }
   mocks.loadMatch.mockReset();
   mocks.loadSessionMatches.mockReset();
   mocks.scoreEnqueue.mockReset();
@@ -92,6 +103,7 @@ beforeEach(() => {
 
 describe("match scorecard — four-ball rendering + counting ball", () => {
   it("renders header/outcome from the engine and marks the winning ball", async () => {
+    pinHole(1); // seeds hole 1; view hole 1
     // Stroke flip: A P2 (CH20) net 3 beats A P1 (CH0) net 4; B best 6. A wins hole 1.
     mocks.loadMatch.mockResolvedValue(
       makeLoaded({
@@ -379,6 +391,7 @@ describe("match scorecard — terminal banner is debounced (spec 2 item 1)", () 
 //    take its played color once scored, not stay neutral under the ring ───────
 describe("match scorecard — current/start hole turns played (spec 2 item 5)", () => {
   it("a scored current hole wears the same played color as a scored non-current hole", async () => {
+    pinHole(1); // view the scored start hole 1
     // A wins holes 1 & 2; hole 5 unplayed. Default startHole = 1 → hole 1 is the
     // current (start) hole AND is scored.
     const { a, b } = winMap([1, 2], [], []);
@@ -403,6 +416,7 @@ describe("match scorecard — current/start hole turns played (spec 2 item 5)", 
 //    note instead of swapping the banner silently ─────────────────────────────
 describe("match scorecard — result-changed note on a flipped winner", () => {
   it("flipping the winner after the match was decided shows the changed-result note", async () => {
+    pinHole(1); // all holes scored; edit hole 1 (else resume → last hole 18)
     // A wins hole 1 (4 v 5), halves 2-18 → USA 1 UP, decided on 18 (no early closeout).
     const { a, b } = winMap([1], [], range(2, 18));
     mocks.loadMatch.mockResolvedValue(
@@ -538,6 +552,7 @@ describe("match scorecard — offline background refresh (F2)", () => {
   });
 
   it("reconcile: a background success overlays server truth AND keeps a pending un-synced entry", async () => {
+    pinHole(1); // pending overlay is on hole 1; view hole 1
     // Mount with no server scores, but a pending local edit for P1 hole 1 = 3.
     mocks.scoreItems = [
       { state: "pending", payload: { round_id: 50, round_player_id: 1001, hole_number: 1, strokes: 3 } },
@@ -865,6 +880,7 @@ describe("match scorecard — 18-hole review grid (C)", () => {
 // ── D: match-card polish is presentation-only ────────────────────────────────
 describe("match scorecard — functional polish (D)", () => {
   it("renders stroke dots above the number and the counting arrow inline — no engine change", async () => {
+    pinHole(1); // seeds hole 1; view the resolved hole 1
     // Singles, P1 off 18 vs P2 off 0 → P1 gets 1 match stroke on every hole
     // (SI 1..18). Enter hole-1 grosses so the hole resolves.
     mocks.loadMatch.mockResolvedValue(

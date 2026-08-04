@@ -40,6 +40,7 @@ vi.mock("next/navigation", () => ({
 
 import ScorecardPage from "@/app/round/[id]/scorecard/page";
 import { resetWriteQueueForTesting } from "@/lib/writeQueue";
+import { setSavedHole } from "@/lib/scorecard/holeMemory";
 
 type Bd = { drawn_player_id: number; hole_range_start: number; hole_range_end: number };
 
@@ -111,6 +112,10 @@ beforeEach(() => {
   });
   routerPush.mockReset();
   globalThis.localStorage.clear();
+  // Resume-to-spot: these finalized/scored fixtures would open on the first
+  // unscored (or last) hole; pin hole 1 so the assertions that key off "Hole 1"
+  // hold. Key = round 1, team 1 (URL ?team=1 above).
+  setSavedHole("round:1:team:1", 1);
   resetWriteQueueForTesting();
 });
 

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import React from "react";
 import ManageTeamSheet from "@/components/teamFormation/ManageTeamSheet";
+import { setSavedHole } from "@/lib/scorecard/holeMemory";
 import type { RoundPlayer } from "@/lib/teamFormation/smartJoin";
 import type { Player } from "@/app/admin/page";
 
@@ -179,6 +180,10 @@ describe("Scorecard page — Manage Team visibility", () => {
     ScorecardPage = pageModule.default;
     const wq = await import("@/lib/writeQueue");
     resetWriteQueueForTesting = wq.resetWriteQueueForTesting;
+    // Resume-to-spot: the ?team=1 scorecard tests that seed a hole-1 score would
+    // otherwise open on hole 2; pin hole 1 so "Hole 1" is the mounted hole.
+    globalThis.localStorage?.clear();
+    setSavedHole("round:1:team:1", 1);
   });
 
   afterEach(() => {

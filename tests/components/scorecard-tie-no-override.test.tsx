@@ -38,6 +38,7 @@ vi.mock("next/navigation", () => ({
 
 import ScorecardPage from "@/app/round/[id]/scorecard/page";
 import { resetWriteQueueForTesting } from "@/lib/writeQueue";
+import { setSavedHole } from "@/lib/scorecard/holeMemory";
 
 /**
  * Three-way net tie on hole 1: all three players (CH 9/11/6, SI 1 → 1 stroke
@@ -66,6 +67,10 @@ beforeEach(() => {
   });
   routerPush.mockReset();
   globalThis.localStorage.clear();
+  // Resume-to-spot: fixture seeds a three-way tie on hole 1; pin hole 1 so the
+  // card opens there (else it resumes to the first unscored hole, 2). No team
+  // filter → key round 1, "all".
+  setSavedHole("round:1:team:all", 1);
   resetWriteQueueForTesting();
 });
 

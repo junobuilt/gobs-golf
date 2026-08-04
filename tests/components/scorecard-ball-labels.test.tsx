@@ -42,6 +42,7 @@ vi.mock("next/navigation", () => ({
 
 import ScorecardPage from "@/app/round/[id]/scorecard/page";
 import { resetWriteQueueForTesting } from "@/lib/writeQueue";
+import { setSavedHole } from "@/lib/scorecard/holeMemory";
 
 // Make every seeded player scratch (CH 0) with a matching HI so the self-heal
 // is a no-op, then apply the requested per-hole-1 gross scores.
@@ -81,6 +82,10 @@ beforeEach(() => {
   });
   routerPush.mockReset();
   globalThis.localStorage.clear();
+  // Every test here seeds scores on hole 1 and asserts hole-1 content. Resume-
+  // to-spot would otherwise open on the first UNSCORED hole (2); pin hole 1 so
+  // the card reopens where the fixture's scores live. Key = round 1, no team.
+  setSavedHole("round:1:team:all", 1);
   resetWriteQueueForTesting();
 });
 

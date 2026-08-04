@@ -113,6 +113,10 @@ test("count-1: team hole score is the best NET of present players (absent exclud
   await expect(page.getByText("Adam A")).toBeVisible();
   await expect(page.getByText("Tee Selection")).toHaveCount(0);
 
+  // Resume-to-spot opens on the first UNSCORED hole (2 — the fixture seeds hole
+  // 1); the per-player "Net: 4" assertion is hole-1 specific, so navigate back.
+  await page.getByRole("button", { name: "1", exact: true }).click();
+
   // Team Net == best net (4) − par (4) = E. Gross would read "+1"; an average or
   // an absent-included value would differ.
   await expect(teamNetValue(page)).toHaveText("E");
