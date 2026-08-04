@@ -53,14 +53,21 @@ function toStandingsInput(m: LoadedMatch): StandingsMatchInput {
   };
 }
 
-export async function loadDashboard(tournamentId: number): Promise<DashboardData> {
+export async function loadDashboard(
+  tournamentId: number,
+  // S4 perf: every call site already holds the full tournament (side names
+  // included) from getActiveTournament / getTournamentMode. Passing it threads
+  // the names into each day's loadSessionMatches so the tournament name is NOT
+  // re-fetched once per day. Omitted → each day fetches it (back-compat).
+  tournament?: { id: number; side_a_name: string; side_b_name: string },
+): Promise<DashboardData> {
   const sessions = await getTournamentSessions(tournamentId); // day-ordered
   // Per-day isolation (mirrors the landing): one misconfigured day shows a note,
   // never rejects the batch or corrupts the total.
   const [results, adjustments] = await Promise.all([
     Promise.allSettled(
       sessions.map((s) =>
-        s.round_id != null ? loadSessionMatches(s.id) : Promise.resolve([] as LoadedMatch[]),
+        s.round_id != null ? loadSessionMatches(s.id, tournament) : Promise.resolve([] as LoadedMatch[]),
       ),
     ),
     getPointAdjustments(tournamentId),

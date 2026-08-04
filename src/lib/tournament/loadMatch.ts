@@ -116,7 +116,7 @@ interface SessionRow {
   played_on: string | null;
 }
 
-interface TournamentNameRow {
+export interface TournamentNameRow {
   id: number;
   side_a_name: string;
   side_b_name: string;
@@ -385,27 +385,47 @@ export async function loadMatch(matchId: number): Promise<LoadedMatch> {
 // Batched: one read each for session / matches / tournament / round_players /
 // scores / team_scores / holes-per-tee — NOT one set per match. Each match is
 // then assembled from the shared rows sliced on its two team numbers.
-export async function loadSessionMatches(sessionId: number): Promise<LoadedMatch[]> {
+//
+// S4 perf: the reads are grouped into two concurrent WAVES rather than a single
+// sequential chain — after the session row (which carries round_id /
+// tournament_id) the four session-only reads fire together, then the two
+// round_players-dependent reads (scores + holes) fire together. `injectedTournament`
+// lets loadDashboard fetch the tournament name ONCE for the whole dashboard
+// instead of once per day; a lone caller omits it and it's fetched here.
+export async function loadSessionMatches(
+  sessionId: number,
+  injectedTournament?: TournamentNameRow,
+): Promise<LoadedMatch[]> {
   const session = await loadSessionRow(sessionId);
   if (!session) return [];
 
-  const matchesRes = await supabase
-    .from("tournament_matches")
-    .select("*")
-    .eq("session_id", sessionId)
-    .order("match_number");
-  const matches = (unwrap(matchesRes, "tournament_matches") as TournamentMatch[] | null) ?? [];
-  if (matches.length === 0) return [];
+  // Wave 1 — everything that depends only on the session row, concurrently.
+  const [matches, tournament, roundPlayers, teamScoresByTeam] = await Promise.all([
+    (async () => {
+      const res = await supabase
+        .from("tournament_matches")
+        .select("*")
+        .eq("session_id", sessionId)
+        .order("match_number");
+      return (unwrap(res, "tournament_matches") as TournamentMatch[] | null) ?? [];
+    })(),
+    injectedTournament
+      ? Promise.resolve(injectedTournament)
+      : loadTournamentName(session.tournament_id),
+    loadRoundPlayers(session.round_id), // all groups this day, one read
+    session.format === "greensomes"
+      ? loadTeamScores(session.round_id)
+      : Promise.resolve(new Map<number, (number | null)[]>()),
+  ]);
+  if (matches.length === 0 || !tournament) return [];
 
-  const tournament = await loadTournamentName(session.tournament_id);
-  if (!tournament) return [];
-
-  const roundPlayers = await loadRoundPlayers(session.round_id); // all groups this day, one read
+  // Wave 2 — reads that need the round_players rows (rpIds / teeIds).
   const rpIds = roundPlayers.map((rp) => rp.id);
-  const scoresByRpId = await loadScores(session.round_id, rpIds);
-  const teamScoresByTeam = session.format === "greensomes" ? await loadTeamScores(session.round_id) : new Map<number, (number | null)[]>();
   const teeIds = [...new Set(roundPlayers.map((rp) => rp.tee_id).filter((t): t is number => t != null))];
-  const holesByTee = await loadHolesByTee(teeIds);
+  const [scoresByRpId, holesByTee] = await Promise.all([
+    loadScores(session.round_id, rpIds),
+    loadHolesByTee(teeIds),
+  ]);
 
   return matches.map((m) => {
     const forMatch = roundPlayers.filter(
