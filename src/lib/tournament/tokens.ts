@@ -8,6 +8,7 @@
 // definition and can be unit-tested.
 
 import type { Side } from "./types";
+import type { DayTag } from "./completion";
 
 export const TOURNAMENT_TOKENS = {
   usa: "#14509E",
@@ -41,6 +42,15 @@ export const CHROME_GRADIENT = `linear-gradient(150deg, ${T.chromeA}, ${T.chrome
 export const SIDE_TOKENS: Record<Side, { base: string; ink: string; bright: string; dark: string }> = {
   a: { base: T.usa, ink: T.usaInk, bright: T.usaBright, dark: T.usaDark },
   b: { base: T.can, ink: T.canInk, bright: T.canBright, dark: T.canDark },
+};
+
+// Day status-tag pill styling (uppercase caps set by the callers). One map so
+// the Tournament Home + Scoreboard day tags read identically. LIVE keeps the
+// prior red-on-pink; UPCOMING the muted grey; COMPLETE the green `ok` tone.
+export const DAY_TAG_STYLE: Record<DayTag, { bg: string; color: string }> = {
+  COMPLETE: { bg: "#E7F3EC", color: T.ok },
+  LIVE: { bg: "#fdecec", color: T.can },
+  UPCOMING: { bg: T.soft, color: T.muted },
 };
 
 export function sideColor(side: Side): string {

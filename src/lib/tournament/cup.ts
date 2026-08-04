@@ -5,6 +5,7 @@
 // PointsBar from THIS one function, so the bar is identical by construction
 // (guarded by the cross-surface test).
 
+import { isMatchComplete } from "./completion";
 import type { DashboardData } from "./loadDashboard";
 import type { Side, Tournament } from "./types";
 
@@ -106,8 +107,10 @@ export interface CupBar {
 export function deriveCupBar(data: DashboardData, tournament: Tournament): CupBar {
   const matches = data.days.flatMap((d) => d.matches);
   const total = matches.length;
-  const decided = matches.filter((m) => m.resolved.result != null).length;
-  const liveNow = matches.filter((m) => m.resolved.result == null && m.state.thru > 0).length;
+  // SSOT with the day tag: `decided` uses the SAME isMatchComplete predicate the
+  // day-status helper reads (completion.ts), so the cup and the tags agree.
+  const decided = matches.filter(isMatchComplete).length;
+  const liveNow = matches.filter((m) => !isMatchComplete(m) && m.state.thru > 0).length;
   const { toWin, toRetain } = cupThresholds(total);
   return {
     sideAName: tournament.side_a_name,
