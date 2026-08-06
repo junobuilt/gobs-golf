@@ -14,7 +14,7 @@ import Link from "next/link";
 import { todayLocal, formatDisplayDate } from "@/lib/date";
 import { getActiveTournament } from "@/lib/tournament/queries";
 import { loadDashboard, type DashboardData, type DashboardDay } from "@/lib/tournament/loadDashboard";
-import { deriveCupBar } from "@/lib/tournament/cup";
+import { deriveCupBar, isMatchExcluded } from "@/lib/tournament/cup";
 import { matchStatus, matchSidePoints, type StatusTone } from "@/lib/tournament/matchStatus";
 import { CupHero } from "@/components/tournament/CupHero";
 import { HoleStrip } from "@/components/tournament/HoleStrip";
@@ -108,16 +108,24 @@ export default function TournamentDashboardPage() {
 
 function DaySection({ day, isToday }: { day: DashboardDay; isToday: boolean }) {
   const { session, matches, error } = day;
+  // Voided day (migration 041): the whole section reads inactive (greyed) and the
+  // day tag is replaced by a "Voided" chip. Each row is already greyed by
+  // isMatchExcluded (m.session.isVoided), so the day header just adds the frame.
+  const dayVoided = session.is_voided;
   return (
-    <div data-testid={`dash-day-${session.id}`} style={{ marginBottom: 16 }}>
+    <div data-testid={`dash-day-${session.id}`} style={{ marginBottom: 16, opacity: dayVoided ? 0.6 : 1 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "2px 2px 8px" }}>
-        <span style={{ fontWeight: 800, fontSize: 14, color: T.ink }}>
+        <span style={{ fontWeight: 800, fontSize: 14, color: dayVoided ? T.muted : T.ink }}>
           {session.name} — {FORMAT_LABEL[session.format]}
-          {(() => {
-            const tag = dayTag(matches, isToday);
-            const ts = DAY_TAG_STYLE[tag];
-            return <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: ts.color, background: ts.bg, borderRadius: 6, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{tag}</span>;
-          })()}
+          {dayVoided ? (
+            <span data-testid={`dash-day-voided-${session.id}`} style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: T.muted, background: T.soft, borderRadius: 6, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Voided</span>
+          ) : (
+            (() => {
+              const tag = dayTag(matches, isToday);
+              const ts = DAY_TAG_STYLE[tag];
+              return <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: ts.color, background: ts.bg, borderRadius: 6, padding: "3px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{tag}</span>;
+            })()
+          )}
         </span>
         <span style={{ fontSize: 10.5, color: T.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
           {formatDisplayDate(session.played_on ?? "")} · {matches.length} match{matches.length === 1 ? "" : "es"}
@@ -148,9 +156,10 @@ function ScoreboardRow({ m }: { m: LoadedMatch }) {
   const aNames = m.sideA.players.map((p) => p.displayName).join(" / ") || m.sideA.displayName;
   const bNames = m.sideB.players.map((p) => p.displayName).join(" / ") || m.sideB.displayName;
 
-  // Voided (migration 040): a static, greyed row — no points, no leader tint, no
-  // hole strip. It stays visible so the scoreboard accounts for every pairing.
-  if (m.match.is_voided) {
+  // Voided (040 match-void OR 041 day-void): a static, greyed row — no points, no
+  // leader tint, no hole strip. It stays visible so the scoreboard accounts for
+  // every pairing.
+  if (isMatchExcluded(m)) {
     return (
       <div data-testid={`dash-match-${m.match.id}`} style={{ border: `1px solid ${T.line}`, borderRadius: 13, marginBottom: 8, overflow: "hidden", background: T.soft, opacity: 0.6 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, padding: "11px 12px" }}>

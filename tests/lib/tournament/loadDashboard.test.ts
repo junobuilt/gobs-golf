@@ -118,8 +118,8 @@ function seed(): FakeData {
     tournaments: [TOURN],
     tournament_players: [],
     tournament_sessions: [
-      { id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1 — Singles", format: "singles_match", played_on: "2026-08-01", is_locked: false },
-      { id: 10, tournament_id: 1, round_id: 60, day_number: 2, name: "Day 2 — Singles", format: "singles_match", played_on: "2026-08-02", is_locked: false },
+      { id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1 — Singles", format: "singles_match", played_on: "2026-08-01", is_locked: false, is_voided: false },
+      { id: 10, tournament_id: 1, round_id: 60, day_number: 2, name: "Day 2 — Singles", format: "singles_match", played_on: "2026-08-02", is_locked: false, is_voided: false },
     ],
     tournament_matches: [
       match(500, 9, 1, 1, 2),
@@ -202,6 +202,28 @@ describe("loadDashboard — country total agreement (headline)", () => {
     // But A's banked drops from 3.0 to 2.0 (lost the M502 point).
     expect(d.standings.banked.a).toBe(2.0);
     expect(d.standings.banked.b).toBe(1.5);
+  });
+
+  it("a VOIDED DAY drops every one of its matches from the roll-up (migration 041)", async () => {
+    // Void Day 2 (session 10, matches 502/503/504). Day-1 points still bank; all
+    // of Day-2's contributions (incl. M502 +1 to A, M504 +1 to A) disappear.
+    const data = seed();
+    data.tournament_sessions = (data.tournament_sessions ?? []).map((s) =>
+      s.id === 10 ? { ...s, is_voided: true } : s,
+    );
+    fakeRef.current = new FakeSupabase(data);
+
+    const d = await loadDashboard(1);
+    // Every Day-2 match still loads (rows kept) and carries the session flag.
+    const day2 = d.days.find((x) => x.session.id === 10)!;
+    expect(day2.matches.length).toBe(3);
+    expect(day2.matches.every((m) => m.session.isVoided)).toBe(true);
+    // Banked = Day-1 only: M500 halve (A .5 / B .5), M501 B +1, plus +0.5 A adj.
+    //   A = 0.5(halve) + 0.5(adj) = 1.0 ; B = 1(M501) + 0.5(halve) = 1.5
+    expect(d.standings.banked.a).toBe(1.0);
+    expect(d.standings.banked.b).toBe(1.5);
+    // A voided day surfaces NO in-play matches (M503 was Day-2's live one).
+    expect(d.standings.inPlay).toEqual([]);
   });
 });
 

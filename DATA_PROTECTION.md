@@ -78,6 +78,17 @@ the sandbox, where there is no league or live-event data to lose. **Still parked
 (soft-delete + audit log) and any published-side deletion path. The self-serve **teardown
 button** (Decision log, 2026-07-28) remains gated on R3 (fully) + R4.
 
+*Update 2026-08-06 (branch `s-tournament-day-void`):* the PUBLISHED-side gap is now covered by a
+**reversible day-level Void** (migration 041, `tournament_sessions.is_voided`) — the safe,
+non-destructive complement to the unpublished self-serve Delete above. A published day that has
+scores and must stop affecting the cup (created in error, or cancelled — weather) can be **set
+aside** rather than deleted: its matches drop out of the cup pool (`liveTotal`), the day renders
+greyed + non-scorable, and none of its matches are surfaced as a player's next match — but **no
+row is touched**, and un-void fully restores it. This deliberately keeps the destructive
+published-delete path **locked** (R3's core guard): the mid-event tool is reversible Void, never
+deletion, so real scores can never be lost during a live event. Void/un-void are state flags
+(`voidSession`/`unvoidSession`), outside the deletion gate.
+
 ---
 
 ### R4 — Soft delete plus audit log — **RECOVER**
@@ -144,6 +155,7 @@ for a golf league. Revisit only if R1 proves unworkable.
 | 2026-07-28 | — | Autovacuum disabled on `rounds`, `round_players`, `scores` to preserve deleted rows pending a Supabase support response. **Must be re-enabled once that resolves.** |
 | 2026-07-28 | — | Phase 4 self-serve teardown button blocked from shipping until R3 and R4 are done. |
 | 2026-08-06 | R3 | Scoped escape hatch shipped (branch `s-tournament-day-delete`): unpublished tournament days with scores are deletable via a confirm-gated cascade; published path unchanged. R4 + published-side + teardown button still parked. |
+| 2026-08-06 | R3 | Published-side path now covered by reversible day-Void (branch `s-tournament-day-void`, migration 041): a published day with scores can be set aside (out of the cup, non-scorable) without deleting anything; un-void restores. Destructive published-delete stays intentionally locked. |
 
 ---
 

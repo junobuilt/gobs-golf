@@ -148,6 +148,14 @@ export class MockDb {
       }));
     }
 
+    // Migration 041: tournament_sessions.is_voided NOT NULL DEFAULT false.
+    if (effective.tournament_sessions) {
+      effective.tournament_sessions = effective.tournament_sessions.map((s) => ({
+        is_voided: false,
+        ...s,
+      }));
+    }
+
     for (const t of KNOWN_TABLES) {
       const rows = (effective as any)[t] ?? [];
       this.tables[t] = rows.map((r: Row) => ({ ...r }));

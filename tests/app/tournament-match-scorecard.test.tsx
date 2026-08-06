@@ -231,6 +231,43 @@ describe("match scorecard — singles 1-on-1 split (039)", () => {
   });
 });
 
+describe("match scorecard — voided is inert (migrations 040 + 041)", () => {
+  it("a match on a VOIDED DAY shows the 'This day was voided' banner and no scorecard", async () => {
+    const m = makeLoaded({
+      id: 500,
+      format: "singles_match",
+      isVoidedSession: true, // the DAY is voided (041)
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+    });
+    mocks.loadMatch.mockResolvedValue(m);
+    mocks.loadSessionMatches.mockResolvedValue([m]);
+    await renderPage();
+
+    const banner = screen.getByTestId("match-voided-banner");
+    expect(banner).toHaveTextContent("This day was voided");
+    // The scorecard (player cards / score inputs) is NOT rendered — nothing to score.
+    expect(screen.queryByTestId("match-card-500")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("player-1")).not.toBeInTheDocument();
+  });
+
+  it("a per-match void (040) still shows the 'This match was voided' banner", async () => {
+    const m = makeLoaded({
+      id: 500,
+      format: "singles_match",
+      isVoided: true, // the MATCH is voided (040), day is not
+      a: [{ playerId: 1, ch: 0, scored: {} }],
+      b: [{ playerId: 2, ch: 0, scored: {} }],
+    });
+    mocks.loadMatch.mockResolvedValue(m);
+    mocks.loadSessionMatches.mockResolvedValue([m]);
+    await renderPage();
+
+    expect(screen.getByTestId("match-voided-banner")).toHaveTextContent("This match was voided");
+    expect(screen.queryByTestId("match-card-500")).not.toBeInTheDocument();
+  });
+});
+
 describe("match scorecard — soft closeout", () => {
   it("shows the banner + note but KEEPS inputs live (correctable) on a decided match", async () => {
     // A wins 1-5, halves 6-14 → 5&4 at 14; hole 15 also scored → scoredBeyondCloseout.

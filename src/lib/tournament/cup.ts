@@ -8,7 +8,18 @@
 import { isMatchComplete } from "./completion";
 import { cupTotals } from "./cupTotals";
 import type { DashboardData } from "./loadDashboard";
-import type { Side, Tournament } from "./types";
+import type { LoadedMatch, Side, Tournament } from "./types";
+
+// ── The voided set (SSOT) ────────────────────────────────────────────────────
+// A match is excluded from the decidable cup pool if it is voided itself
+// (migration 040) OR its day is voided (migration 041). ONE predicate: every
+// surface that drops voided matches (deriveCupBar/voidedCount, the standings
+// roll-up, a player's next match, the inert cards/banner) reads THIS, so the two
+// void levels can never diverge. The two flags are orthogonal — un-voiding a day
+// clears only `session.isVoided`, so an individually-voided match stays excluded.
+export function isMatchExcluded(m: LoadedMatch): boolean {
+  return m.match.is_voided || m.session.isVoided;
+}
 
 // Cup thresholds off the DYNAMIC total (created matches, not a fixed 27/28):
 //   to-win    = total/2 + 0.5  (outright win — must exceed half)
@@ -117,8 +128,9 @@ export function deriveCupBar(data: DashboardData, tournament: Tournament): CupBa
   // Voided matches keep their row (createdCount) but drop out of the decidable
   // pool: excluded from decided/liveNow here AND from the points roll-up upstream
   // (loadDashboard filters them before computeTournamentStandings), so the fills
-  // and the total agree.
-  const activeMatches = allMatches.filter((m) => !m.match.is_voided);
+  // and the total agree. `isMatchExcluded` covers BOTH a per-match void (040) and
+  // a whole voided day (041) — so a voided day's matches leave the pool too.
+  const activeMatches = allMatches.filter((m) => !isMatchExcluded(m));
   const createdCount = allMatches.length;
   const voidedCount = createdCount - activeMatches.length;
   const { liveTotal, barSize, winLine, retainLine } = cupTotals({

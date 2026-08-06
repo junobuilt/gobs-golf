@@ -11,6 +11,7 @@ import {
   MatchLoadError,
 } from "@/lib/tournament/loadMatch";
 import type { LoadedMatch, Side } from "@/lib/tournament/types";
+import { isMatchExcluded } from "@/lib/tournament/cup";
 import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { getWriteQueue, getTeamWriteQueue } from "@/lib/writeQueue";
 import { getStoredPlayerId } from "@/lib/deviceMemory";
@@ -445,9 +446,11 @@ export default function MatchScorecardPage() {
   }
 
   const group = state.group;
-  // Voided (migration 040): the match keeps its row but is not scorable — show a
-  // plain banner instead of the scorecard, so no scores can be entered on it.
-  if (group.length > 0 && group.every((m) => m.match.is_voided)) {
+  // Voided (040 match-void OR 041 day-void): the match keeps its row but is not
+  // scorable — show a plain banner instead of the scorecard, so no scores can be
+  // entered on it. A whole voided DAY gets day-specific copy.
+  if (group.length > 0 && group.every((m) => isMatchExcluded(m))) {
+    const dayVoided = group.every((m) => m.session.isVoided);
     return (
       <Shell>
         <div
@@ -462,9 +465,12 @@ export default function MatchScorecardPage() {
             lineHeight: 1.5,
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>This match was voided</div>
-          It’s no longer part of the tournament and can’t be scored. If this is a
-          mistake, an admin can un-void it.
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            {dayVoided ? "This day was voided" : "This match was voided"}
+          </div>
+          {dayVoided
+            ? "This day is set aside and isn’t counting toward the cup, so its matches can’t be scored. If this is a mistake, an admin can un-void the day."
+            : "It’s no longer part of the tournament and can’t be scored. If this is a mistake, an admin can un-void it."}
           <div style={{ marginTop: 14 }}>
             <Link href="/tournament" data-testid="voided-back-home" className={FOCUS_CLASS} style={{ color: "#1a5a8c", fontWeight: 600 }}>
               ← Tournament Home

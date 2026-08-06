@@ -28,6 +28,17 @@ describe("findMatchForPlayer", () => {
     expect(findMatchForPlayer(day1, 1)?.match.id).toBe(500);
     expect(findMatchForPlayer(day2, 1)?.match.id).toBe(601);
   });
+
+  it("never surfaces a voided match (040) or a match on a voided day (041) as the player's match", () => {
+    const plain = makeLoaded({ id: 500, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] });
+    const matchVoided = makeLoaded({ id: 501, format: "singles_match", isVoided: true, a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] });
+    const dayVoided = makeLoaded({ id: 502, format: "singles_match", isVoidedSession: true, a: [{ playerId: 1, ch: 0, scored: {} }], b: [{ playerId: 2, ch: 0, scored: {} }] });
+    // Only the plain match resolves; the voided ones are skipped even though the
+    // player is in them.
+    expect(findMatchForPlayer([matchVoided, dayVoided, plain], 1)?.match.id).toBe(500);
+    // With no plain match, the player has no surfaced match at all.
+    expect(findMatchForPlayer([matchVoided, dayVoided], 1)).toBeUndefined();
+  });
 });
 
 describe("findNearestMatchForPlayer", () => {

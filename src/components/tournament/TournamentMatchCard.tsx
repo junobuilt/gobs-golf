@@ -10,6 +10,7 @@ import React from "react";
 import Link from "next/link";
 import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, FOCUS_CLASS } from "@/lib/tournament/tokens";
 import { matchStatus, type StatusTone } from "@/lib/tournament/matchStatus";
+import { isMatchExcluded } from "@/lib/tournament/cup";
 import type { LoadedMatch } from "@/lib/tournament/types";
 
 function stripeColor(tone: StatusTone): string {
@@ -31,10 +32,10 @@ export function TournamentMatchCard({ m }: { m: LoadedMatch }) {
   const aNames = m.sideA.players.map((p) => p.displayName).join(" / ") || m.sideA.displayName;
   const bNames = m.sideB.players.map((p) => p.displayName).join(" / ") || m.sideB.displayName;
 
-  // Voided (migration 040): the row stays visible for context but reads inactive
-  // — neutral stripe, greyed text, a "Voided" chip, no leader tone, not tappable
-  // to score.
-  const voided = m.match.is_voided;
+  // Voided (migration 040 match-void OR 041 day-void): the row stays visible for
+  // context but reads inactive — neutral stripe, greyed text, a "Voided" chip, no
+  // leader tone, not tappable to score.
+  const voided = isMatchExcluded(m);
 
   const inner = (
     <>

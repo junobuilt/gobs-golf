@@ -114,6 +114,7 @@ interface SessionRow {
   name: string;
   format: SessionFormat;
   played_on: string | null;
+  is_voided: boolean; // migration 041 — day-level void
 }
 
 export interface TournamentNameRow {
@@ -237,6 +238,7 @@ function assembleMatch(
       dayNumber: session.day_number,
       playedOn: session.played_on,
       roundId: session.round_id,
+      isVoided: session.is_voided,
     },
     tournament: { id: tournament.id, sideAName: tournament.side_a_name, sideBName: tournament.side_b_name },
     sideA,
@@ -330,7 +332,7 @@ async function loadTeamScores(roundId: number | null): Promise<Map<number, (numb
 async function loadSessionRow(sessionId: number): Promise<SessionRow | null> {
   const res = await supabase
     .from("tournament_sessions")
-    .select("id, tournament_id, round_id, day_number, name, format, played_on")
+    .select("id, tournament_id, round_id, day_number, name, format, played_on, is_voided")
     .eq("id", sessionId)
     .maybeSingle();
   return (unwrap(res, "tournament_sessions") as SessionRow | null) ?? null;

@@ -15,6 +15,7 @@ import {
   getPointAdjustments,
   getTournamentSessions,
 } from "./queries";
+import { isMatchExcluded } from "./cup";
 import { loadSessionMatches } from "./loadMatch";
 import { computeTournamentStandings } from "./matchplay";
 import type {
@@ -80,11 +81,12 @@ export async function loadDashboard(
       : { session, matches: [], error: true };
   });
 
-  // Migration 040 — a voided match keeps its row (so createdCount still sees it)
-  // but contributes NO country points: exclude it before the roll-up so the bar
-  // fills agree with the void-aware liveTotal (cup.ts).
+  // Migrations 040/041 — a voided match (or a match on a voided day) keeps its
+  // row (so createdCount still sees it) but contributes NO country points:
+  // exclude it before the roll-up so the bar fills agree with the void-aware
+  // liveTotal (cup.ts). `isMatchExcluded` is the shared void predicate.
   const inputs: StandingsMatchInput[] = days.flatMap((d) =>
-    d.matches.filter((m) => !m.match.is_voided).map(toStandingsInput),
+    d.matches.filter((m) => !isMatchExcluded(m)).map(toStandingsInput),
   );
   const standings = computeTournamentStandings(inputs, adjustments);
 

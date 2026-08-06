@@ -90,6 +90,12 @@ export interface TournamentSession {
   format: SessionFormat;
   played_on: string | null;
   is_locked: boolean;
+  // Migration 041. A voided DAY: all its matches drop out of the decidable pool
+  // (like a per-match void), the day renders greyed + non-scorable, and its
+  // matches are never surfaced as a player's next match. Reversible (un-void);
+  // orthogonal to per-match `is_voided` — un-voiding a day never resurrects an
+  // individually-voided match. NOT a deletion. Defaults false.
+  is_voided: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -333,6 +339,10 @@ export interface LoadedMatch {
     dayNumber: number;
     playedOn: string | null;
     roundId: number | null;
+    // Migration 041 — the day's void state, surfaced per-match so a single
+    // match-level predicate (isMatchExcluded, cup.ts) can see both the match's
+    // own void and its day's void.
+    isVoided: boolean;
   };
   tournament: { id: number; sideAName: string; sideBName: string };
   sideA: LoadedMatchSide;

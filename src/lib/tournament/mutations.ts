@@ -1182,6 +1182,29 @@ export async function unvoidMatch(matchId: number): Promise<void> {
   if (error) throw new Error("unvoidMatch: " + error.message);
 }
 
+// Migration 041 — VOID a whole DAY (session): all its matches drop out of the
+// decidable pool (liveTotal), the day renders greyed + non-scorable, and none of
+// its matches are surfaced as a player's next match. A state flag, NOT a
+// deletion — reversible via unvoidSession. Does not touch the deletion gate.
+// Orthogonal to per-match void: un-voiding a day clears ONLY this flag, so an
+// individually-voided match stays voided.
+export async function voidSession(sessionId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_sessions")
+    .update({ is_voided: true })
+    .eq("id", sessionId);
+  if (error) throw new Error("voidSession: " + error.message);
+}
+
+// Un-void a day: return its (non-individually-voided) matches to the pool.
+export async function unvoidSession(sessionId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tournament_sessions")
+    .update({ is_voided: false })
+    .eq("id", sessionId);
+  if (error) throw new Error("unvoidSession: " + error.message);
+}
+
 // LEVEL 3 — country points: a direct adjustment on `tournament_point_adjustments`
 // (side 'a'/'b', points may be negative, reason required + non-blank).
 // computeTournamentStandings folds it into `banked`. Reversible via

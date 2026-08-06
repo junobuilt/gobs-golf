@@ -5,7 +5,7 @@
 // tournament_matches) — a league round cannot inflate it.
 
 import { describe, it, expect } from "vitest";
-import { cupThresholds, formatCupPoints, deriveCupBar, cupOutcome } from "@/lib/tournament/cup";
+import { cupThresholds, formatCupPoints, deriveCupBar, cupOutcome, isMatchExcluded } from "@/lib/tournament/cup";
 import type { DashboardData } from "@/lib/tournament/loadDashboard";
 import { makeLoaded } from "../../support/matchFixture";
 import type { LoadedMatch, Tournament, TournamentSession } from "@/lib/tournament/types";
@@ -18,7 +18,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
   };
 }
 function session(id: number): TournamentSession {
-  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false };
+  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false, is_voided: false };
 }
 
 // A USA-win match (USA gross 3, Canada gross 5 → closes out, result side_a).
@@ -144,6 +144,97 @@ describe("deriveCupBar — declared total + void (migration 040)", () => {
     const restored = deriveCupBar(dashboard(active, { a: 2, b: 0 }), tPlanned5);
     expect(restored.total).toBe(5);
     expect(restored.toWin).toBe(3);
+  });
+});
+
+// Mark a set of matches as belonging to a VOIDED DAY (migration 041): flips each
+// match's embedded session.isVoided (the flag the loader populates from the
+// session row) without touching its own is_voided.
+function onVoidedDay(matches: LoadedMatch[]): LoadedMatch[] {
+  return matches.map((m) => ({ ...m, session: { ...m.session, isVoided: true } }));
+}
+
+describe("isMatchExcluded — the voided-set SSOT (migrations 040 + 041)", () => {
+  it("excludes a per-match void, a match on a voided day, or both; includes a plain match", () => {
+    const [plain] = [pending(1)];
+    const [matchVoid] = [voided(2)];
+    const [dayVoid] = onVoidedDay([pending(3)]);
+    const [both] = onVoidedDay([voided(4)]);
+    expect(isMatchExcluded(plain)).toBe(false);
+    expect(isMatchExcluded(matchVoid)).toBe(true);
+    expect(isMatchExcluded(dayVoid)).toBe(true);
+    expect(isMatchExcluded(both)).toBe(true);
+  });
+});
+
+describe("deriveCupBar — day-level void (migration 041)", () => {
+  it("voiding a whole day removes its matches from liveTotal and shifts the lines; un-void restores", () => {
+    const day1 = [decidedUSA(1), decidedUSA(2)]; // 2 decided for USA
+    const day2 = [pending(3), pending(4)]; // 2 pending
+    const t = tournament({ planned_match_total: null });
+
+    // Both days live: 4 created → liveTotal 4, win 2.5 / retain 2.
+    const before = deriveCupBar(dashboard([...day1, ...day2], { a: 2, b: 0 }), t);
+    expect(before.total).toBe(4);
+    expect(before.voidedCount).toBe(0);
+    expect(before.decided).toBe(2);
+    expect(before.toWin).toBe(2.5);
+    expect(before.toRetain).toBe(2);
+
+    // Void day 2 (its two matches drop out): createdCount still 4, voidedCount 2,
+    // liveTotal 2 → win 1.5 / retain 1. Day-1 decideds still bank.
+    const dayVoided = deriveCupBar(dashboard([...day1, ...onVoidedDay(day2)], { a: 2, b: 0 }), t);
+    expect(dayVoided.createdCount).toBe(4);
+    expect(dayVoided.voidedCount).toBe(2);
+    expect(dayVoided.total).toBe(2);
+    expect(dayVoided.decided).toBe(2);
+    expect(dayVoided.toWin).toBe(1.5);
+    expect(dayVoided.toRetain).toBe(1);
+
+    // Un-void the day = the same matches without the session flag → back to 4.
+    const restored = deriveCupBar(dashboard([...day1, ...day2], { a: 2, b: 0 }), t);
+    expect(restored.total).toBe(4);
+    expect(restored.voidedCount).toBe(0);
+    expect(restored.toWin).toBe(2.5);
+  });
+
+  it("with a declared planned_match_total, a voided day's matches subtract from it", () => {
+    const day1 = [pending(1), pending(2)];
+    const day2 = [pending(3), pending(4)];
+    const t = tournament({ planned_match_total: 8 });
+    expect(deriveCupBar(dashboard([...day1, ...day2], { a: 0, b: 0 }), t).total).toBe(8);
+    // Void day 2 → 8 − 2 = 6.
+    const voidedBar = deriveCupBar(dashboard([...day1, ...onVoidedDay(day2)], { a: 0, b: 0 }), t);
+    expect(voidedBar.total).toBe(6);
+    expect(voidedBar.voidedCount).toBe(2);
+    expect(voidedBar.toWin).toBe(3.5);
+  });
+
+  it("orthogonality: match-void then day-void then day-un-void keeps the match-voided match out, restores the rest", () => {
+    const t = tournament({ planned_match_total: null });
+    // m1 individually voided; m2,m3,m4 plain — all on the same day.
+    const m1 = voided(1);
+    const rest = [pending(2), pending(3), pending(4)];
+
+    // Baseline: m1 out (match-void), 3 live → liveTotal 3.
+    const baseline = deriveCupBar(dashboard([m1, ...rest], { a: 0, b: 0 }), t);
+    expect(baseline.createdCount).toBe(4);
+    expect(baseline.voidedCount).toBe(1);
+    expect(baseline.total).toBe(3);
+
+    // Void the whole day: ALL four out → liveTotal 0.
+    const dayVoided = deriveCupBar(dashboard(onVoidedDay([m1, ...rest]), { a: 0, b: 0 }), t);
+    expect(dayVoided.voidedCount).toBe(4);
+    expect(dayVoided.total).toBe(0);
+
+    // Un-void the day (clears ONLY session.isVoided): m1 stays voided, the other
+    // three return → back to liveTotal 3, NOT 4. This is the key correctness case.
+    const afterUnvoid = deriveCupBar(dashboard([m1, ...rest], { a: 0, b: 0 }), t);
+    expect(afterUnvoid.voidedCount).toBe(1);
+    expect(afterUnvoid.total).toBe(3);
+    // And the individually-voided match is still excluded by the predicate.
+    expect(isMatchExcluded(m1)).toBe(true);
+    expect(rest.every((m) => !isMatchExcluded(m))).toBe(true);
   });
 });
 

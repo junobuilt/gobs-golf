@@ -316,6 +316,72 @@ describe("admin Tournament tab", () => {
     expect((fakeRef.current.data.rounds as any[]).map((r) => r.id)).toContain(50);
   });
 
+  // ── Reversible day-level Void (migration 041) ─────────────────────────────
+  // A day can be set aside (out of the cup, non-scorable) without deleting
+  // anything, via a REVERSIBLE DangerModal. Un-void restores it.
+  function dayVoidSeed(isVoided: boolean): FakeData {
+    return {
+      ...seed(),
+      tournament_sessions: [
+        { id: 21, tournament_id: 10, round_id: 50, day_number: 1, name: "Day 1", format: "four_ball_match", played_on: "2026-08-01", is_locked: false, is_voided: isVoided },
+      ],
+    };
+  }
+
+  it("Void day opens the REVERSIBLE DangerModal; confirm calls voidSession and the card shows 'Voided' + 'Un-void day'", async () => {
+    fakeRef.current = new FakeSupabase(dayVoidSeed(false));
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1");
+
+    // Open the confirm from the day card (testid-scoped so it can't collide with
+    // the modal's confirm button, which shares the "Void day" label).
+    fireEvent.click(screen.getByTestId("void-day-21"));
+
+    // Reversible modal: the confirm copy names what it does, and there is NO
+    // "cannot be undone" line.
+    expect(await screen.findByText(/won’t count toward the cup/)).toBeTruthy();
+    expect(screen.queryByText(/cannot be undone/i)).toBeNull();
+
+    // Wait out the 1.5s safety delay, then confirm via the modal button (the one
+    // WITHOUT the card's data-testid).
+    await new Promise((r) => setTimeout(r, 1700));
+    const modalConfirm = screen
+      .getAllByRole("button", { name: "Void day" })
+      .find((b) => !(b as HTMLElement).dataset.testid)!;
+    await waitFor(() => expect(modalConfirm).toBeEnabled());
+    fireEvent.click(modalConfirm);
+
+    // Mutation set is_voided on the session; nothing was deleted.
+    await waitFor(() => {
+      const s = (fakeRef.current.data.tournament_sessions as any[]).find((x) => x.id === 21);
+      expect(s.is_voided).toBe(true);
+    });
+    expect((fakeRef.current.data.tournament_sessions as any[]).map((s) => s.id)).toContain(21);
+
+    // Card now reads voided: a "Voided" chip and the control flips to "Un-void day".
+    expect(await screen.findByTestId("day-voided-chip-21")).toBeTruthy();
+    expect(screen.getByTestId("unvoid-day-21")).toBeTruthy();
+    expect(screen.queryByTestId("void-day-21")).toBeNull();
+  });
+
+  it("Un-void day restores the day immediately (no modal) via unvoidSession", async () => {
+    fakeRef.current = new FakeSupabase(dayVoidSeed(true));
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1");
+    // Starts voided.
+    expect(screen.getByTestId("day-voided-chip-21")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("unvoid-day-21"));
+
+    await waitFor(() => {
+      const s = (fakeRef.current.data.tournament_sessions as any[]).find((x) => x.id === 21);
+      expect(s.is_voided).toBe(false);
+    });
+    // Chip gone, control back to "Void day".
+    await waitFor(() => expect(screen.queryByTestId("day-voided-chip-21")).toBeNull());
+    expect(screen.getByTestId("void-day-21")).toBeTruthy();
+  });
+
   it("Results panel forces a match result (Level 2) → result_source=admin", async () => {
     const holes18 = Array.from({ length: 18 }, (_, i) => ({ id: 100 + i, tee_id: 1, hole_number: i + 1, par: 4, stroke_index: i + 1, yardage: 350 }));
     fakeRef.current = new FakeSupabase({

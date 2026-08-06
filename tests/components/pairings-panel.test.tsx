@@ -47,7 +47,7 @@ const PLAYERS = [
 const TOURN: Tournament = { id: 1, name: "Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada", holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: false, planned_match_total: null, notes: null };
 
 function session(format: "greensomes" | "four_ball_match" | "singles_match"): TournamentSession {
-  return { id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1 — Test", format, played_on: "2026-08-01", is_locked: false };
+  return { id: 9, tournament_id: 1, round_id: 50, day_number: 1, name: "Day 1 — Test", format, played_on: "2026-08-01", is_locked: false, is_voided: false };
 }
 
 const holes =(teeId: number) => Array.from({ length: 18 }, (_, i) => ({ id: teeId * 100 + i, tee_id: teeId, hole_number: i + 1, par: 4, stroke_index: i + 1 }));

@@ -29,9 +29,12 @@ import {
   setPlayerSide,
   setTournamentPublished,
   TournamentDayDateTakenError,
+  unvoidSession,
   updateTournament,
+  voidSession,
 } from "@/lib/tournament/mutations";
 import { loadSessionMatches } from "@/lib/tournament/loadMatch";
+import { isMatchExcluded } from "@/lib/tournament/cup";
 import { FORMAT_LABEL } from "@/lib/tournament/formatLabels";
 import { formatPoints } from "@/lib/tournament/matchScorecard";
 import Toggle from "@/components/admin/Toggle";
@@ -199,6 +202,9 @@ export default function Tournament({ allPlayers }: Props) {
     } | null
   >(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
+  // Migration 041 — the day pending a Void confirm (reversible DangerModal).
+  // Un-void applies directly (no modal), mirroring the match-void UX.
+  const [voidTarget, setVoidTarget] = useState<TournamentSession | null>(null);
   // Phase 4 — per-day override panel target + tournament-level point adjustments.
   const [overrideTarget, setOverrideTarget] = useState<TournamentSession | null>(null);
   const [adjustments, setAdjustments] = useState<TournamentPointAdjustment[]>([]);
@@ -251,7 +257,10 @@ export default function Tournament({ allPlayers }: Props) {
       pmap[s.id] = r.status === "fulfilled" ? summarizeDay(r.value) : { groups: [], players: 0, error: true };
       if (r.status === "fulfilled") {
         created += r.value.length;
-        voided += r.value.filter((m) => m.match.is_voided).length;
+        // Voided set (SSOT): count per-match voids AND matches on a voided day
+        // (041), so the header's Created/Voided readout agrees with the cup's
+        // void-aware liveTotal.
+        voided += r.value.filter((m) => isMatchExcluded(m)).length;
       }
     });
     setPairingsBySession(pmap);
@@ -422,6 +431,36 @@ export default function Tournament({ allPlayers }: Props) {
       await deleteSession(target.session.id, { allowScores: target.force === true });
     } catch {
       setActionError(`Couldn't remove ${target.session.name}. Please try again.`);
+    } finally {
+      await load();
+    }
+  };
+
+  // Migration 041 — VOID a whole day (reversible). Confirmed via DangerModal;
+  // sets the day aside without deleting anything. Un-void restores it.
+  const confirmVoidDay = async () => {
+    if (!voidTarget) return;
+    const target = voidTarget;
+    setVoidTarget(null);
+    setActionError(null);
+    try {
+      await voidSession(target.id);
+    } catch {
+      setActionError(`Couldn't void ${target.name}. Please try again.`);
+    } finally {
+      await load();
+    }
+  };
+
+  // Un-void applies directly (reversible, restoring — no modal), mirroring the
+  // match-void UX. Only the session flag flips; any individually-voided match on
+  // the day stays voided.
+  const unvoidDay = async (session: TournamentSession) => {
+    setActionError(null);
+    try {
+      await unvoidSession(session.id);
+    } catch {
+      setActionError(`Couldn't un-void ${session.name}. Please try again.`);
     } finally {
       await load();
     }
@@ -723,19 +762,32 @@ export default function Tournament({ allPlayers }: Props) {
         {sessions.map((s) => (
           <div
             key={s.id}
+            data-testid={`day-card-${s.id}`}
             style={{
-              border: `1px solid ${C.border}`,
+              border: `1px solid ${s.is_voided ? C.red : C.border}`,
               borderRadius: 8,
               padding: 12,
               marginBottom: 10,
               display: "flex",
               flexDirection: "column",
               gap: 10,
+              background: s.is_voided ? "#f8f9fb" : "white",
+              opacity: s.is_voided ? 0.72 : 1,
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700, color: C.navy, fontSize: "0.95rem" }}>{s.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, color: C.navy, fontSize: "0.95rem" }}>{s.name}</span>
+                {s.is_voided && (
+                  <span
+                    data-testid={`day-voided-chip-${s.id}`}
+                    style={{ fontSize: "0.7rem", fontWeight: 700, color: C.red, background: "#fdecec", borderRadius: 6, padding: "2px 7px", textTransform: "uppercase", letterSpacing: "0.04em" }}
+                  >
+                    Voided
+                  </span>
+                )}
+              </div>
               <div style={{ color: C.muted, fontSize: "0.82rem", marginTop: 2 }}>
                 {FORMAT_LABEL[s.format]} · {s.played_on ? formatDisplayDate(s.played_on) : "no date"}
               </div>
@@ -834,6 +886,51 @@ export default function Tournament({ allPlayers }: Props) {
               >
                 Delete
               </button>
+              {/* Void / Un-void this day (migration 041) — reversible: sets the
+                  day aside (out of the cup, non-scorable) without deleting
+                  anything. Available regardless of publish state (the safe tool
+                  for a published event). */}
+              {s.is_voided ? (
+                <button
+                  data-testid={`unvoid-day-${s.id}`}
+                  onClick={() => void unvoidDay(s)}
+                  style={{
+                    minHeight: 44,
+                    minWidth: 64,
+                    padding: "0 12px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${C.navy}`,
+                    background: "white",
+                    color: C.navy,
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    cursor: "pointer",
+                    fontFamily: FONT,
+                  }}
+                >
+                  Un-void day
+                </button>
+              ) : (
+                <button
+                  data-testid={`void-day-${s.id}`}
+                  onClick={() => setVoidTarget(s)}
+                  style={{
+                    minHeight: 44,
+                    minWidth: 64,
+                    padding: "0 12px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${C.amber}`,
+                    background: "white",
+                    color: C.amber,
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    cursor: "pointer",
+                    fontFamily: FONT,
+                  }}
+                >
+                  Void day
+                </button>
+              )}
             </div>
             </div>
             {s.round_id != null && (
@@ -1013,6 +1110,17 @@ export default function Tournament({ allPlayers }: Props) {
           confirmLabel="Remove day"
           onConfirm={confirmDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {voidTarget && (
+        <DangerModal
+          title={`Void ${voidTarget.name} (${FORMAT_LABEL[voidTarget.format]})?`}
+          description={`Its matches will be set aside and won’t count toward the cup. Nothing is deleted — you can un-void it anytime.`}
+          cannotBeUndone={false}
+          confirmLabel="Void day"
+          onConfirm={confirmVoidDay}
+          onCancel={() => setVoidTarget(null)}
         />
       )}
 

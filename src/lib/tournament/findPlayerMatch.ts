@@ -3,6 +3,7 @@
 // side). Because it resolves per day, a stored identity lands on the player's
 // NEW match on day 2/3 automatically.
 
+import { isMatchExcluded } from "./cup";
 import type { LoadedMatch } from "./types";
 
 export function findMatchForPlayer(
@@ -11,8 +12,9 @@ export function findMatchForPlayer(
 ): LoadedMatch | undefined {
   return matches.find(
     (m) =>
-      // A voided match (migration 040) is never surfaced as a player's match.
-      !m.match.is_voided &&
+      // A voided match (040) OR a match on a voided day (041) is never surfaced
+      // as a player's match — the shared void predicate covers both.
+      !isMatchExcluded(m) &&
       (m.sideA.players.some((p) => p.playerId === playerId) ||
         m.sideB.players.some((p) => p.playerId === playerId)),
   );
