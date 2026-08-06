@@ -72,6 +72,34 @@ export interface FakeOptions {
   rpcFinalizeResult?: { data: string | null; error: unknown };
 }
 
+// Mirrors the ON DELETE CASCADE chain rooted at `rounds` (the fake has no real
+// FKs). Deletes every child of the given round ids — scores ← round_players,
+// team_scores, and (via tournament_sessions.round_id ON DELETE CASCADE, mig 032)
+// each session's tournament_matches + tournament_day_sides, then the sessions.
+// Does NOT delete the `rounds` rows themselves (the caller does). Shared by the
+// delete_tournament_cascade RPC and a plain from("rounds").delete().
+export function cascadeRoundChildren(d: any, roundIds: Set<any>): void {
+  const del = (table: string, pred: (r: any) => boolean) => {
+    const arr = d[table];
+    if (!Array.isArray(arr)) return;
+    for (let i = arr.length - 1; i >= 0; i--) if (pred(arr[i])) arr.splice(i, 1);
+  };
+  const rpIds = new Set(
+    (d.round_players ?? []).filter((rp: any) => roundIds.has(rp.round_id)).map((rp: any) => rp.id),
+  );
+  const sessionIds = new Set(
+    (d.tournament_sessions ?? [])
+      .filter((s: any) => s.round_id != null && roundIds.has(s.round_id))
+      .map((s: any) => s.id),
+  );
+  del("scores", (s) => rpIds.has(s.round_player_id));
+  del("round_players", (rp) => roundIds.has(rp.round_id));
+  del("team_scores", (ts) => roundIds.has(ts.round_id));
+  del("tournament_matches", (m) => sessionIds.has(m.session_id));
+  del("tournament_day_sides", (ds) => sessionIds.has(ds.session_id));
+  del("tournament_sessions", (s) => s.round_id != null && roundIds.has(s.round_id));
+}
+
 export class FakeSupabase {
   data: FakeData;
   writes: WriteOp[] = [];
@@ -180,22 +208,15 @@ export class FakeSupabase {
       };
       const doomedRounds = (d.rounds ?? []).filter((r: any) => eq(r.tournament_id, tid));
       const roundIds = new Set(doomedRounds.map((r: any) => r.id));
-      const doomedRpIds = new Set(
-        (d.round_players ?? []).filter((rp: any) => roundIds.has(rp.round_id)).map((rp: any) => rp.id),
-      );
-      const doomedSessionIds = new Set(
-        (d.tournament_sessions ?? [])
-          .filter((s: any) => s.round_id != null && roundIds.has(s.round_id))
-          .map((s: any) => s.id),
-      );
       const roundsDeleted = doomedRounds.length;
-      // Children first (mirror the FK cascade), then rounds.
-      del("scores", (s) => doomedRpIds.has(s.round_player_id));
-      del("round_players", (rp) => roundIds.has(rp.round_id));
-      del("team_scores", (ts) => roundIds.has(ts.round_id));
-      del("tournament_matches", (m) => doomedSessionIds.has(m.session_id) || eq(m.tournament_id, tid));
-      del("tournament_sessions", (s) => (s.round_id != null && roundIds.has(s.round_id)) || eq(s.tournament_id, tid));
+      // Round-rooted children first (mirror the FK cascade), then the rounds.
+      cascadeRoundChildren(d, roundIds);
       del("rounds", (r) => roundIds.has(r.id));
+      // Tournament-level cleanup for rows not reached via a round (e.g. a session
+      // with a null round_id): scoped by tournament_id.
+      del("tournament_matches", (m) => eq(m.tournament_id, tid));
+      del("tournament_day_sides", (ds) => eq(ds.tournament_id, tid));
+      del("tournament_sessions", (s) => eq(s.tournament_id, tid));
       // Then the tournament + its remaining children.
       del("tournament_players", (tp) => eq(tp.tournament_id, tid));
       del("tournament_point_adjustments", (a) => eq(a.tournament_id, tid));
@@ -403,6 +424,14 @@ class QueryBuilder<Row = any> {
         return { data: null, error: fw === true ? { message: "fake write failure" } : fw };
       }
       const removeSet = new Set(toRemove);
+      // Cascade: a deleted `rounds` row takes its whole subtree with it (real FK
+      // ON DELETE CASCADE chain — round_players/scores/team_scores and, via
+      // tournament_sessions.round_id, the day's sessions/matches/day_sides). The
+      // generic loop below then removes the rounds rows themselves.
+      if (this.table === "rounds") {
+        const doomedIds = new Set(toRemove.map((r: any) => r.id));
+        cascadeRoundChildren(this.fake.data as any, doomedIds);
+      }
       // Cascade: child rows referencing a deleted flight by flight_id go too,
       // matching the ON DELETE CASCADE on flight_teams.flight_id.
       if (this.table === "flights") {

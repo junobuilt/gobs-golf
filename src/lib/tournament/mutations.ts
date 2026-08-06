@@ -46,6 +46,41 @@ export class SessionHasScoresError extends Error {
   }
 }
 
+// ── Escape-hatch guards for deleting an unpublished day WITH scores ──────────
+// The `{ allowScores: true }` path (sandbox teardown) re-checks these invariants
+// server-side in the mutation — NOT relying on the UI having hidden the button.
+// Each aborts the delete having removed nothing.
+
+// The day's tournament is published (live event) at mutation time — refuse to
+// force-delete a day with scores. The safe delete only exists in the sandbox.
+export class TournamentPublishedError extends Error {
+  readonly code = "tournament_published";
+  constructor(public readonly tournamentId: number) {
+    super(`deleteSession: tournament ${tournamentId} is published; cannot force-delete a day with scores`);
+    this.name = "TournamentPublishedError";
+  }
+}
+
+// The day's round is a LEAGUE round (`rounds.tournament_id IS NULL`). This path
+// must never touch league data — hard guard, abort.
+export class NotTournamentRoundError extends Error {
+  readonly code = "not_tournament_round";
+  constructor(public readonly roundId: number) {
+    super(`deleteSession: round ${roundId} is not tournament-owned; refusing to delete league data`);
+    this.name = "NotTournamentRoundError";
+  }
+}
+
+// Another tournament_sessions row still references this round — deleting the
+// round would cascade away a sibling day too. Abort rather than over-delete.
+export class SharedRoundError extends Error {
+  readonly code = "shared_round";
+  constructor(public readonly roundId: number) {
+    super(`deleteSession: round ${roundId} is referenced by another session; refusing to delete`);
+    this.name = "SharedRoundError";
+  }
+}
+
 // Find-or-create the tournament-owned round for a date. NOT ensureRoundShell —
 // that is league-scoped (filters tournament_id IS NULL and would throw
 // TournamentOwnsDateError here). Tournament rounds carry tournament_id set,
@@ -437,7 +472,10 @@ export async function editSession(
 // Delete a day. Refuses when the round has real scores (§5.1); otherwise deletes
 // the session AND its empty round (round_players/pairings cascade via ON DELETE
 // CASCADE). Deleting the round is scoped by tournament_id — never a league round.
-export async function deleteSession(id: number): Promise<{ roundDeleted: boolean }> {
+export async function deleteSession(
+  id: number,
+  opts?: { allowScores?: boolean },
+): Promise<{ roundDeleted: boolean }> {
   const { data: session } = await supabase
     .from("tournament_sessions")
     .select("id, round_id, tournament_id")
@@ -449,11 +487,19 @@ export async function deleteSession(id: number): Promise<{ roundDeleted: boolean
 
   if (roundId != null) {
     const status = await getSessionRoundStatus(roundId);
-    if (status.hasScores) throw new SessionHasScoresError(id);
+    if (status.hasScores) {
+      // Published (or caller didn't opt in): the R3 guard holds — refuse.
+      if (!opts?.allowScores) throw new SessionHasScoresError(id);
+      // Sandbox escape hatch: force-delete a day WITH scores, but only after
+      // re-verifying the safety invariants server-side (§ CRITICAL). One atomic
+      // cascading round delete then removes the whole day (see below).
+      return await forceDeleteDayWithScores(id, roundId, tournamentId);
+    }
   }
 
-  // Session first: tournament_sessions.round_id is ON DELETE SET NULL, so
-  // deleting the round first would transiently null a row we're removing anyway.
+  // Empty day: session first, then its (now childless) round. Both the session
+  // row and the tournament_sessions.round_id → rounds ON DELETE CASCADE (mig 032)
+  // make either order safe; keeping session-first preserves the shipped path.
   const { error: delSessErr } = await supabase.from("tournament_sessions").delete().eq("id", id);
   if (delSessErr) throw new Error("deleteSession: " + delSessErr.message);
 
@@ -467,6 +513,55 @@ export async function deleteSession(id: number): Promise<{ roundDeleted: boolean
     return { roundDeleted: true };
   }
   return { roundDeleted: false };
+}
+
+// Sandbox-only teardown of a day that HAS scores (unpublished tournaments). The
+// spec's "one transaction, FK-safe order, no half-deleted day" is realised WITHOUT
+// a migration by leaning on the existing FK cascade: a single scoped `rounds`
+// delete atomically removes, in FK order, scores ← round_players ← round, and
+// tournament_day_sides + tournament_matches ← tournament_sessions ← round (via
+// tournament_sessions.round_id ON DELETE CASCADE, migration 032). One statement =
+// fully succeeds or deletes nothing. Guards re-checked here, server-side, first.
+async function forceDeleteDayWithScores(
+  sessionId: number,
+  roundId: number,
+  tournamentId: number,
+): Promise<{ roundDeleted: boolean }> {
+  // 1) Publish re-check — the danger only exists for a live event.
+  const { data: t } = await supabase
+    .from("tournaments")
+    .select("is_published")
+    .eq("id", tournamentId)
+    .maybeSingle();
+  if (!t || (t as { is_published: boolean }).is_published) {
+    throw new TournamentPublishedError(tournamentId);
+  }
+  // 2) League guard — the round MUST be tournament-owned, never league data.
+  const { data: r } = await supabase
+    .from("rounds")
+    .select("tournament_id")
+    .eq("id", roundId)
+    .maybeSingle();
+  if (!r || (r as { tournament_id: number | null }).tournament_id == null) {
+    throw new NotTournamentRoundError(roundId);
+  }
+  // 3) Shared-round guard — only delete the round if no OTHER session references it.
+  const { data: refs } = await supabase
+    .from("tournament_sessions")
+    .select("id")
+    .eq("round_id", roundId);
+  const others = (refs ?? []).filter((s: { id: number }) => s.id !== sessionId);
+  if (others.length > 0) throw new SharedRoundError(roundId);
+
+  // Atomic cascading delete. Scoped by tournament_id so a league round is
+  // unreachable (also satisfies roundsQueryGuard).
+  const { error: delErr } = await supabase
+    .from("rounds")
+    .delete()
+    .eq("id", roundId)
+    .eq("tournament_id", tournamentId);
+  if (delErr) throw new Error("deleteSession (force cascade): " + delErr.message);
+  return { roundDeleted: true };
 }
 
 // ── Pairings (§2, Phase 2.2) ────────────────────────────────────────────────

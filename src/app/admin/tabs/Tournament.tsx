@@ -8,6 +8,7 @@ import type { Player } from "../page";
 import { formatDisplayDate, todayLocal } from "@/lib/date";
 import { getTeamColor } from "@/lib/teamColors";
 import {
+  countDayScores,
   getActiveTournament,
   getPointAdjustments,
   getSessionRoundStatus,
@@ -187,7 +188,15 @@ export default function Tournament({ allPlayers }: Props) {
   const [pairingTarget, setPairingTarget] = useState<TournamentSession | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
-    { session: TournamentSession; status: SessionRoundStatus } | null
+    {
+      session: TournamentSession;
+      status: SessionRoundStatus;
+      // Sandbox escape hatch: unpublished day WITH scores. When set, the modal
+      // shows the scoped counts + "Delete permanently" and the mutation is
+      // called with { allowScores: true }.
+      force?: boolean;
+      counts?: { matches: number; scores: number; players: number };
+    } | null
   >(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
   // Phase 4 — per-day override panel target + tournament-level point adjustments.
@@ -380,11 +389,26 @@ export default function Tournament({ allPlayers }: Props) {
   };
 
   const openDelete = async (session: TournamentSession) => {
+    if (!tournament) return; // day cards only render with a tournament loaded
     const status = await getSessionRoundStatus(session.round_id);
     if (status.hasScores) {
-      setBlockedNotice(
-        `${session.name} has scores entered and can't be deleted. Remove the scores first.`,
-      );
+      // Published (live event): the R3 guard holds — no delete, tell them to
+      // remove the scores first.
+      if (tournament.is_published) {
+        setBlockedNotice(
+          `${session.name} has scores entered and can't be deleted. Remove the scores first.`,
+        );
+        return;
+      }
+      // Unpublished (sandbox): offer the scoped, confirm-gated escape hatch.
+      // Pull the real counts before opening so the modal names the exact scope.
+      // pairingsBySession holds the already-built DaySummary: matches = total
+      // lines across groups (one line per match), players = distinct player ids.
+      const summary = pairingsBySession[session.id];
+      const matches = summary ? summary.groups.reduce((n, g) => n + g.lines.length, 0) : 0;
+      const players = summary?.players ?? 0;
+      const scores = await countDayScores(session.round_id);
+      setDeleteTarget({ session, status, force: true, counts: { matches, scores, players } });
       return;
     }
     setDeleteTarget({ session, status });
@@ -395,7 +419,7 @@ export default function Tournament({ allPlayers }: Props) {
     const target = deleteTarget;
     setDeleteTarget(null);
     try {
-      await deleteSession(target.session.id);
+      await deleteSession(target.session.id, { allowScores: target.force === true });
     } catch {
       setActionError(`Couldn't remove ${target.session.name}. Please try again.`);
     } finally {
@@ -962,7 +986,23 @@ export default function Tournament({ allPlayers }: Props) {
         />
       )}
 
-      {deleteTarget && (
+      {deleteTarget && deleteTarget.force && deleteTarget.counts && (
+        <DangerModal
+          title={`Delete ${deleteTarget.session.name} (${FORMAT_LABEL[deleteTarget.session.format]})?`}
+          description={`This permanently deletes ${deleteTarget.counts.matches} ${
+            deleteTarget.counts.matches === 1 ? "match" : "matches"
+          } and ${deleteTarget.counts.scores} ${
+            deleteTarget.counts.scores === 1 ? "score" : "scores"
+          } from ${deleteTarget.counts.players} ${
+            deleteTarget.counts.players === 1 ? "player" : "players"
+          }. This can't be undone.`}
+          confirmLabel="Delete permanently"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {deleteTarget && !deleteTarget.force && (
         <DangerModal
           title={`Remove ${deleteTarget.session.name}?`}
           description={

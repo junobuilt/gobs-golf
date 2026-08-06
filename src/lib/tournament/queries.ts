@@ -197,3 +197,34 @@ export async function getSessionRoundStatus(
 
   return { roundId, hasScores, hasPairings };
 }
+
+// Total score rows on a day's round — individual `scores` (via the round's
+// `round_players`) plus `team_scores` (greensomes) — for the delete-day confirm
+// copy ("… N scores …"). Display-only; not a safety gate. A single day's rows
+// are bounded (~20 players × 18 holes), well under the 1000-row cap, so counting
+// ids by length is safe here.
+export async function countDayScores(roundId: number | null): Promise<number> {
+  if (roundId == null) return 0;
+
+  const { data: rps } = await supabase
+    .from("round_players")
+    .select("id")
+    .eq("round_id", roundId);
+  const rpIds = (rps ?? []).map((r: { id: number }) => r.id);
+
+  let count = 0;
+  if (rpIds.length > 0) {
+    const { data: sc } = await supabase
+      .from("scores")
+      .select("id")
+      .in("round_player_id", rpIds);
+    count += (sc ?? []).length;
+  }
+  const { data: ts } = await supabase
+    .from("team_scores")
+    .select("id")
+    .eq("round_id", roundId);
+  count += (ts ?? []).length;
+
+  return count;
+}

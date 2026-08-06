@@ -215,6 +215,107 @@ describe("admin Tournament tab", () => {
     await waitFor(() => expect((fakeRef.current.data.tournament_point_adjustments as any[]).length).toBe(0));
   });
 
+  // ── Self-serve "Delete Day" for UNPUBLISHED tournaments (partial R3) ───────
+  // A day WITH scores in an unpublished (sandbox) tournament can be force-deleted
+  // via a scoped confirm modal. Published tournaments keep the "remove scores
+  // first" block.
+  const holes18 = Array.from({ length: 18 }, (_, i) => ({ id: 100 + i, tee_id: 1, hole_number: i + 1, par: 4, stroke_index: i + 1, yardage: 350 }));
+  function dayWithScoresSeed(isPublished: boolean): FakeData {
+    return {
+      ...seed(),
+      rounds: [{ id: 50, played_on: "2026-08-01", course_id: 1, tournament_id: 10, season_id: null, is_complete: false }],
+      tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+      holes: holes18,
+      players: [
+        { id: 1, full_name: "Al A", display_name: "Al", handicap_index: 8, is_active: true },
+        { id: 2, full_name: "Bo B", display_name: "Bo", handicap_index: 14, is_active: true },
+      ],
+      round_players: [
+        { id: 101, round_id: 50, player_id: 1, team_number: 1, tee_id: 1, course_handicap: 8, handicap_index_snapshot: 8 },
+        { id: 102, round_id: 50, player_id: 2, team_number: 2, tee_id: 1, course_handicap: 14, handicap_index_snapshot: 14 },
+      ],
+      scores: [
+        { id: 1, round_player_id: 101, hole_number: 1, strokes: 4 },
+        { id: 2, round_player_id: 101, hole_number: 2, strokes: 5 },
+        { id: 3, round_player_id: 102, hole_number: 1, strokes: 4 },
+        { id: 4, round_player_id: 102, hole_number: 2, strokes: 5 },
+      ],
+      tournaments: [
+        { id: 10, name: "2026 Cup", is_active: true, is_published: isPublished, started_on: "2026-08-01", side_a_name: "USA", side_b_name: "Canada", holder_side: "b", season_id: null, ended_on: null, notes: null },
+      ],
+      tournament_sessions: [
+        { id: 21, tournament_id: 10, round_id: 50, day_number: 1, name: "Day 1", format: "four_ball_match", played_on: "2026-08-01", is_locked: false },
+      ],
+      tournament_matches: [
+        { id: 500, tournament_id: 10, session_id: 21, match_number: 1, group_number: 1, side_a_team_number: 1, side_b_team_number: 2, status: "pending", result: null, result_source: "engine", closed_out_hole: null, scorer_label: null, flagged_holes: [], admin_note: null },
+      ],
+      tournament_point_adjustments: [],
+      tournament_day_sides: [],
+    } as FakeData;
+  }
+
+  it("unpublished day with scores → Delete opens the scoped confirm modal with real counts; Cancel makes no change", async () => {
+    fakeRef.current = new FakeSupabase(dayWithScoresSeed(false));
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1");
+    // Wait for the day's pairings summary so the counts are populated.
+    await screen.findByText(/1 group · 2 players/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    // Modal names the exact scope: 1 match, 4 scores, 2 players.
+    expect(await screen.findByText(/Delete Day 1 \(Best Ball\)\?/)).toBeTruthy();
+    expect(
+      screen.getByText(/This permanently deletes 1 match and 4 scores from 2 players\. This can't be undone\./),
+    ).toBeTruthy();
+
+    // Cancel → modal closes, nothing deleted.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText(/Delete permanently/)).toBeNull());
+    expect((fakeRef.current.data.rounds as any[]).map((r) => r.id)).toContain(50);
+    expect((fakeRef.current.data.tournament_sessions as any[]).map((s) => s.id)).toContain(21);
+  });
+
+  it("unpublished day with scores → 'Delete permanently' force-deletes the whole day", async () => {
+    fakeRef.current = new FakeSupabase(dayWithScoresSeed(false));
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1");
+    await screen.findByText(/1 group · 2 players/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await screen.findByText(/Delete Day 1 \(Best Ball\)\?/);
+
+    // Wait out the DangerModal 1.5s safety delay, then confirm.
+    await new Promise((r) => setTimeout(r, 1700));
+    const confirm = screen.getByRole("button", { name: "Delete permanently" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+
+    // The whole day is gone: round, players, scores, session, matches.
+    await waitFor(() => expect((fakeRef.current.data.rounds as any[]).map((r) => r.id)).not.toContain(50));
+    expect((fakeRef.current.data.round_players as any[]).map((r) => r.id)).not.toContain(101);
+    expect((fakeRef.current.data.scores as any[])).toHaveLength(0);
+    expect((fakeRef.current.data.tournament_sessions as any[]).map((s) => s.id)).not.toContain(21);
+    expect((fakeRef.current.data.tournament_matches as any[]).map((m) => m.id)).not.toContain(500);
+  });
+
+  it("published day with scores → Delete still shows the 'remove scores first' block, no delete path", async () => {
+    fakeRef.current = new FakeSupabase(dayWithScoresSeed(true));
+    render(<Tournament allPlayers={PLAYERS} />);
+    await screen.findByText("Day 1");
+    await screen.findByText(/1 group · 2 players/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(
+      await screen.findByText(/Day 1 has scores entered and can't be deleted\. Remove the scores first\./),
+    ).toBeTruthy();
+    // No force-delete modal.
+    expect(screen.queryByText(/Delete permanently/)).toBeNull();
+    // Nothing deleted.
+    expect((fakeRef.current.data.rounds as any[]).map((r) => r.id)).toContain(50);
+  });
+
   it("Results panel forces a match result (Level 2) → result_source=admin", async () => {
     const holes18 = Array.from({ length: 18 }, (_, i) => ({ id: 100 + i, tee_id: 1, hole_number: i + 1, par: 4, stroke_index: i + 1, yardage: 350 }));
     fakeRef.current = new FakeSupabase({

@@ -61,9 +61,22 @@ a solution. R1 still needed.
 ---
 
 ### R3 — Guard the delete button — **PREVENT**
-`⬜`
+`🟡`
 A round that has scores, or was ever finalized, should refuse to delete. Reopen first, or
 nothing. This is the specific hole that let 07-27 happen.
+
+*Update 2026-08-06 (branch `s-tournament-day-delete`):* the tournament day-card delete now has
+a **scoped, confirm-gated escape hatch for UNPUBLISHED tournaments only**. When a sandbox
+tournament (`tournaments.is_published = false`) has a test day with scores, the admin can delete
+it via a two-tap `DangerModal` that names the exact scope (N matches, X scores, Y players); on
+confirm, one atomic cascading `rounds` delete removes the whole day. The mutation re-checks the
+invariants server-side (unpublished at mutation time, the round is tournament-owned —
+`rounds.tournament_id IS NOT NULL`, never a league round — and no sibling session shares the
+round). **The PUBLISHED path is unchanged:** a live-event day with real scores still refuses
+("remove the scores first"). So R3's core guard holds where the risk is; it is only relaxed in
+the sandbox, where there is no league or live-event data to lose. **Still parked:** R4
+(soft-delete + audit log) and any published-side deletion path. The self-serve **teardown
+button** (Decision log, 2026-07-28) remains gated on R3 (fully) + R4.
 
 ---
 
@@ -130,6 +143,7 @@ for a golf league. Revisit only if R1 proves unworkable.
 | 2026-07-28 | R10 | Declined. Cost and complexity out of proportion. |
 | 2026-07-28 | — | Autovacuum disabled on `rounds`, `round_players`, `scores` to preserve deleted rows pending a Supabase support response. **Must be re-enabled once that resolves.** |
 | 2026-07-28 | — | Phase 4 self-serve teardown button blocked from shipping until R3 and R4 are done. |
+| 2026-08-06 | R3 | Scoped escape hatch shipped (branch `s-tournament-day-delete`): unpublished tournament days with scores are deletable via a confirm-gated cascade; published path unchanged. R4 + published-side + teardown button still parked. |
 
 ---
 
