@@ -1091,12 +1091,12 @@ const heroBtn: React.CSSProperties = {
 };
 
 // Mock v4 .sc-hero (navy gradient): day · format + sub, the pairing (USA left /
-// blue, Canada right / red — on-dark colors), and the foot row = shotgun start
-// chip LEFT + two equal stacked buttons RIGHT.
-function ScHero({ loaded, startHole: _startHole }: { loaded: LoadedMatch; startHole: number }) {
+// blue, Canada right / red — on-dark colors), and the foot row = start-hole
+// chip LEFT (always shown; reads the ?? 1-resolved startHole so ordinary hole-1
+// rounds show "Hole 1") + two equal stacked buttons RIGHT.
+function ScHero({ loaded, startHole }: { loaded: LoadedMatch; startHole: number }) {
   const aNames = loaded.sideA.players.map((p) => p.displayName).join(" / ") || loaded.sideA.displayName;
   const bNames = loaded.sideB.players.map((p) => p.displayName).join(" / ") || loaded.sideB.displayName;
-  const showStart = loaded.match.start_hole != null; // shotgun only
   const groupLabel = groupLabelFor(loaded.match.group_number, loaded.match.group_label);
   const small: React.CSSProperties = { fontWeight: 400, opacity: 0.72, display: "block", marginTop: 2, color: "#cdd8e8" };
   return (
@@ -1119,14 +1119,10 @@ function ScHero({ loaded, startHole: _startHole }: { loaded: LoadedMatch; startH
         </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 13, gap: 10 }}>
-        {showStart ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "0.7rem", fontWeight: 600, background: T.gold, color: "#3a2d00", borderRadius: 7, padding: "6px 10px" }}>
-            🚩 Start: Hole {loaded.match.start_hole}
-            {groupLabel ? ` · Group ${groupLabel}` : ""}
-          </span>
-        ) : (
-          <span />
-        )}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: "0.7rem", fontWeight: 600, background: T.gold, color: "#3a2d00", borderRadius: 7, padding: "6px 10px" }}>
+          🚩 Start: Hole {startHole}
+          {groupLabel ? ` · Group ${groupLabel}` : ""}
+        </span>
         <span style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, width: 150 }}>
           <Link href="/tournament/dashboard" data-testid="scorecard-view-scoreboard" className={FOCUS_CLASS} style={heroBtn}>
             View scoreboard →
