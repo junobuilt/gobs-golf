@@ -96,6 +96,11 @@ export interface TournamentSession {
   // orthogonal to per-match `is_voided` — un-voiding a day never resurrects an
   // individually-voided match. NOT a deletion. Defaults false.
   is_voided: boolean;
+  // Migration 042. Percent of course handicap applied before the §2.1
+  // relative-to-lowest subtraction. NULL = format default: four-ball reads 100%
+  // (back-compat — see resolveTournamentAllowance), singles is always 100%, and
+  // greensomes ignores this column (its own 60/40 team handicap). CHECK 10–100.
+  handicap_allowance: number | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -213,6 +218,11 @@ export interface MatchInput {
   // margin. Omitted or 1 = an ordinary hole-1 start (identity order) — every
   // pre-shotgun path stays byte-identical.
   startHole?: number;
+  // Handicap allowance (migration 042): the session's raw `handicap_allowance`
+  // percent, or null/absent. The engine resolves it PER FORMAT via
+  // resolveTournamentAllowance (four-ball only; null ⇒ 100%). Omitted/null keeps
+  // every pre-042 match byte-identical, so existing fixtures need no change.
+  handicapAllowance?: number | null;
 }
 
 export interface MatchState {

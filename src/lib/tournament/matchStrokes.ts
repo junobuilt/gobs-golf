@@ -4,7 +4,12 @@
 // Pure: it only calls matchplay.ts (computeMatchStrokes / greensomesTeamHandicap)
 // on raw course handicaps — no Supabase, no score arithmetic.
 
-import { computeMatchStrokes, greensomesTeamHandicap } from "./matchplay";
+import {
+  computeMatchStrokes,
+  greensomesTeamHandicap,
+  resolveTournamentAllowance,
+  tournamentPlayingHandicap,
+} from "./matchplay";
 import type { SessionFormat } from "./types";
 
 export interface SideStrokes {
@@ -24,6 +29,10 @@ export function computeSideStrokes(
   format: SessionFormat,
   aCHs: ReadonlyArray<number | null>,
   bCHs: ReadonlyArray<number | null>,
+  // The session's raw handicap_allowance (migration 042), or null. Resolved per
+  // format via resolveTournamentAllowance — four-ball only; greensomes ignores
+  // it (60/40); singles is always 100%. Absent/null ⇒ 100% (back-compat).
+  sessionAllowance: number | null = null,
 ): SideStrokes {
   if (format === "greensomes") {
     const aCollapsed = greensomesTeamHandicap(aCHs[0] ?? null, aCHs[1] ?? null);
@@ -38,9 +47,15 @@ export function computeSideStrokes(
       bSideStrokes: msB,
     };
   }
-  // singles / four-ball: units are the individual players, PH = 100% CH; combine
-  // all players in aThenB order, compute, slice — matches matchplay's sideHoleNets.
-  const phs = [...aCHs, ...bCHs].map((c) => c ?? 0);
+  // singles / four-ball: units are the individual players. PH = CH × the format's
+  // allowance (singles 100%, four-ball the session value or 100%) via the shared
+  // resolveTournamentAllowance + tournamentPlayingHandicap — the SAME math
+  // matchplay's sideHoleNets uses, so preview and scored card can't diverge.
+  // Combine all players in aThenB order, compute, slice.
+  const allowance = resolveTournamentAllowance(format, sessionAllowance);
+  const phs = [...aCHs, ...bCHs].map(
+    (c) => tournamentPlayingHandicap(c, allowance) ?? 0,
+  );
   const ms = computeMatchStrokes(phs);
   return {
     aStrokes: ms.slice(0, aCHs.length),

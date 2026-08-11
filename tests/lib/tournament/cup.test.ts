@@ -18,7 +18,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
   };
 }
 function session(id: number): TournamentSession {
-  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false, is_voided: false };
+  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: "2026-08-01", is_locked: false, is_voided: false, handicap_allowance: null };
 }
 
 // A USA-win match (USA gross 3, Canada gross 5 → closes out, result side_a).

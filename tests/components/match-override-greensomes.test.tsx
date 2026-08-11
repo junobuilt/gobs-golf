@@ -23,7 +23,7 @@ import MatchOverridePanel from "@/app/admin/components/MatchOverridePanel";
 import type { Tournament, TournamentSession } from "@/lib/tournament/types";
 
 const TOURN: Tournament = { id: 1, name: "Cup", season_id: null, side_a_name: "USA", side_b_name: "Canada", holder_side: "b", started_on: "2026-08-01", ended_on: null, is_active: true, is_published: false, planned_match_total: null, notes: null };
-const SESSION: TournamentSession = { id: 8, tournament_id: 1, round_id: 60, day_number: 1, name: "Day 1 — Alternate Shot", format: "greensomes", played_on: "2026-08-01", is_locked: false, is_voided: false };
+const SESSION: TournamentSession = { id: 8, tournament_id: 1, round_id: 60, day_number: 1, name: "Day 1 — Alternate Shot", format: "greensomes", played_on: "2026-08-01", is_locked: false, is_voided: false, handicap_allowance: null };
 
 const holes = (teeId: number) => Array.from({ length: 18 }, (_, i) => ({ id: teeId * 100 + i, tee_id: teeId, hole_number: i + 1, par: 4, stroke_index: i + 1, yardage: 350 }));
 function teamAll(teamNumber: number, g: number, startId: number) {

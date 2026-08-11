@@ -9,7 +9,7 @@
 // uses MATCH strokes, so it legitimately differs from league net (which uses a
 // player's own allowance-adjusted CH).
 
-import { getHandicapStrokes } from "@/lib/scoring/handicap";
+import { getHandicapStrokes, getPlayingStrokes } from "@/lib/scoring/handicap";
 import type {
   HoleOutcome,
   MatchInput,
@@ -19,6 +19,7 @@ import type {
   MatchStatus,
   PointAdjustment,
   ResolvedResult,
+  SessionFormat,
   SidePoints,
   Standings,
   StandingsInPlayEntry,
@@ -42,6 +43,45 @@ export function greensomesTeamHandicap(
   const low = Math.min(a, b);
   const high = Math.max(a, b);
   return Math.round(0.6 * low + 0.4 * high);
+}
+
+// ── Handicap allowance (migration 042, 2026-08-10) ──────────────────────────
+// THE two-part single source of truth for scaling a course handicap by an
+// allowance percent before §2.1. Extracted so the engine (sideHoleNets) and the
+// loader/preview (computeSideStrokes) apply the SAME math from ONE place — doing
+// the multiply in both was the exact drift this had to avoid.
+//
+// `resolveTournamentAllowance` = the per-format POLICY. Reversal recorded
+// 2026-08-10 (see the sideHoleNets note): four-ball is now allowance-aware;
+// singles and greensomes are not.
+//   • singles_match  → always 100 (USGA-correct full course handicap; UNCHANGED).
+//   • four_ball_match → the session's `handicap_allowance`, or 100 when unset.
+//       Migration 042 is nullable and did NOT backfill, so every pre-042 row —
+//       including tournament 5's already-scored session 26 — reads NULL ⇒ 100,
+//       leaving scored history byte-identical (Decision A, 2026-08-10). 90% is
+//       the value the forthcoming admin control must WRITE at four-ball session
+//       creation; it is NOT a reader default, so a newly-created NULL session
+//       still reads 100 until that UI ships (carry-forward item in STATUS.md).
+//   • greensomes     → this path is never taken: greensomes collapses to the
+//       60/40 `greensomesTeamHandicap` on raw CH and ignores the allowance
+//       entirely. Returns 100 (the identity) purely so the function is total.
+export function resolveTournamentAllowance(
+  format: SessionFormat,
+  sessionAllowance: number | null | undefined,
+): number {
+  if (format === "four_ball_match") return sessionAllowance ?? 100;
+  return 100; // singles_match (USGA full CH) and greensomes (60/40, allowance-free)
+}
+
+// `tournamentPlayingHandicap` = the MATH. Delegates to the league allocator's
+// getPlayingStrokes so tournament rounding is identical to league net
+// (Math.round(CH × allowance / 100)); null CH stays null. The 100% case is the
+// identity on the stored (already-rounded) course handicap.
+export function tournamentPlayingHandicap(
+  courseHandicap: number | null,
+  allowance: number,
+): number | null {
+  return getPlayingStrokes(courseHandicap, allowance);
 }
 
 // ── Match strokes (§2.1) ────────────────────────────────────────────────────
@@ -117,14 +157,22 @@ function sideHoleNets(input: MatchInput): {
     return { a: teamNets(sideA.teamGross, msA), b: teamNets(sideB.teamGross, msB) };
   }
 
-  // singles_match + four_ball_match: the UNITS are the individual players, and
-  // PH = 100% of course handicap. For four-ball USGA prescribes 90% — the 100%
-  // here is a DELIBERATE league departure (Dad's worked example). Singles at
-  // 100% is NOT a departure: USGA prescribes full course handicap for singles
-  // match play, then strokes off the low player. Do not "fix" singles to 90%.
+  // singles_match + four_ball_match: the UNITS are the individual players. PH =
+  // course handicap × the format's allowance (resolveTournamentAllowance), then
+  // §2.1 strokes off the low unit.
+  //   • singles_match  → 100% (USGA-correct full course handicap; UNCHANGED).
+  //   • four_ball_match → the session allowance, defaulting to 100% when unset.
+  // REVERSAL (2026-08-10): four-ball was previously pinned to 100% as a
+  // deliberate league departure from USGA's 90%. The league admin reversed that:
+  // four-ball is now a configurable allowance (target 90%, written per session),
+  // so this branch scales CH by it. Singles stays 100% — do NOT "fix" it to 90%.
+  // Greensomes is handled above (60/40 team handicap) and ignores the allowance.
   const aPlayers = sideA.players;
   const bPlayers = sideB.players;
-  const phs = [...aPlayers, ...bPlayers].map((p) => p.courseHandicap ?? 0);
+  const allowance = resolveTournamentAllowance(format, input.handicapAllowance);
+  const phs = [...aPlayers, ...bPlayers].map(
+    (p) => tournamentPlayingHandicap(p.courseHandicap, allowance) ?? 0,
+  );
   const ms = computeMatchStrokes(phs);
   const aMs = ms.slice(0, aPlayers.length);
   const bMs = ms.slice(aPlayers.length);

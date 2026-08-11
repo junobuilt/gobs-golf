@@ -73,7 +73,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
   };
 }
 function session(id: number, day: number, format: TournamentSession["format"], playedOn: string): TournamentSession {
-  return { id, tournament_id: 1, round_id: 100 + id, day_number: day, name: `Day ${day}`, format, played_on: playedOn, is_locked: false, is_voided: false };
+  return { id, tournament_id: 1, round_id: 100 + id, day_number: day, name: `Day ${day}`, format, played_on: playedOn, is_locked: false, is_voided: false, handicap_allowance: null };
 }
 
 async function flush() {

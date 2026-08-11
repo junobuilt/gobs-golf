@@ -149,9 +149,12 @@ export class MockDb {
     }
 
     // Migration 041: tournament_sessions.is_voided NOT NULL DEFAULT false.
+    // Migration 042: tournament_sessions.handicap_allowance nullable (default NULL
+    // ⇒ four-ball reads 100%). Defaulted here so reads carry the column.
     if (effective.tournament_sessions) {
       effective.tournament_sessions = effective.tournament_sessions.map((s) => ({
         is_voided: false,
+        handicap_allowance: null,
         ...s,
       }));
     }

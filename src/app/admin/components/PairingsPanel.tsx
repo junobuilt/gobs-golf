@@ -407,6 +407,7 @@ export default function PairingsPanel({ session, tournament, onClose }: Props) {
         <GroupBuilder
           mode="add"
           format={format}
+          allowance={session.handicap_allowance}
           roster={roster}
           groupedIds={groupedIds}
           tees={tees}
@@ -829,6 +830,7 @@ interface Draft {
 
 function GroupBuilder({
   format,
+  allowance,
   roster,
   groupedIds,
   tees,
@@ -839,6 +841,9 @@ function GroupBuilder({
 }: {
   mode: "add";
   format: SessionFormat;
+  // Session handicap_allowance (042) so the live strokes preview matches the
+  // scored card. null ⇒ 100% (four-ball back-compat; singles/greensomes ignore).
+  allowance: number | null;
   roster: Roster;
   groupedIds: Set<number>;
   tees: TeeRow[];
@@ -878,21 +883,21 @@ function GroupBuilder({
     if (format === "singles_match") {
       for (let i = 0; i < slots; i++) {
         if (aIds[i] == null || bIds[i] == null) continue; // strokes need both sides
-        const r = computeSideStrokes("singles_match", [chOf(aIds[i])], [chOf(bIds[i])]);
+        const r = computeSideStrokes("singles_match", [chOf(aIds[i])], [chOf(bIds[i])], allowance);
         aStrokes[i] = r.aStrokes[0] ?? 0;
         bStrokes[i] = r.bStrokes[0] ?? 0;
       }
     } else {
       const aFilled = aIds.map((id, i) => ({ id, i })).filter((x) => x.id != null);
       const bFilled = bIds.map((id, i) => ({ id, i })).filter((x) => x.id != null);
-      const r = computeSideStrokes(format, aFilled.map((x) => chOf(x.id)), bFilled.map((x) => chOf(x.id)));
+      const r = computeSideStrokes(format, aFilled.map((x) => chOf(x.id)), bFilled.map((x) => chOf(x.id)), allowance);
       aFilled.forEach((x, k) => (aStrokes[x.i] = r.aStrokes[k] ?? 0));
       bFilled.forEach((x, k) => (bStrokes[x.i] = r.bStrokes[k] ?? 0));
       aCollapsed = r.aCollapsed;
       bCollapsed = r.bCollapsed;
     }
     return { aStrokes, bStrokes, aCollapsed, bCollapsed };
-  }, [aIds, bIds, teeId, format]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [aIds, bIds, teeId, format, allowance]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalPicked = picked.size;
 

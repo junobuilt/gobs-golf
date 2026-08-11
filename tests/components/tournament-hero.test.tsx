@@ -33,7 +33,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
   };
 }
 function session(id: number, playedOn: string): TournamentSession {
-  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: playedOn, is_locked: false, is_voided: false };
+  return { id, tournament_id: 1, round_id: 100 + id, day_number: 1, name: "Day 1", format: "singles_match", played_on: playedOn, is_locked: false, is_voided: false, handicap_allowance: null };
 }
 function data(): DashboardData {
   const live = makeLoaded({ id: 500, format: "singles_match", a: [{ playerId: 1, ch: 0, scored: { 1: 3, 2: 3, 3: 4 } }], b: [{ playerId: 2, ch: 0, scored: { 1: 5, 2: 5, 3: 4 } }] });

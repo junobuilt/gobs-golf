@@ -57,7 +57,7 @@ function tournament(overrides: Partial<Tournament> = {}): Tournament {
   };
 }
 function session(id: number, day: number, playedOn: string): TournamentSession {
-  return { id, tournament_id: 1, round_id: 100 + id, day_number: day, name: `Day ${day}`, format: "singles_match", played_on: playedOn, is_locked: false, is_voided: false };
+  return { id, tournament_id: 1, round_id: 100 + id, day_number: day, name: `Day ${day}`, format: "singles_match", played_on: playedOn, is_locked: false, is_voided: false, handicap_allowance: null };
 }
 
 // Match 500: USA 2 UP live (wins 1,2, halves 3). 501: decided USA. 502: pending.

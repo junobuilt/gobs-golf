@@ -115,6 +115,7 @@ interface SessionRow {
   format: SessionFormat;
   played_on: string | null;
   is_voided: boolean; // migration 041 — day-level void
+  handicap_allowance: number | null; // migration 042 — four-ball allowance (null ⇒ 100%)
 }
 
 export interface TournamentNameRow {
@@ -176,6 +177,8 @@ function assembleMatch(
     sideB: sideBInput,
     // Shotgun (039): walk the group's play order. null/absent → hole-1 start.
     startHole: match.start_hole ?? 1,
+    // Allowance (042): the session's raw value; the engine resolves per format.
+    handicapAllowance: session.handicap_allowance,
   };
   const state = computeMatchState(matchInput);
   const resolved = resolveMatchResult(state, { result_source: match.result_source, result: match.result });
@@ -186,6 +189,7 @@ function assembleMatch(
     format,
     aRps.map((rp) => rp.course_handicap),
     bRps.map((rp) => rp.course_handicap),
+    session.handicap_allowance,
   );
 
   const toLoadedPlayer = (rp: RoundPlayerRow, strokes: number): LoadedMatchPlayer => ({
@@ -332,7 +336,7 @@ async function loadTeamScores(roundId: number | null): Promise<Map<number, (numb
 async function loadSessionRow(sessionId: number): Promise<SessionRow | null> {
   const res = await supabase
     .from("tournament_sessions")
-    .select("id, tournament_id, round_id, day_number, name, format, played_on, is_voided")
+    .select("id, tournament_id, round_id, day_number, name, format, played_on, is_voided, handicap_allowance")
     .eq("id", sessionId)
     .maybeSingle();
   return (unwrap(res, "tournament_sessions") as SessionRow | null) ?? null;
