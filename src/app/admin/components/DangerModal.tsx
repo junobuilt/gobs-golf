@@ -102,6 +102,7 @@ export default function DangerModal({
 
         <div style={{ display: "flex", gap: "12px" }}>
           <button
+            data-testid="danger-cancel"
             onClick={onCancel}
             style={{
               flex: 1, padding: "13px", borderRadius: "10px",
@@ -113,6 +114,7 @@ export default function DangerModal({
             Cancel
           </button>
           <button
+            data-testid="danger-confirm"
             onClick={onConfirm}
             disabled={!enabled}
             style={{

@@ -154,6 +154,7 @@ export class MockDb {
     if (effective.tournament_sessions) {
       effective.tournament_sessions = effective.tournament_sessions.map((s) => ({
         is_voided: false,
+        is_locked: false,
         handicap_allowance: null,
         ...s,
       }));

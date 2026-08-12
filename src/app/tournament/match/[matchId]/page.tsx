@@ -39,6 +39,8 @@ import { TOURNAMENT_TOKENS as T, SIDE_TOKENS, CHROME_GRADIENT, FOCUS_CLASS } fro
 import { HoleDotRail, HolePrevNext } from "./MatchHoleNav";
 import MatchClosedBanner from "./MatchClosedBanner";
 import MatchReviewGrid from "./MatchReviewGrid";
+import DangerModal from "@/app/admin/components/DangerModal";
+import { useIsAdminSession } from "@/lib/useIsAdminSession";
 
 // The status-line color for a matchStatus tone (usa=blue A up, canada=red C up,
 // square/pre=neutral). One mapping so the scorecard status matches the scoreboard.
@@ -421,6 +423,62 @@ export default function MatchScorecardPage() {
     [claimIfUnclaimed, clearFlagIfOnHole],
   );
 
+  // Admin Clear hole (individual formats). DELIBERATELY does NOT claim scoring
+  // (no claimIfUnclaimed) — an admin must be able to fix one hole from his own
+  // phone without stripping the claim from whoever is scoring that match. The
+  // optimistic removal drops the hole from local state so the engine recomputes
+  // (status / dots / nav / points, incl. reopening an auto-closed match); the
+  // queue clear op deletes the row so the hole reads as "not played" (never a 0).
+  const clearPlayerScore = useCallback(
+    (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number) => {
+      setScoresByMatch((prev) => {
+        const cur = prev[m.match.id] ?? initOptimisticScores(m);
+        const nextForPlayer = { ...cur.byPlayer[playerId] };
+        delete nextForPlayer[hole];
+        return {
+          ...prev,
+          [m.match.id]: { ...cur, byPlayer: { ...cur.byPlayer, [playerId]: nextForPlayer } },
+        };
+      });
+      const roundId = m.session.roundId;
+      if (roundId != null) {
+        getWriteQueue().enqueue(
+          { round_id: roundId, round_player_id: roundPlayerId, hole_number: hole, strokes: 0, op: "clear" },
+          { player_name: displayForPlayer(m, playerId), hole_label: `Hole ${hole}` },
+        );
+      }
+    },
+    [],
+  );
+
+  // Admin Clear hole (greensomes) — clears the SIDE's collapsed team score. Same
+  // no-claim rule + optimistic removal + queue clear op as the per-player path.
+  const clearTeamScore = useCallback(
+    (m: LoadedMatch, side: Side, teamNumber: number, hole: number) => {
+      setScoresByMatch((prev) => {
+        const cur = prev[m.match.id] ?? initOptimisticScores(m);
+        const nextForSide = { ...cur.teamGross[side] };
+        delete nextForSide[hole];
+        return {
+          ...prev,
+          [m.match.id]: { ...cur, teamGross: { ...cur.teamGross, [side]: nextForSide } },
+        };
+      });
+      const roundId = m.session.roundId;
+      if (roundId != null) {
+        getTeamWriteQueue().enqueue(
+          { round_id: roundId, team_number: teamNumber, hole_number: hole, ball_index: 1, strokes: 0, op: "clear" },
+          { player_name: side === "a" ? m.sideA.displayName : m.sideB.displayName, hole_label: `Hole ${hole}` },
+        );
+      }
+    },
+    [],
+  );
+
+  // Is this device an admin? Gates the Clear control (default closed; the button
+  // is absent from the DOM for non-admins). Not tied to the scorer claim.
+  const isAdmin = useIsAdminSession();
+
   if (state.kind === "loading") {
     return <Shell><p style={{ color: "#6b7280" }}>Loading match…</p></Shell>;
   }
@@ -542,6 +600,9 @@ export default function MatchScorecardPage() {
             onSetPlayer={setPlayerScore}
             onSetTeam={setTeamScore}
             onJumpToHole={setCurrentHole}
+            isAdmin={isAdmin}
+            onClearPlayer={clearPlayerScore}
+            onClearTeam={clearTeamScore}
           />
         );
       })}
@@ -578,6 +639,9 @@ function MatchCard({
   onSetPlayer,
   onSetTeam,
   onJumpToHole,
+  isAdmin,
+  onClearPlayer,
+  onClearTeam,
 }: {
   loaded: LoadedMatch;
   scores: OptimisticScores;
@@ -593,6 +657,9 @@ function MatchCard({
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void;
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void;
   onJumpToHole: (hole: number) => void;
+  isAdmin: boolean;
+  onClearPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number) => void;
+  onClearTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number) => void;
 }) {
   // Single source of truth: recompute the canonical state locally from the same
   // pure engine the loader calls, over the optimistic scores. Never our own math.
@@ -600,6 +667,19 @@ function MatchCard({
   // respond instantly.
   const state = useMemo(() => recomputeState(loaded, scores), [loaded, scores]);
   const [reviewOpen, setReviewOpen] = useState(false);
+
+  // Admin Clear hole — a pending confirm (scope named) and the post-clear toast.
+  // Clear is gated on isAdmin ONLY, never on the scorer claim: the admin fixes a
+  // hole from his own phone without seizing the claim. A locked (finalised) round
+  // disables it (voided matches never reach here — they short-circuit above).
+  const roundLocked = loaded.session.isLocked;
+  const [clearReq, setClearReq] = useState<ClearReq | null>(null);
+  const [clearToast, setClearToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (clearToast == null) return;
+    const t = setTimeout(() => setClearToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [clearToast]);
 
   // Spec 2 item 1 — the terminal "match over" banner must NOT fire on every
   // keystroke while a 60–80 player is still tapping strokes onto the current
@@ -846,8 +926,57 @@ function MatchCard({
           nav circle (and the "Hole results" strip in the review section) show who
           won each hole. */}
       {loaded.session.format === "greensomes"
-        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam, !iAmScorer)
-        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer, !iAmScorer)}
+        ? renderGreensomes(loaded, scores, hole, holeMeta, onSetTeam, !iAmScorer, {
+            isAdmin,
+            locked: roundLocked,
+            onRequestClear: setClearReq,
+            onClearTeam,
+          })
+        : renderIndividual(loaded, scores, hole, holeMeta, state, onSetPlayer, !iAmScorer, {
+            isAdmin,
+            locked: roundLocked,
+            onRequestClear: setClearReq,
+            onClearPlayer,
+          })}
+
+      {/* Admin Clear-hole confirm (scope named) + toast. Reuses the project's
+          DangerModal (1.5s arm delay, Cancel-safe) — the deletion-gate pattern. */}
+      {clearReq && (
+        <DangerModal
+          title="Clear this hole?"
+          description={`Clear ${clearReq.label}, hole ${clearReq.hole} — ${clearReq.strokes} strokes?`}
+          cannotBeUndone={false}
+          confirmLabel="Clear"
+          onCancel={() => setClearReq(null)}
+          onConfirm={() => {
+            clearReq.run();
+            setClearToast(`Hole ${clearReq.hole} cleared for ${clearReq.label}.`);
+            setClearReq(null);
+          }}
+        />
+      )}
+      {clearToast && (
+        <div
+          data-testid={`clear-toast-${loaded.match.id}`}
+          role="status"
+          style={{
+            position: "fixed",
+            left: "50%",
+            bottom: 24,
+            transform: "translateX(-50%)",
+            background: "#0c3057",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "10px 16px",
+            fontSize: "0.85rem",
+            fontWeight: 600,
+            boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
+            zIndex: 1100,
+          }}
+        >
+          {clearToast}
+        </div>
+      )}
 
       {/* §C — read-only 18-hole review grid (paper verification: gross + dots per
           unit, which the win/loss HoleStrip doesn't show). Collapsed by default. */}
@@ -883,6 +1012,25 @@ function MatchCard({
   );
 }
 
+// A pending admin Clear request (scope for the confirm modal + the run action).
+type ClearReq = { label: string; hole: number; strokes: number; run: () => void };
+
+// Admin Clear wiring passed down to the entry rows. `onRequestClear` opens the
+// confirm; `locked` disables it on a finalised round; `isAdmin` decides whether
+// the control is in the DOM at all.
+interface ClearOptsIndividual {
+  isAdmin: boolean;
+  locked: boolean;
+  onRequestClear: (req: ClearReq) => void;
+  onClearPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number) => void;
+}
+interface ClearOptsTeam {
+  isAdmin: boolean;
+  locked: boolean;
+  onRequestClear: (req: ClearReq) => void;
+  onClearTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number) => void;
+}
+
 // Alternate shot (§4.1): one score box per side; both partner names; collapsed
 // team handicap; dots from the SIDE's collapsed match strokes (Decision B).
 function renderGreensomes(
@@ -892,6 +1040,7 @@ function renderGreensomes(
   holeMeta: { par: number; strokeIndex: number },
   onSetTeam: (m: LoadedMatch, side: Side, teamNumber: number, hole: number, value: number) => void,
   readOnly: boolean,
+  clear: ClearOptsTeam,
 ) {
   const row = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
@@ -912,6 +1061,16 @@ function renderGreensomes(
           net={net}
           disabled={readOnly}
           onSet={(v) => onSetTeam(loaded, side, ls.teamNumber, hole, v)}
+          showClear={clear.isAdmin}
+          clearEnabled={gross != null && !clear.locked}
+          onClear={() =>
+            clear.onRequestClear({
+              label: ls.displayName,
+              hole,
+              strokes: gross ?? 0,
+              run: () => clear.onClearTeam(loaded, side, ls.teamNumber, hole),
+            })
+          }
         />
       </TeamBlock>
     );
@@ -934,6 +1093,7 @@ function renderIndividual(
   state: ReturnType<typeof recomputeState>,
   onSetPlayer: (m: LoadedMatch, playerId: number, roundPlayerId: number, hole: number, value: number) => void,
   readOnly: boolean,
+  clear: ClearOptsIndividual,
 ) {
   const sideRow = (side: Side) => {
     const ls = side === "a" ? loaded.sideA : loaded.sideB;
@@ -967,6 +1127,16 @@ function renderIndividual(
                 counting={marks[i]}
                 disabled={readOnly}
                 onSet={(v) => onSetPlayer(loaded, p.playerId, p.roundPlayerId, hole, v)}
+                showClear={clear.isAdmin}
+                clearEnabled={gross != null && !clear.locked}
+                onClear={() =>
+                  clear.onRequestClear({
+                    label: p.displayName,
+                    hole,
+                    strokes: gross ?? 0,
+                    run: () => clear.onClearPlayer(loaded, p.playerId, p.roundPlayerId, hole),
+                  })
+                }
               />
             </div>
           );
@@ -1046,6 +1216,9 @@ function EntryRow({
   counting,
   disabled,
   onSet,
+  showClear = false,
+  clearEnabled = false,
+  onClear,
 }: {
   testid: string;
   // The side this row belongs to — drives the stroke-dot color so a Canada
@@ -1059,6 +1232,12 @@ function EntryRow({
   counting?: boolean;
   disabled?: boolean;
   onSet: (value: number) => void;
+  // Admin Clear hole. showClear=false ⇒ the control is NOT rendered at all (a
+  // non-admin device has no way to reach it — not hidden, absent). clearEnabled
+  // greys it when the cell is already blank or the round is finalised.
+  showClear?: boolean;
+  clearEnabled?: boolean;
+  onClear?: () => void;
 }) {
   return (
     <div data-testid={testid} style={{ display: "flex", alignItems: "center", gap: "14px" }}>
@@ -1070,16 +1249,41 @@ function EntryRow({
         </div>
         <TeamHoleEntry ballCount={1} balls={[gross]} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", color: T.muted }}>
-        <span>Net</span>
-        <span style={{ fontWeight: 700, color: T.ink, display: "inline-flex", alignItems: "center", minHeight: "22px" }}>
-          {net == null ? "—" : <ScoreMark delta={net - par} score={net} />}
-        </span>
-        {net != null && <span>· {netTerm(net, par)}</span>}
-        {counting && (
-          <span data-testid={`${testid}-counting`} title="Counting ball" style={{ color: T.ok, fontWeight: 900 }}>
-            ←
+      {/* Right column: Net on top, admin Clear below (spec placement). */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", color: T.muted }}>
+          <span>Net</span>
+          <span style={{ fontWeight: 700, color: T.ink, display: "inline-flex", alignItems: "center", minHeight: "22px" }}>
+            {net == null ? "—" : <ScoreMark delta={net - par} score={net} />}
           </span>
+          {net != null && <span>· {netTerm(net, par)}</span>}
+          {counting && (
+            <span data-testid={`${testid}-counting`} title="Counting ball" style={{ color: T.ok, fontWeight: 900 }}>
+              ←
+            </span>
+          )}
+        </div>
+        {showClear && (
+          <button
+            type="button"
+            data-testid={`${testid}-clear`}
+            disabled={!clearEnabled}
+            onClick={() => clearEnabled && onClear?.()}
+            style={{
+              alignSelf: "flex-start",
+              background: "none",
+              border: "none",
+              padding: 0,
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              color: clearEnabled ? "#c0392b" /* design-system danger */ : T.muted,
+              opacity: clearEnabled ? 1 : 0.5,
+              cursor: clearEnabled ? "pointer" : "default",
+              textDecoration: "underline",
+            }}
+          >
+            Clear
+          </button>
         )}
       </div>
     </div>

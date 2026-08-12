@@ -60,12 +60,14 @@ export interface PendingScore {
   round_player_id: number;
   hole_number: number;
   strokes: number;
+  op?: "upsert" | "clear"; // "clear" = a pending admin clear (removes the hole).
 }
 export interface PendingTeamScore {
   round_id: number;
   team_number: number;
   hole_number: number;
   strokes: number;
+  op?: "upsert" | "clear";
 }
 
 // Reconcile = load-then-overlay (the league card's pattern): server truth as the
@@ -100,6 +102,12 @@ export function overlayPending(
     const playerId = rpToPlayer.get(it.round_player_id);
     if (playerId == null) continue;
     if (it.hole_number < 1 || it.hole_number > 18) continue;
+    // A pending clear removes the hole (a stale upsert may still sit in server
+    // truth until the clear drains — the overlay must reflect the clear now).
+    if (it.op === "clear") {
+      if (byPlayer[playerId]) delete byPlayer[playerId][it.hole_number];
+      continue;
+    }
     (byPlayer[playerId] ??= {})[it.hole_number] = it.strokes;
   }
   for (const it of pendingTeam) {
@@ -112,6 +120,10 @@ export function overlayPending(
           : null;
     if (side == null) continue;
     if (it.hole_number < 1 || it.hole_number > 18) continue;
+    if (it.op === "clear") {
+      delete teamGross[side][it.hole_number];
+      continue;
+    }
     teamGross[side][it.hole_number] = it.strokes;
   }
 

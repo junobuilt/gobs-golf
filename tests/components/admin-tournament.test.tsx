@@ -342,12 +342,10 @@ describe("admin Tournament tab", () => {
     expect(await screen.findByText(/won’t count toward the cup/)).toBeTruthy();
     expect(screen.queryByText(/cannot be undone/i)).toBeNull();
 
-    // Wait out the 1.5s safety delay, then confirm via the modal button (the one
-    // WITHOUT the card's data-testid).
+    // Wait out the 1.5s safety delay, then confirm via the modal's confirm button
+    // (DangerModal exposes data-testid="danger-confirm").
     await new Promise((r) => setTimeout(r, 1700));
-    const modalConfirm = screen
-      .getAllByRole("button", { name: "Void day" })
-      .find((b) => !(b as HTMLElement).dataset.testid)!;
+    const modalConfirm = screen.getByTestId("danger-confirm");
     await waitFor(() => expect(modalConfirm).toBeEnabled());
     fireEvent.click(modalConfirm);
 

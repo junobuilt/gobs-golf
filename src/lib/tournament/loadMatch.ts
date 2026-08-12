@@ -115,6 +115,7 @@ interface SessionRow {
   format: SessionFormat;
   played_on: string | null;
   is_voided: boolean; // migration 041 — day-level void
+  is_locked: boolean; // day/round lock (finalised) — gates admin Clear hole
   handicap_allowance: number | null; // migration 042 — four-ball allowance (null ⇒ 100%)
 }
 
@@ -243,6 +244,7 @@ function assembleMatch(
       playedOn: session.played_on,
       roundId: session.round_id,
       isVoided: session.is_voided,
+      isLocked: session.is_locked,
     },
     tournament: { id: tournament.id, sideAName: tournament.side_a_name, sideBName: tournament.side_b_name },
     sideA,
@@ -336,7 +338,7 @@ async function loadTeamScores(roundId: number | null): Promise<Map<number, (numb
 async function loadSessionRow(sessionId: number): Promise<SessionRow | null> {
   const res = await supabase
     .from("tournament_sessions")
-    .select("id, tournament_id, round_id, day_number, name, format, played_on, is_voided, handicap_allowance")
+    .select("id, tournament_id, round_id, day_number, name, format, played_on, is_voided, is_locked, handicap_allowance")
     .eq("id", sessionId)
     .maybeSingle();
   return (unwrap(res, "tournament_sessions") as SessionRow | null) ?? null;

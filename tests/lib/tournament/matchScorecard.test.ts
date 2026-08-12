@@ -143,7 +143,7 @@ function makeLoaded(opts: {
       admin_note: null,
       is_voided: false,
     },
-    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: false },
+    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: false, isLocked: false },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },
     sideA,
     sideB,
@@ -409,6 +409,42 @@ describe("matchScorecard — overlayPending", () => {
     const out = overlayPending(loaded, base, [], [{ round_id: 50, team_number: 2, hole_number: 1, strokes: 5 }]);
     expect(out.teamGross.a[1]).toBe(4); // server kept
     expect(out.teamGross.b[1]).toBe(5); // pending team applied (team 2 → side b)
+  });
+
+  it("a pending CLEAR op removes the player's hole from server truth", () => {
+    const loaded = makeLoaded({
+      format: "four_ball_match",
+      a: [{ playerId: 1, ch: 0, scored: { 1: 4 } }, { playerId: 2, ch: 0, scored: {} }],
+      b: [{ playerId: 3, ch: 0, scored: { 1: 5 } }, { playerId: 4, ch: 0, scored: {} }],
+    });
+    const base = initOptimisticScores(loaded); // server: P1 hole1 = 4
+    // A queued admin clear for P1 (round_player_id 1001) hole 1 must REMOVE it —
+    // the stale server value must not survive the un-drained clear.
+    const out = overlayPending(
+      loaded,
+      base,
+      [{ round_id: 50, round_player_id: 1001, hole_number: 1, strokes: 0, op: "clear" }],
+      [],
+    );
+    expect(out.byPlayer[1][1]).toBeUndefined();
+  });
+
+  it("a pending CLEAR op removes the side's team hole (greensomes)", () => {
+    const loaded = makeLoaded({
+      format: "greensomes",
+      a: [{ playerId: 1, ch: 5, scored: {} }, { playerId: 2, ch: 15, scored: {} }],
+      b: [{ playerId: 3, ch: 10, scored: {} }, { playerId: 4, ch: 20, scored: {} }],
+      teamA: { 1: 4 },
+      teamB: {},
+    });
+    const base = initOptimisticScores(loaded); // server: side a hole1 = 4
+    const out = overlayPending(
+      loaded,
+      base,
+      [],
+      [{ round_id: 50, team_number: 1, hole_number: 1, strokes: 0, op: "clear" }],
+    );
+    expect(out.teamGross.a[1]).toBeUndefined();
   });
 });
 

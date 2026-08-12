@@ -82,6 +82,23 @@ export function resetWriteQueueForTesting(): void {
 
 const supabaseUpsertWriter = async (item: QueueItem<ScorePayload>): Promise<WriteResult> => {
   try {
+    // Admin Clear hole (explicit op): DELETE the row so the hole reads as "not
+    // played" — a 0 would score as a real stroke. Deleting an absent row is a
+    // success no-op. Same key as the upsert onConflict target.
+    if (item.payload.op === "clear") {
+      const { error } = await supabase
+        .from("scores")
+        .delete()
+        .eq("round_player_id", item.payload.round_player_id)
+        .eq("hole_number", item.payload.hole_number);
+      if (!error) return { success: true };
+      return {
+        success: false,
+        classification: classifySupabaseError(error),
+        terminalReason: getTerminalReason(error),
+        error,
+      };
+    }
     const { error } = await supabase
       .from("scores")
       .upsert(
@@ -111,6 +128,24 @@ const supabaseUpsertWriter = async (item: QueueItem<ScorePayload>): Promise<Writ
 // direct team-card upsert — but now durable/retrying under the queue.
 const teamScoreUpsertWriter = async (item: QueueItem<TeamScorePayload>): Promise<WriteResult> => {
   try {
+    // Admin Clear hole (greensomes): DELETE the collapsed team score by its
+    // 4-col UNIQUE key — the exact mirror of the per-player clear above.
+    if (item.payload.op === "clear") {
+      const { error } = await supabase
+        .from("team_scores")
+        .delete()
+        .eq("round_id", item.payload.round_id)
+        .eq("team_number", item.payload.team_number)
+        .eq("hole_number", item.payload.hole_number)
+        .eq("ball_index", item.payload.ball_index);
+      if (!error) return { success: true };
+      return {
+        success: false,
+        classification: classifySupabaseError(error),
+        terminalReason: getTerminalReason(error),
+        error,
+      };
+    }
     const { error } = await supabase
       .from("team_scores")
       .upsert(

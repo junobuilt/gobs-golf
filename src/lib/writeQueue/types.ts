@@ -1,11 +1,20 @@
 // Public types for the write queue. Kept in a leaf module so Phase C
 // can import only the types it needs from the scorecard.
 
+// `op` is the EXPLICIT destructive marker (admin Clear hole). Absent or
+// "upsert" = write `strokes` (every pre-existing enqueue is unchanged).
+// "clear" = DELETE the row for this key — a destructive op must be requested
+// explicitly, never inferred from a missing/zero value (a 0 is a real score;
+// row-absence is what "hole not played" keys off). `strokes` still carries the
+// value being cleared so the toast/display can name it; the writer ignores it.
+export type ScoreOp = "upsert" | "clear";
+
 export interface ScorePayload {
   round_id: number;
   round_player_id: number;
   hole_number: number;
   strokes: number;
+  op?: ScoreOp;
 }
 
 // Tournament greensomes (alternate shot) writes one collapsed team score per
@@ -22,6 +31,7 @@ export interface TeamScorePayload {
   hole_number: number;
   ball_index: number;
   strokes: number;
+  op?: ScoreOp; // see ScorePayload.op — "clear" deletes the team_scores row.
 }
 
 export type QueueKind = "score_upsert" | "team_score_upsert";

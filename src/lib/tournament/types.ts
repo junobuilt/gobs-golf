@@ -353,6 +353,9 @@ export interface LoadedMatch {
     // match-level predicate (isMatchExcluded, cup.ts) can see both the match's
     // own void and its day's void.
     isVoided: boolean;
+    // The day's lock (finalised) state. Surfaced so the admin Clear-hole control
+    // is disabled on a finalised round (scores frozen).
+    isLocked: boolean;
   };
   tournament: { id: number; sideAName: string; sideBName: string };
   sideA: LoadedMatchSide;

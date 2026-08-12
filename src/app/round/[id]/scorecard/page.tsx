@@ -580,6 +580,14 @@ export default function ScorecardPage() {
         for (const item of queueItems) {
           if (item.state === "terminal_failure") continue;
           if (item.payload.round_id !== Number(roundId)) continue;
+          // A pending admin clear removes the hole rather than overlaying a value
+          // (the shared queue may carry a clear op; never resurrect the score).
+          if (item.payload.op === "clear") {
+            if (scoreMap[item.payload.round_player_id]) {
+              delete scoreMap[item.payload.round_player_id][item.payload.hole_number];
+            }
+            continue;
+          }
           if (!scoreMap[item.payload.round_player_id]) {
             scoreMap[item.payload.round_player_id] = {};
           }
