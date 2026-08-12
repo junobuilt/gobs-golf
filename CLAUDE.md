@@ -45,6 +45,10 @@ with the question instead. This is a standing rule: Claude Code never uses
 interactive desktop prompts while Jonathan may be on mobile — route every
 question to chat / the Dispatch reply path. (Reconfirmed 2026-08-03, S1.)
 
+**When relaying specs, ask all clarifying questions through the chat / Dispatch
+reply path. Never use `AskUserQuestion` or any interactive desktop prompt.**
+(Restated 2026-08-11, admin-clear-hole.)
+
 ### Deletion gate (iron-clad)
 
 **No deletion of any data — rounds, round_players, scores, tournament
@@ -147,6 +151,10 @@ fetch it alongside `ROADMAP.md` before doing anything else.
   inline every statement verbatim — no file-reference placeholders or "paste
   the function body from migration X here" stubs — because the MCP relay path
   cannot read repo files.
+- **Regenerate `schema.sql` after every migration, in the same commit.**
+  Batching migrations makes harmless formatting diffs look like real drift.
+  (Added 2026-08-11, admin-clear-hole — note: that branch shipped no migration,
+  so nothing to regenerate there; this is the standing rule going forward.)
 
 ---
 
