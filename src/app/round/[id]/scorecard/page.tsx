@@ -595,11 +595,15 @@ export default function ScorecardPage() {
         // that hole. Keyed by the URL team param (not state) to avoid a stale
         // read, with "all" for the teamless admin overview.
         const resumeKey = `round:${roundId}:team:${team ?? "all"}`;
+        const hasAnyScore = playersData.some(
+          rp => scoreMap[rp.id] != null && Object.values(scoreMap[rp.id]).some(v => v != null),
+        );
         setCurrentHole(
           pickInitialHole({
             savedHole: getSavedHole(resumeKey),
             startHole: 1,
             isScored: h => playersData.some(rp => scoreMap[rp.id]?.[h] != null),
+            hasAnyScore,
           }),
         );
 

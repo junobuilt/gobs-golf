@@ -70,6 +70,20 @@ function groupHoleHasScore(
   return false;
 }
 
+// Whether the group has ANY score on ANY hole — gates the resume-to-saved-hole
+// restore (see pickInitialHole). A blank card must ignore a stale saved hole and
+// fall back to the start hole.
+function groupHasAnyScore(
+  group: LoadedMatch[],
+  scores: Record<number, OptimisticScores>,
+  total = 18,
+): boolean {
+  for (let h = 1; h <= total; h++) {
+    if (groupHoleHasScore(group, scores, h)) return true;
+  }
+  return false;
+}
+
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; group: LoadedMatch[] }
@@ -201,6 +215,7 @@ export default function MatchScorecardPage() {
           savedHole: getSavedHole(`tournament:match:${matchId}`),
           startHole,
           isScored: h => groupHoleHasScore(next.group, reconciled, h),
+          hasAnyScore: groupHasAnyScore(next.group, reconciled),
         }),
       );
       hydratedRef.current = true;

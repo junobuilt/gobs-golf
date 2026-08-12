@@ -58,18 +58,30 @@ export function isValidHole(hole: unknown, total = 18): hole is number {
  * exists, else run the play-order fallback. Single composition point shared by
  * both scorecards so the restore-vs-fallback decision is identical and unit-
  * testable without rendering a component.
+ *
+ * `hasAnyScore` guards the restore: a saved hole is only worth resuming to when
+ * this card has SOMETHING to resume to. When the card is entirely blank
+ * (`hasAnyScore === false`) the saved hole is ignored and the play-order
+ * fallback runs — which lands on the start hole. This kills the live mis-entry
+ * trap where an admin changes a group's start hole (16 → 12) and every device
+ * that already opened that card holds a stale saved hole (16) that would
+ * otherwise beat the new start hole forever. A card that already has scores
+ * keeps the old restore behavior (return to where the scorer was).
  */
 export function pickInitialHole({
   savedHole,
   startHole,
   total = 18,
   isScored,
+  hasAnyScore,
 }: {
   savedHole: number | null;
   startHole: number;
   total?: number;
   isScored: (hole: number) => boolean;
+  hasAnyScore: boolean;
 }): number {
+  if (!hasAnyScore) return resolveResumeHole({ startHole, total, isScored });
   if (isValidHole(savedHole, total)) return savedHole;
   return resolveResumeHole({ startHole, total, isScored });
 }

@@ -72,6 +72,7 @@ describe("pickInitialHole — restore vs fallback", () => {
     const result = pickInitialHole({
       savedHole: 9,
       startHole: 12,
+      hasAnyScore: true,
       isScored: h => {
         consulted = true;
         return scored([12, 13])(h);
@@ -83,13 +84,43 @@ describe("pickInitialHole — restore vs fallback", () => {
 
   it("runs the play-order fallback when no hole is saved", () => {
     expect(
-      pickInitialHole({ savedHole: null, startHole: 12, isScored: scored([12, 13, 14, 15]) }),
+      pickInitialHole({ savedHole: null, startHole: 12, hasAnyScore: true, isScored: scored([12, 13, 14, 15]) }),
     ).toBe(16);
   });
 
   it("runs the fallback when the saved hole is invalid (corrupt / out of range)", () => {
     expect(
-      pickInitialHole({ savedHole: 99, startHole: 1, isScored: scored([1, 2]) }),
+      pickInitialHole({ savedHole: 99, startHole: 1, hasAnyScore: true, isScored: scored([1, 2]) }),
     ).toBe(3);
+  });
+});
+
+// The start-hole-change trap: an admin edits a group's start hole (16 → 12);
+// every device that already opened that card holds a stale saved hole (16). A
+// BLANK card must ignore that saved hole and fall back to the (new) start hole.
+describe("pickInitialHole — hasAnyScore gates the restore", () => {
+  it("no scores + saved hole 16 + start hole 12 → returns 12 (ignores stale saved hole)", () => {
+    expect(
+      pickInitialHole({ savedHole: 16, startHole: 12, hasAnyScore: false, isScored: scored([]) }),
+    ).toBe(12);
+  });
+
+  it("scores present + saved hole 16 + start hole 12 → returns 16 (restore honored)", () => {
+    expect(
+      pickInitialHole({ savedHole: 16, startHole: 12, hasAnyScore: true, isScored: scored([12, 13]) }),
+    ).toBe(16);
+  });
+
+  it("no scores + no saved hole + start hole 12 → returns 12", () => {
+    expect(
+      pickInitialHole({ savedHole: null, startHole: 12, hasAnyScore: false, isScored: scored([]) }),
+    ).toBe(12);
+  });
+
+  it("every hole scored → still returns the last hole in play order (existing behavior preserved)", () => {
+    const all = Array.from({ length: 18 }, (_, i) => i + 1);
+    expect(
+      pickInitialHole({ savedHole: null, startHole: 12, hasAnyScore: true, isScored: scored(all) }),
+    ).toBe(11);
   });
 });
