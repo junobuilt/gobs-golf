@@ -130,3 +130,38 @@ export async function verifyBackupSession(
   if (!timingSafeEqual(sig, expected)) return null;
   return { credId, expiresAtMs };
 }
+
+// Per-request re-check that a backup credential is still LIVE (R4 immediate-
+// revoke): the row exists, is not revoked, and has not expired. This is the DB
+// half of the backup path — verifyBackupSession only proves the cookie's
+// signature + expiry (no DB). Runs ONLY on the backup path (a valid primary
+// session never reaches it — R6). Fails CLOSED on any error / unreachable DB:
+// an admin gate must deny on doubt. Edge-compatible (fetch + Web env only, no
+// supabase-js). SSOT — imported by both middleware.ts (the /admin gate) and the
+// /api/admin/status route (the tournament-scorecard admin check); do NOT
+// duplicate the query.
+export async function backupCredentialLive(credId: number): Promise<boolean> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return false;
+
+  try {
+    const nowIso = new Date().toISOString();
+    const q = new URL(`${url}/rest/v1/admin_backup_pin`);
+    q.searchParams.set("select", "id");
+    q.searchParams.set("id", `eq.${credId}`);
+    q.searchParams.set("revoked_at", "is.null");
+    q.searchParams.set("expires_at", `gt.${nowIso}`);
+    q.searchParams.set("limit", "1");
+
+    const res = await fetch(q.toString(), {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const rows = (await res.json()) as unknown[];
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}

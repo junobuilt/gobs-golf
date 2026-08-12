@@ -1,12 +1,13 @@
 // @vitest-environment node
 //
-// Middleware backup-credential re-check (src/middleware.ts → backupCredentialLive).
+// Backup-credential re-check (src/lib/adminAuth.ts → backupCredentialLive).
 // This is the R4 immediate-revoke control: every backup-authenticated request
 // re-queries the row, so a revoked/expired credential is denied on the very next
-// request. Fails CLOSED on any error (an admin gate denies on doubt).
+// request. Fails CLOSED on any error (an admin gate denies on doubt). Moved out
+// of src/middleware.ts so the /api/admin/status route shares the same query.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { backupCredentialLive } from "@/middleware";
+import { backupCredentialLive } from "@/lib/adminAuth";
 
 const realFetch = globalThis.fetch;
 
