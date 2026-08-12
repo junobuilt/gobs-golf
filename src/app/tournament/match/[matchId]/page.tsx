@@ -905,6 +905,7 @@ function renderGreensomes(
       <TeamBlock key={side} side={side} title={names} sub={sub}>
         <EntryRow
           testid={`greensomes-${side}`}
+          side={side}
           gross={gross ?? undefined}
           par={holeMeta.par}
           dots={strokeDots(ms, holeMeta.strokeIndex)}
@@ -958,6 +959,7 @@ function renderIndividual(
               </span>
               <EntryRow
                 testid={`player-${p.playerId}`}
+                side={side}
                 gross={gross ?? undefined}
                 par={holeMeta.par}
                 dots={strokeDots(p.matchStrokes, holeMeta.strokeIndex)}
@@ -1036,6 +1038,7 @@ function TeamBlock({
 // square over) + its term + the four-ball counting-ball arrow. No math here.
 function EntryRow({
   testid,
+  side,
   gross,
   par,
   dots,
@@ -1045,6 +1048,10 @@ function EntryRow({
   onSet,
 }: {
   testid: string;
+  // The side this row belongs to — drives the stroke-dot color so a Canada
+  // player's dots render in the Canada token on their own red card (they were
+  // hardcoded to the USA token before).
+  side: Side;
   gross: number | undefined;
   par: number;
   dots: number;
@@ -1058,7 +1065,7 @@ function EntryRow({
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
         <div data-testid={`${testid}-dots`} style={{ height: "8px", display: "flex", gap: "3px", alignItems: "center" }}>
           {Array.from({ length: dots }).map((_, i) => (
-            <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: SIDE_TOKENS.a.base }} />
+            <span key={i} style={{ width: "5px", height: "5px", borderRadius: "50%", background: SIDE_TOKENS[side].base }} />
           ))}
         </div>
         <TeamHoleEntry ballCount={1} balls={[gross]} par={par} disabled={disabled} onSet={(_, v) => onSet(v)} />

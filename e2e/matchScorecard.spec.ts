@@ -93,3 +93,60 @@ test("public match scorecard: enter scores through a closeout → finish banner"
   // The match closes out → green finish banner, USA the winner.
   await expect(page.getByTestId("finish-banner")).toContainText("Match over — USA wins");
 });
+
+test("four-ball stroke dots use each player's OWN side color", async ({ page, db }) => {
+  // Commit 2: EntryRow hardcoded the USA token for the dots, so a Canada
+  // player's handicap dots rendered blue on their red card. Seed a four-ball
+  // where one USA player (Adam, side A) and one Canada player (Carl, side B)
+  // both receive a stroke on hole 1 (SI 1), then assert the dot colors differ.
+  const today = todayLocal();
+  const ROUND = 210;
+  // Match strokes are relative to the LOW unit (Betty/Dora at CH 0 → 0), so
+  // Adam CH 6 and Carl CH 6 each get 1 stroke on SI 1 → a visible dot each.
+  seed(db, {
+    players: [PLAYERS.adam, PLAYERS.betty, PLAYERS.carl, PLAYERS.dora],
+    seasons: [SEASON],
+    league_settings: [{ key: "buy_in_amount", value: "10" }],
+    tees: [{ id: 1, color: "White", slope_rating: 113, course_rating: 72, par: 72, sort_order: 1 }],
+    holes: flatPar4HolesForTee(7100, 1),
+    rounds: [{ id: ROUND, played_on: today, is_complete: false, season_id: SEASON.id, tournament_id: 1 }],
+    tournaments: [
+      { id: 1, name: "GOBS Ryder Cup", side_a_name: "USA", side_b_name: "Canada", is_active: true, started_on: today },
+    ],
+    tournament_sessions: [
+      { id: 9, tournament_id: 1, round_id: ROUND, day_number: 2, name: "Day 2", format: "four_ball_match", played_on: today, is_locked: false },
+    ],
+    tournament_matches: [
+      {
+        id: 510,
+        tournament_id: 1,
+        session_id: 9,
+        match_number: 1,
+        group_number: 1,
+        side_a_team_number: 1,
+        side_b_team_number: 2,
+        status: "pending",
+        result: null,
+        result_source: "engine",
+        closed_out_hole: null,
+        scorer_label: null,
+        admin_note: null,
+      },
+    ],
+    round_players: [
+      { id: 2101, round_id: ROUND, player_id: PLAYERS.adam.id, team_number: 1, tee_id: 1, course_handicap: 6, handicap_index_snapshot: 6 },
+      { id: 2102, round_id: ROUND, player_id: PLAYERS.betty.id, team_number: 1, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+      { id: 2103, round_id: ROUND, player_id: PLAYERS.carl.id, team_number: 2, tee_id: 1, course_handicap: 6, handicap_index_snapshot: 6 },
+      { id: 2104, round_id: ROUND, player_id: PLAYERS.dora.id, team_number: 2, tee_id: 1, course_handicap: 0, handicap_index_snapshot: 0 },
+    ],
+    scores: [],
+  });
+
+  await page.goto("/tournament/match/510");
+
+  // Blank card → lands on hole 1 (SI 1), where Adam and Carl each show 1 dot.
+  const usaDot = page.getByTestId("player-1-dots").locator("span").first(); // Adam, side A
+  const canDot = page.getByTestId("player-3-dots").locator("span").first(); // Carl, side B
+  await expect(usaDot).toHaveCSS("background-color", "rgb(20, 80, 158)"); // T.usa #14509E
+  await expect(canDot).toHaveCSS("background-color", "rgb(200, 16, 46)"); // T.can #C8102E
+});
