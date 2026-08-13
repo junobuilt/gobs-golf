@@ -155,6 +155,10 @@ export function buildMatchInput(loaded: LoadedMatch, s: OptimisticScores): Match
     // Shotgun (039): the live recompute must walk the same play order the loader
     // used, so thru / walk-off / margin match loaded.state for a rotated start.
     startHole: loaded.match.start_hole ?? 1,
+    // Allowance (042): feed the engine the SAME allowance the loader used, or the
+    // live recompute silently runs at 100% and diverges from loaded.state on any
+    // allowance-affected hole. null ⇒ 100% via resolveTournamentAllowance.
+    handicapAllowance: loaded.session.handicapAllowance,
   };
 }
 

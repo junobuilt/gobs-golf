@@ -356,6 +356,11 @@ export interface LoadedMatch {
     // The day's lock (finalised) state. Surfaced so the admin Clear-hole control
     // is disabled on a finalised round (scores frozen).
     isLocked: boolean;
+    // Migration 042 — the session's raw handicap_allowance (four-ball only; null ⇒
+    // 100%). Surfaced so the live scorecard recompute (buildMatchInput) feeds the
+    // engine the SAME allowance the loader used; the 100% default stays owned by
+    // resolveTournamentAllowance, so DO NOT coalesce here.
+    handicapAllowance: number | null;
   };
   tournament: { id: number; sideAName: string; sideBName: string };
   sideA: LoadedMatchSide;

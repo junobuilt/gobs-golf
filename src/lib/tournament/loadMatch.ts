@@ -245,6 +245,10 @@ function assembleMatch(
       roundId: session.round_id,
       isVoided: session.is_voided,
       isLocked: session.is_locked,
+      // Migration 042 — surface the raw allowance (already fetched on the session
+      // row) so the live recompute path (buildMatchInput) can feed the engine the
+      // SAME allowance this loader passes into computeMatchState above.
+      handicapAllowance: session.handicap_allowance,
     },
     tournament: { id: tournament.id, sideAName: tournament.side_a_name, sideBName: tournament.side_b_name },
     sideA,

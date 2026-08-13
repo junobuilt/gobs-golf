@@ -143,7 +143,7 @@ function makeLoaded(opts: {
       admin_note: null,
       is_voided: false,
     },
-    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: false, isLocked: false },
+    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: false, isLocked: false, handicapAllowance: null },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },
     sideA,
     sideB,
