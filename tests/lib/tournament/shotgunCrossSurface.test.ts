@@ -81,3 +81,53 @@ describe("shotgun cross-surface agreement (039)", () => {
     expect(recomputeState(m, initOptimisticScores(m))).toEqual(m.state);
   });
 });
+
+// The bug this branch fixes: buildMatchInput dropped handicapAllowance, so the
+// live recompute ran at 100% while the loader's state ran at the session value —
+// the match-90 "5&4 vs 3&1" split. This is the parity these cases guard. The
+// existing parity test above passed only because its fixtures carried no
+// allowance (both paths agreed at 100%); a fixture at 90% is what closes the gap.
+describe("handicap allowance cross-surface parity (042)", () => {
+  // Real match-90 handicaps: side A CH 4/16, side B CH 9/12. Hole 5 is SI 5.
+  //   90%: match strokes 0/10 (A) and 4/7 (B). B's low unit (CH 9 → PH 8 → 4)
+  //        gets NO stroke on SI 5 → gross 5 stays net 5; A best net 4 → SIDE_A.
+  //   100%: match strokes 0/12 and 5/8. That same unit (PH 9 → 5) NOW gets a
+  //        stroke on SI 5 → net 4, tying A → HALVED.
+  // Scoring only hole 5 isolates the single flipped outcome the deep-equal checks.
+  const board = {
+    format: "four_ball_match" as const,
+    startHole: 5,
+    a: [
+      { playerId: 1, ch: 4, scored: { 5: 4 } },
+      { playerId: 2, ch: 16, scored: { 5: 9 } },
+    ],
+    b: [
+      { playerId: 3, ch: 9, scored: { 5: 5 } },
+      { playerId: 4, ch: 12, scored: { 5: 7 } },
+    ],
+  };
+
+  it("four-ball at 90%: hole 5 is side_a AND the live recompute reproduces it", () => {
+    const m = makeLoaded({ ...board, allowance: 90 });
+    // Sanity: the loader's canonical state resolves hole 5 to USA at 90%.
+    expect(m.state.holeOutcomes[4]).toBe("side_a");
+    // The parity that was broken: recompute must honor the SAME 90% allowance.
+    // FAILS before the buildMatchInput fix (recompute at 100% → hole 5 halved,
+    // holesUp 0), PASSES after.
+    expect(recomputeState(m, initOptimisticScores(m))).toEqual(m.state);
+  });
+
+  it("NULL allowance is identical to 100% (guards Day 1 greensomes / Day 3 singles)", () => {
+    const mNull = makeLoaded({ ...board, allowance: null });
+    const m100 = makeLoaded({ ...board, allowance: 100 });
+    // Same outcomes as an explicit 100% — and NOT the 90% outcome.
+    expect(mNull.state.holeOutcomes).toEqual(m100.state.holeOutcomes);
+    expect(mNull.state.holeOutcomes[4]).toBe("halved");
+    // Strokes resolve to real integers under NULL — no NaN, no zeroing. Side B's
+    // first unit (CH 9) plays off 5 at 100%/NULL (min PH 4 subtracted).
+    expect(mNull.sideB.players[0].matchStrokes).toBe(5);
+    expect(Number.isInteger(mNull.sideB.players[0].matchStrokes)).toBe(true);
+    // Recompute parity still holds on the NULL path.
+    expect(recomputeState(mNull, initOptimisticScores(mNull))).toEqual(mNull.state);
+  });
+});

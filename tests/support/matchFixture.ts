@@ -8,6 +8,7 @@ import {
   computeMatchStrokes,
   greensomesTeamHandicap,
 } from "@/lib/tournament/matchplay";
+import { computeSideStrokes } from "@/lib/tournament/matchStrokes";
 import type {
   HoleMeta,
   LoadedMatch,
@@ -49,6 +50,7 @@ export function makeLoaded(opts: {
   scorerLabel?: string | null;
   flaggedHoles?: number[];
   startHole?: number; // shotgun (039): the play order rotates from here
+  allowance?: number | null; // migration 042 — session handicap_allowance (null ⇒ 100%)
   groupLabel?: string | null;
   isVoided?: boolean; // migration 040 — drops out of the decidable pool
   isVoidedSession?: boolean; // migration 041 — the day is voided (all its matches drop out)
@@ -67,15 +69,24 @@ export function makeLoaded(opts: {
   let bSide: number | null = null;
 
   if (format === "greensomes") {
+    // Greensomes is allowance-free (60/40 team handicap) — unchanged by 042.
     aCollapsed = greensomesTeamHandicap(opts.a[0]?.ch ?? null, opts.a[1]?.ch ?? null);
     bCollapsed = greensomesTeamHandicap(opts.b[0]?.ch ?? null, opts.b[1]?.ch ?? null);
     const [msA, msB] = computeMatchStrokes([aCollapsed, bCollapsed]);
     aSide = msA;
     bSide = msB;
   } else {
-    const ms = computeMatchStrokes([...opts.a, ...opts.b].map((u) => u.ch ?? 0));
-    aStrokes = ms.slice(0, opts.a.length);
-    bStrokes = ms.slice(opts.a.length);
+    // Route per-player match strokes through the SAME allowance-aware helper the
+    // loader (assembleMatch) uses, so the fixture mirrors production. Byte-identical
+    // to the old raw computeMatchStrokes at null/100% (PH = CH there).
+    const r = computeSideStrokes(
+      format,
+      opts.a.map((u) => u.ch),
+      opts.b.map((u) => u.ch),
+      opts.allowance ?? null,
+    );
+    aStrokes = r.aStrokes;
+    bStrokes = r.bStrokes;
   }
 
   const mkPlayer = (u: UnitSpec, strokes: number): LoadedMatchPlayer => ({
@@ -121,6 +132,9 @@ export function makeLoaded(opts: {
       teamGross: sideB.teamGross ?? undefined,
     },
     startHole: opts.startHole ?? 1,
+    // Migration 042: mirror the loader — the fixture's canonical state is computed
+    // at the session allowance (null ⇒ 100% downstream).
+    handicapAllowance: opts.allowance,
   };
   const state = computeMatchState(input);
 
@@ -144,7 +158,7 @@ export function makeLoaded(opts: {
       group_label: opts.groupLabel ?? null,
       is_voided: opts.isVoided ?? false,
     },
-    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: opts.isVoidedSession ?? false, isLocked: opts.isLockedSession ?? false },
+    session: { id: 9, format, name: "Day 1", dayNumber: 1, playedOn: "2026-08-01", roundId: 50, isVoided: opts.isVoidedSession ?? false, isLocked: opts.isLockedSession ?? false, handicapAllowance: opts.allowance ?? null },
     tournament: { id: 1, sideAName: "USA", sideBName: "CANADA" },
     sideA,
     sideB,

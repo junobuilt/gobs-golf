@@ -3,6 +3,9 @@
 This file is read automatically by Claude Code at the start of every session.
 It contains everything needed to work on this project without re-briefing.
 
+Working directory is `/Users/jonyang/Projects/gobs-golf` (shown as
+`gobs-tournament` in the Claude Code app).
+
 ---
 
 ## What this app is
@@ -669,6 +672,8 @@ This includes the **data fetch**, not just the math. A surface that re-runs the 
 ### 7. Cross-surface agreement tests
 
 Any value shown in two or more places gets a test asserting the surfaces are **equal**, not merely that each renders. "A number rendered" is not a passing bar — "the number matches the canonical source" is. And the fixture must be at **realistic scale / shape**: the F.1 cross-loader parity test passed while prod was broken because it seeded ~144 score rows — far under the 1000-row cap that caused the bug. Seed enough (or structure the test) so the failure mode can actually occur.
+
+**A parity test is only as good as its fixture. When a new input is added to a shared calculation, seed the existing parity fixtures with a non-default value for it, or the test will pass by agreeing on the default.** (2026-08-12, allowance-recompute fix: `shotgunCrossSurface.test.ts` already asserted `recomputeState === loader.state`, but every fixture carried no `handicap_allowance`, so both paths ran at 100% and agreed while prod's 90% four-ball match detail read `5&4` against a true `3&1`. Adding a 90% fixture — one whose outcome actually differs at 90% vs 100% — is what turned the latent assertion into a live guard.)
 
 ### 8. Designed ≠ works — verify before claiming
 

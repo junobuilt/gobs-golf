@@ -322,6 +322,15 @@ export async function setPlayerDaySide(
 }
 
 // ── Sessions (days) ─────────────────────────────────────────────────────────
+// Create-time handicap allowance (migration 042). Four-ball is played off a
+// reduced allowance (target 90%); singles is USGA-full (100%) and greensomes uses
+// its own 60/40 team handicap — both leave the column NULL (⇒ 100% / allowance-
+// free downstream via resolveTournamentAllowance). Only four-ball writes a value.
+// The remaining allowance admin UI (per-session picker/edit) is still open — this
+// is just the default so a freshly-created four-ball day scores at 90% out of the
+// box instead of silently at 100%.
+const DEFAULT_FOUR_BALL_ALLOWANCE = 90;
+
 export async function createSession(input: {
   tournamentId: number;
   dayNumber: number;
@@ -342,6 +351,10 @@ export async function createSession(input: {
       name: input.name,
       format: input.format,
       played_on: input.playedOn,
+      // 042: four-ball defaults to 90%; singles/greensomes stay NULL (⇒ 100% /
+      // allowance-free). No backfill — only new four-ball rows get the value.
+      handicap_allowance:
+        input.format === "four_ball_match" ? DEFAULT_FOUR_BALL_ALLOWANCE : null,
     })
     .select("*")
     .single();
