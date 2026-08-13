@@ -130,6 +130,19 @@ describe("tournament data layer — create → assign → add day", () => {
     expect(sessions[0].round_id).toBe(session.round_id);
   });
 
+  // Migration 042 create-time default: four-ball is created at 90%; singles and
+  // greensomes stay NULL (⇒ 100% / allowance-free). Guards the trap where a
+  // freshly-created four-ball day would otherwise score silently at 100%.
+  it("createSession defaults handicap_allowance: 90 for four-ball, NULL otherwise", async () => {
+    const t = await createTournament({ name: "T", startedOn: "2026-08-01", sideAName: "USA", sideBName: "Canada", holderSide: "b" });
+    const fourBall = await createSession({ tournamentId: t.id, dayNumber: 1, name: "Day 1", format: "four_ball_match", playedOn: "2026-08-01" });
+    const singles = await createSession({ tournamentId: t.id, dayNumber: 2, name: "Day 2", format: "singles_match", playedOn: "2026-08-02" });
+    const greensomes = await createSession({ tournamentId: t.id, dayNumber: 3, name: "Day 3", format: "greensomes", playedOn: "2026-08-03" });
+    expect(fourBall.handicap_allowance).toBe(90);
+    expect(singles.handicap_allowance).toBe(null);
+    expect(greensomes.handicap_allowance).toBe(null);
+  });
+
   it("getTournamentWithSessions batches the three reads", async () => {
     const t = await createTournament({ name: "T", startedOn: "2026-08-01", sideAName: "USA", sideBName: "Canada", holderSide: "b" });
     await setPlayerSide(t.id, 1, "a");
