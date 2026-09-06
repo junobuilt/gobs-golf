@@ -7,7 +7,7 @@ import {
   signBackupSession,
   timingSafeEqual,
 } from "@/lib/adminAuth";
-import { verifyBackupPin } from "@/lib/backupPin";
+import { resolveActiveBackupCredential } from "@/lib/backupCredentials";
 import { supabase } from "@/lib/supabase";
 
 export type VerifyPinState = { error?: string } | null;
@@ -16,30 +16,18 @@ const NINETY_DAYS_SECONDS = 90 * 24 * 60 * 60;
 
 // Attempt the backup-PIN path (only reached after the primary PIN misses).
 // Returns the safe redirect target on success, or null to fall through to the
-// generic "Incorrect PIN" error. Reads the single active credential via the
-// anon client, scrypt-compares, issues a short-lived backup cookie bound to the
-// credential's expiry, and writes an audit row.
+// generic "Incorrect PIN" error. Resolves the entered PIN against EVERY active
+// credential (v2 — several named holders at once; see backupCredentials.ts),
+// issues a short-lived backup cookie bound to the MATCHING credential's expiry,
+// and writes an audit row against that same credential.
 async function tryBackupLogin(
   pin: string,
   next: string
 ): Promise<string | null> {
-  const nowIso = new Date().toISOString();
-  const { data } = await supabase
-    .from("admin_backup_pin")
-    .select("id, pin_hash, expires_at")
-    .is("revoked_at", null)
-    .gt("expires_at", nowIso)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const match = await resolveActiveBackupCredential(pin);
+  if (!match) return null;
 
-  const row = data?.[0];
-  if (!row) return null;
-
-  const ok = await verifyBackupPin(pin, row.pin_hash as string);
-  if (!ok) return null;
-
-  const expiresAtMs = new Date(row.expires_at as string).getTime();
-  const credId = Number(row.id);
+  const { credId, expiresAtMs } = match;
   const session = await signBackupSession(credId, expiresAtMs);
   if (!session) return null;
 
