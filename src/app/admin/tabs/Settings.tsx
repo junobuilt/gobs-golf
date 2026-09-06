@@ -1,20 +1,26 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useMemo, useTransition } from "react";
 import { supabase } from "@/lib/supabase";
 import { LeagueSettings } from "../page";
 import SeasonManagement from "../components/SeasonManagement";
 import {
   mintBackupPin,
-  disableBackupPin,
-  getBackupPinStatus,
-  type BackupPinStatus,
+  listBackupPins,
+  revokeBackupPin,
+  type BackupPinHolder,
 } from "../settings/backupActions";
 import Toggle from "@/components/admin/Toggle";
+import DangerModal from "../components/DangerModal";
+import PlayerCombobox, { type ComboOption } from "@/components/playedWith/PlayerCombobox";
+import { todayVancouver, addYearsISO, formatLeagueDate } from "@/lib/date";
+import type { Player } from "../page";
 
 interface Props {
   settings: LeagueSettings;
   onRefresh: () => void;
+  /** Active roster — backs the Backup Admin Access player picker. */
+  players: Player[];
 }
 
 const C = {
@@ -63,107 +69,183 @@ function SettingRow({ label, description, children }: { label: string; descripti
 
 type ToggleKey = "show_leaderboard" | "show_weekly_winners";
 
-const DAY_PRESETS = [1, 3, 7] as const;
+// Field label for the Backup Admin form. Plain words, high contrast, sized for
+// the 60-80 audience rather than the muted micro-caption used elsewhere.
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+  color: "#374151",
+  marginBottom: "6px",
+};
 
-function formatExpiry(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+// Expiry copy is a plain calendar date — "August 29, 2027" — rendered in the
+// league's timezone so it matches the day the admin picked, not the viewer's.
+// The credential itself expires at the END of that day (see endOfDayVancouverISO).
+// Shared with the server action's rejection copy via formatLeagueDate.
+const formatExpiry = formatLeagueDate;
+
+/** Default expiry offered in the form: about a month out. */
+function defaultExpiryDate(): string {
+  const today = todayVancouver();
+  const [y, m, d] = today.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 30);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+
+// Bound the list read. On a phone with poor reception at the course a hanging
+// server action would otherwise leave the admin staring at "…" indefinitely on
+// the one screen that answers "who can get into my app right now?". A bounded
+// wait turns that into an answerable state.
+const LIST_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
   });
 }
 
-// Backup Admin Access — mint an expiring 4-digit substitute PIN, see status,
-// reveal once for handoff, disable immediately. Talks to server actions only
-// (the credential table is never read/written from this client component).
-function BackupAdminCard() {
-  const [status, setStatus] = useState<BackupPinStatus | null>(null);
+/** A holder row's display name. A credential minted before v2 has no name
+ *  snapshot at all — that, and ONLY that, is what makes it "pre-upgrade".
+ *  player_id being null is NOT the test: the FK is ON DELETE SET NULL, so a
+ *  named holder whose player row is later removed keeps holder_name and must
+ *  keep reading as themselves. */
+function holderLabel(row: BackupPinHolder): string {
+  return row.holderName ?? "Unnamed (pre-upgrade)";
+}
+
+// Backup Admin Access — assign expiring 4-digit PINs to named people, see
+// exactly who currently holds one, and remove any of them individually.
+//
+// v2 replaces the v1 single-active-credential card (one PIN, 1/3/7-day preset,
+// "Replace backup PIN"). Several people can hold a PIN at once, so the card
+// leads with the LIST of current holders — the question the admin actually has
+// is "who can get in right now?" — and the assign form sits underneath.
+//
+// Talks to server actions only; the credential table is never read or written
+// from this client component, and no hash ever crosses the boundary.
+function BackupAdminCard({ players }: { players: Player[] }) {
+  const [holders, setHolders] = useState<BackupPinHolder[] | null>(null);
+  // Distinguished from "no holders": see listBackupPins. Claiming nobody has
+  // access when the read failed would be the more dangerous of the two lies.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [playerId, setPlayerId] = useState<number | null>(null);
   const [pin, setPin] = useState("");
-  const [days, setDays] = useState<number>(3);
-  const [reveal, setReveal] = useState<{ pin: string; expiresAt: string } | null>(null);
+  const [expiresOn, setExpiresOn] = useState<string>(defaultExpiryDate);
+  const [reveal, setReveal] = useState<
+    { pin: string; holderName: string; expiresAt: string } | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<BackupPinHolder | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const minDate = todayVancouver();
+  const maxDate = addYearsISO(minDate, 1);
+
+  // Full names, not the scorecard short name: this is a security list, and the
+  // admin needs to be sure WHICH Wayne is holding a credential.
+  const options: ComboOption[] = useMemo(
+    () =>
+      players
+        .map((p) => ({ id: p.id, label: p.full_name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [players]
+  );
+
   const refresh = () => {
-    getBackupPinStatus().then(setStatus).catch(() => setStatus({ active: false }));
+    withTimeout(listBackupPins(), LIST_TIMEOUT_MS)
+      .then((rows) => { setHolders(rows); setLoadFailed(false); })
+      .catch(() => { setHolders([]); setLoadFailed(true); });
   };
   useEffect(refresh, []);
 
-  const onEnable = () => {
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const onAssign = () => {
     setError(null);
+    if (playerId === null) {
+      setError("Choose who this PIN is for.");
+      return;
+    }
     if (!/^\d{4}$/.test(pin)) {
       setError("Enter a 4-digit PIN.");
       return;
     }
+    if (!expiresOn) {
+      setError("Choose an expiry date.");
+      return;
+    }
     const fd = new FormData();
     fd.set("pin", pin);
-    fd.set("days", String(days));
+    fd.set("player_id", String(playerId));
+    fd.set("expires_on", expiresOn);
     startTransition(async () => {
       const res = await mintBackupPin(null, fd);
       if (res?.ok) {
-        setReveal({ pin: res.pin, expiresAt: res.expiresAt });
+        setReveal({ pin: res.pin, holderName: res.holderName, expiresAt: res.expiresAt });
         setPin("");
-        setDays(3);
+        setPlayerId(null);
+        setExpiresOn(defaultExpiryDate());
+        setToast("PIN assigned.");
         refresh();
       } else {
-        setError(res?.error ?? "Could not enable. Try again.");
+        setError(res?.error ?? "Could not assign the PIN. Try again.");
       }
     });
   };
 
-  const onDisable = () => {
+  const onRemoveConfirmed = (row: BackupPinHolder) => {
+    setConfirmRemove(null);
     startTransition(async () => {
-      const s = await disableBackupPin();
-      setStatus(s);
-      setReveal(null);
+      await revokeBackupPin(row.id);
+      setToast("PIN removed.");
+      refresh();
     });
   };
-
-  const navyBtn = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: "12px 0",
-    borderRadius: "8px",
-    border: `1.5px solid ${active ? C.navy : C.border}`,
-    background: active ? C.navy : "white",
-    color: active ? "white" : "#374151",
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  });
 
   // One-time reveal — stays until the admin taps "Done", so it can be handed off.
   if (reveal) {
     return (
       <Card>
-        <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#1f2937", marginBottom: "12px" }}>
-          Backup PIN enabled
+        <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#1f2937", marginBottom: "12px" }}>
+          PIN assigned to {reveal.holderName}
         </div>
         <div style={{
           background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px",
           padding: "16px", textAlign: "center", marginBottom: "12px",
         }}>
-          <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: "4px" }}>Backup PIN</div>
+          <div style={{ fontSize: "0.82rem", color: "#6b7280", marginBottom: "4px" }}>
+            {reveal.holderName}
+          </div>
           <div style={{ fontSize: "2rem", fontWeight: 700, letterSpacing: "0.3em", color: "#166534" }}>
             {reveal.pin}
           </div>
-          <div style={{ fontSize: "0.82rem", color: "#6b7280", marginTop: "8px" }}>
-            Active until {formatExpiry(reveal.expiresAt)}
+          <div style={{ fontSize: "0.9rem", color: "#6b7280", marginTop: "8px" }}>
+            Works through {formatExpiry(reveal.expiresAt)}
           </div>
         </div>
-        <div style={{ fontSize: "0.8rem", color: "#9ca3af", marginBottom: "12px", lineHeight: 1.5 }}>
-          Write this down now — it won’t be shown again. Hand it to the substitute admin.
+        <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "12px", lineHeight: 1.5 }}>
+          Write this down now — it won&rsquo;t be shown again. It can&rsquo;t be looked up
+          later, only removed and replaced. Hand it to {reveal.holderName}.
         </div>
         <button
           onClick={() => setReveal(null)}
           style={{
-            width: "100%", padding: "12px", borderRadius: "8px", border: "none",
-            background: C.green, color: "white", fontSize: "0.95rem", fontWeight: 600, cursor: "pointer",
+            width: "100%", padding: "14px", borderRadius: "8px", border: "none",
+            background: C.green, color: "white", fontSize: "1rem", fontWeight: 600, cursor: "pointer",
           }}
         >
-          Done — I’ve saved it
+          Done — I&rsquo;ve saved it
         </button>
       </Card>
     );
@@ -171,40 +253,85 @@ function BackupAdminCard() {
 
   return (
     <Card>
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        paddingBottom: "12px", borderBottom: `1px solid ${C.border}`,
-      }}>
-        <div>
-          <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#1f2937" }}>Backup Admin Access</div>
-          <div style={{ fontSize: "0.82rem", color: status?.active ? "#166534" : "#9ca3af", marginTop: "2px" }}>
-            {status === null
-              ? "…"
-              : status.active && status.expiresAt
-                ? `Active until ${formatExpiry(status.expiresAt)}`
-                : "Inactive"}
-          </div>
+      <div style={{ paddingBottom: "12px", borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#1f2937" }}>Backup Admin Access</div>
+        <div style={{ fontSize: "0.85rem", color: "#6b7280", marginTop: "2px" }}>
+          People who can sign in as admin right now.
         </div>
-        {status?.active && (
-          <button
-            onClick={onDisable}
-            disabled={pending}
-            style={{
-              marginLeft: "16px", flexShrink: 0, padding: "8px 14px", borderRadius: "8px",
-              border: "1.5px solid #c0392b", background: "white", color: "#c0392b",
-              fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
-            }}
-          >
-            Disable now
-          </button>
+      </div>
+
+      {/* ── Assigned PINs ─────────────────────────────────────────────────── */}
+      <div style={{ paddingTop: "8px" }}>
+        {holders === null ? (
+          <div style={{ padding: "14px 0", fontSize: "0.9rem", color: "#9ca3af" }}>…</div>
+        ) : loadFailed ? (
+          <div role="alert" style={{ padding: "14px 0", fontSize: "0.9rem", color: "#c0392b", lineHeight: 1.5 }}>
+            Couldn&rsquo;t load who has access. Reload the page to try again.
+          </div>
+        ) : holders.length === 0 ? (
+          <div style={{ padding: "14px 0", fontSize: "0.9rem", color: "#9ca3af" }}>
+            No PINs assigned.
+          </div>
+        ) : (
+          holders.map((row) => (
+            <div
+              key={row.id}
+              style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                gap: "12px", padding: "14px 0", borderBottom: `1px solid ${C.border}`,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#1f2937" }}>
+                  {holderLabel(row)}
+                </div>
+                <div style={{ fontSize: "0.85rem", color: "#6b7280", marginTop: "2px" }}>
+                  Expires {formatExpiry(row.expiresAt)}
+                </div>
+                {row.holderName === null && (
+                  // No name was captured before v2, so the created date is the
+                  // only handle the admin has on who this is.
+                  <div style={{ fontSize: "0.8rem", color: "#9ca3af", marginTop: "2px" }}>
+                    Created {formatExpiry(row.createdAt)}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setConfirmRemove(row)}
+                disabled={pending}
+                style={{
+                  flexShrink: 0, padding: "12px 16px", borderRadius: "8px",
+                  border: "1.5px solid #c0392b", background: "white", color: "#c0392b",
+                  fontSize: "0.9rem", fontWeight: 600, cursor: pending ? "default" : "pointer",
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))
         )}
       </div>
 
-      <div style={{ paddingTop: "16px" }}>
-        <div style={{ fontSize: "0.82rem", color: "#6b7280", marginBottom: "8px" }}>
-          Create a temporary 4-digit PIN for a substitute admin.
+      {/* ── Assign a new PIN ──────────────────────────────────────────────── */}
+      <div style={{ paddingTop: "20px" }}>
+        <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#1f2937", marginBottom: "10px" }}>
+          Assign a new PIN
         </div>
+
+        <label htmlFor="backup-pin-player" style={labelStyle}>Who is it for?</label>
+        <div style={{ marginBottom: "14px" }}>
+          <PlayerCombobox
+            options={options}
+            value={playerId}
+            onChange={(id) => { setPlayerId(id); setError(null); }}
+            placeholder="Search a player…"
+            ariaLabel="Who is it for?"
+          />
+        </div>
+
+        <label htmlFor="backup-pin-digits" style={labelStyle}>4-digit PIN</label>
         <input
+          id="backup-pin-digits"
           type="tel"
           inputMode="numeric"
           maxLength={4}
@@ -214,37 +341,75 @@ function BackupAdminCard() {
           style={{
             width: "100%", padding: "14px", fontSize: "1.25rem", textAlign: "center",
             letterSpacing: "0.4em", border: `1.5px solid ${C.border}`, borderRadius: "10px",
-            background: "white", outline: "none", marginBottom: "12px", color: "#1f2937",
+            background: "white", outline: "none", marginBottom: "14px", color: "#1f2937",
           }}
         />
-        <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: "6px" }}>Duration</div>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          {DAY_PRESETS.map((d) => (
-            <button key={d} onClick={() => setDays(d)} style={navyBtn(days === d)}>
-              {d} {d === 1 ? "day" : "days"}
-            </button>
-          ))}
+
+        <label htmlFor="backup-pin-expiry" style={labelStyle}>Works through</label>
+        <input
+          id="backup-pin-expiry"
+          type="date"
+          value={expiresOn}
+          min={minDate}
+          max={maxDate}
+          onChange={(e) => { setExpiresOn(e.target.value); setError(null); }}
+          style={{
+            width: "100%", padding: "14px", fontSize: "1rem",
+            border: `1.5px solid ${C.border}`, borderRadius: "10px",
+            background: "white", outline: "none", marginBottom: "6px", color: "#1f2937",
+          }}
+        />
+        <div style={{ fontSize: "0.8rem", color: "#9ca3af", marginBottom: "16px" }}>
+          The PIN works all day on this date, then stops.
         </div>
+
         {error && (
-          <div style={{ color: "var(--red-500, #c0392b)", fontSize: "0.85rem", marginBottom: "12px" }}>{error}</div>
+          <div role="alert" style={{ color: "#c0392b", fontSize: "0.9rem", marginBottom: "12px" }}>
+            {error}
+          </div>
         )}
+
         <button
-          onClick={onEnable}
+          onClick={onAssign}
           disabled={pending}
           style={{
-            width: "100%", padding: "14px", borderRadius: "10px", border: "none",
-            background: "#e8a800", color: "#1a1a1a", fontSize: "1rem", fontWeight: 700,
+            width: "100%", padding: "16px", borderRadius: "10px", border: "none",
+            background: "#e8a800", color: "#1a1a1a", fontSize: "1.05rem", fontWeight: 700,
             cursor: pending ? "default" : "pointer", opacity: pending ? 0.6 : 1,
           }}
         >
-          {pending ? "…" : status?.active ? "Replace backup PIN" : "Enable"}
+          {pending ? "…" : "Assign PIN"}
         </button>
+
+        {toast && (
+          <div
+            role="status"
+            style={{
+              marginTop: "12px", padding: "12px", borderRadius: "8px",
+              background: "#f0fdf4", border: "1px solid #bbf7d0",
+              color: "#166534", fontSize: "0.9rem", fontWeight: 600, textAlign: "center",
+            }}
+          >
+            {toast}
+          </div>
+        )}
       </div>
+
+      {confirmRemove && (
+        <DangerModal
+          title="Remove admin access?"
+          description={`Remove admin access for ${holderLabel(confirmRemove)} (expires ${formatExpiry(confirmRemove.expiresAt)})?`}
+          cannotBeUndone={false}
+          confirmLabel="Remove access"
+          onCancel={() => setConfirmRemove(null)}
+          onConfirm={() => onRemoveConfirmed(confirmRemove)}
+        />
+      )}
     </Card>
   );
 }
 
-export default function Settings({ settings, onRefresh }: Props) {
+export default function Settings({ settings, onRefresh, players }: Props) {
   const [buyIn, setBuyIn] = useState(settings["buy_in_amount"] ?? "10");
   const [savingBuyIn, setSavingBuyIn] = useState(false);
   const [buyInSaved, setBuyInSaved] = useState(false);
@@ -346,7 +511,7 @@ export default function Settings({ settings, onRefresh }: Props) {
 
       {/* Security */}
       <SectionHeader>Security</SectionHeader>
-      <BackupAdminCard />
+      <BackupAdminCard players={players} />
 
       {/* Future placeholders */}
       <SectionHeader>Coming Soon</SectionHeader>

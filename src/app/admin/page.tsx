@@ -161,7 +161,7 @@ export default function AdminPage() {
           <Money settings={settings} />
         )}
         {activeTab === "Settings" && (
-          <Settings settings={settings} onRefresh={refreshSettings} />
+          <Settings settings={settings} onRefresh={refreshSettings} players={players.filter(p => p.is_active)} />
         )}
         {activeTab === "Tournament" && (
           <Tournament allPlayers={players.filter(p => p.is_active)} onRefresh={refreshPlayers} />
