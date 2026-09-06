@@ -159,6 +159,17 @@ fetch it alongside `ROADMAP.md` before doing anything else.
   (Added 2026-08-11, admin-clear-hole — note: that branch shipped no migration,
   so nothing to regenerate there; this is the standing rule going forward.)
 
+- **`schema.sql` IS CURRENTLY STALE — last regenerated 2026-06-18, missing
+  migrations 031–043.** `npm run db:backup` is PowerShell-only
+  (`scripts/backup-db.ps1`), so it CANNOT run on the dev Mac — a session working
+  there physically cannot honor the rule above. **Do not silently skip it:** say
+  so in the commit message and the session summary, as `043_backup_pin_named_holders`
+  did. Clearing this needs one `npm run db:backup` run on a Windows machine,
+  after which `supabase/schema.sql` should be committed on its own. Until then,
+  treat `schema.sql` as a 2026-06-18 snapshot, NOT as current prod — and per rule
+  #9 below, read the deployed definition when reasoning about any
+  `CREATE OR REPLACE` object.
+
 ---
 
 ## Database schema (Supabase)
